@@ -1,4 +1,4 @@
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tracing_subscriber::{fmt, EnvFilter};
 
 pub mod commands;
@@ -12,6 +12,32 @@ pub mod core {
     pub mod runner;
     pub mod task;
     pub mod watcher;
+}
+
+/// Single source of truth for the command/event surface exposed to the
+/// frontend (ADR-009). `cargo test` re-exports `src/lib/git/bindings.ts`.
+pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
+    tauri_specta::Builder::<R>::new()
+        // Commands reject with the serialized AppError (promise rejection),
+        // matching the frontend toast pipeline in src/lib/git/index.ts.
+        .error_handling(tauri_specta::ErrorHandlingMode::Throw)
+        .commands(tauri_specta::collect_commands![
+            commands::git_version,
+            commands::greet,
+            commands::repo_open,
+            commands::repo_close,
+            commands::repo_list,
+            commands::git_status,
+            commands::git_stage,
+            commands::git_unstage,
+            commands::git_discard,
+            commands::git_commit,
+            commands::git_log,
+            commands::git_diff,
+            commands::git_branches,
+            commands::git_checkout_branch,
+        ])
+        .events(tauri_specta::collect_events![core::watcher::RepoChanged])
 }
 
 pub fn run() {
@@ -29,9 +55,21 @@ pub fn run() {
 
     fmt().with_env_filter(filter).init();
 
+    let builder = specta_builder::<tauri::Wry>();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .invoke_handler(builder.invoke_handler())
+        .setup(move |app| {
+            // Regenerate TS bindings on every dev run (committed via cargo test too).
+            #[cfg(debug_assertions)]
+            builder
+                .export(
+                    specta_typescript::Typescript::default(),
+                    "../src/lib/git/bindings.ts",
+                )
+                .expect("failed to export typescript bindings");
+            builder.mount_events(app);
             // Detect git version on startup
             let git_caps = match crate::core::compat::GitCapabilities::detect() {
                 Ok(caps) => {
@@ -70,13 +108,14 @@ pub fn run() {
                         let Some(generation) = generation else {
                             continue; // event for a repo we no longer know
                         };
-                        let payload = serde_json::json!({
-                            "repoId": ev.repo_id.0,
-                            "kinds": ev.kinds.names(),
-                            "generation": generation,
-                        });
-                        if let Err(e) = handle.emit("repo://changed", payload) {
-                            tracing::warn!("failed to emit repo://changed: {}", e);
+                        use tauri_specta::Event as _;
+                        let event = crate::core::watcher::RepoChanged {
+                            repo_id: ev.repo_id,
+                            kinds: ev.kinds.names(),
+                            generation: generation as u32,
+                        };
+                        if let Err(e) = event.emit(&handle) {
+                            tracing::warn!("failed to emit RepoChanged: {}", e);
                         }
                     }
                 });
@@ -90,22 +129,6 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::git_version,
-            commands::greet,
-            commands::repo_open,
-            commands::repo_close,
-            commands::repo_list,
-            commands::git_status,
-            commands::git_stage,
-            commands::git_unstage,
-            commands::git_discard,
-            commands::git_commit,
-            commands::git_log,
-            commands::git_diff,
-            commands::git_branches,
-            commands::git_checkout_branch,
-        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex, Semaphore};
-use ts_rs::TS;
 
 /// Max parallel read-only git operations across all repositories (PLAN §4.3:
 /// 只读操作可并行但限制并发数).
@@ -29,8 +28,28 @@ impl WriteGate {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct RepoId(pub u64);
+/// RepoId: FNV-1a hash of the worktree path. Serialized as a string on the
+/// wire — u64 exceeds JS `Number.MAX_SAFE_INTEGER` and would truncate.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
+pub struct RepoId(
+    #[serde(with = "u64_as_string")]
+    #[specta(type = String)]
+    pub u64,
+);
+
+mod u64_as_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+        String::deserialize(d)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
 
 impl RepoId {
     pub fn new(path: &Path) -> Self {
@@ -46,8 +65,7 @@ impl RepoId {
 /// Cached display snapshot for one repository. Per PLAN §4.3 the cache only
 /// accelerates display — the `.git` dir and worktree remain the source of
 /// truth, and every external event invalidates it.
-#[derive(Debug, Clone, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, specta::Type)]
 pub struct StatusSnapshot {
     pub generation: u64,
     /// Duration of the git re-read that produced this snapshot (SLA 埋点).

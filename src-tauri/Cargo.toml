@@ -26,7 +26,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-ts-rs = { version = "11", features = ["serde-compat", "no-serde-warnings"] }
+specta = { version = "2.0.0-rc", features = ["derive"] }
+tauri-specta = { version = "2.0.0-rc", features = ["javascript", "typescript", "derive"] }
+specta-typescript = "0.0.12"
 notify = "6"
 regex = "1"
 tokio = { version = "1", features = ["full"] }
@@ -45,3 +47,4 @@ strip = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "macros", "rt"] }
+tauri = { version = "2", features = ["test"] }

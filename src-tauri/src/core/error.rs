@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use ts_rs::TS;
 
 /// Application-wide error type.
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum AppError {
     #[serde(rename_all = "snake_case")]

@@ -9,12 +9,16 @@ use tauri::State;
 
 /// Return the detected git capabilities as JSON.
 #[tauri::command]
+#[specta::specta]
+
 pub fn git_version(caps: State<'_, GitCapabilities>) -> Result<String, String> {
     Ok(format!("{:?}", *caps))
 }
 
 /// Greet command (legacy from template).
 #[tauri::command]
+#[specta::specta]
+
 pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
@@ -24,6 +28,8 @@ pub fn greet(name: &str) -> String {
 // =====================
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn repo_open(
     path: String,
     repos: State<'_, RepoManager>,
@@ -39,6 +45,8 @@ pub async fn repo_open(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn repo_close(
     id: RepoId,
     repos: State<'_, RepoManager>,
@@ -49,6 +57,8 @@ pub async fn repo_close(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn repo_list(repos: State<'_, RepoManager>) -> Result<Vec<(RepoId, String)>, AppError> {
     Ok(repos
         .list()
@@ -63,6 +73,8 @@ pub async fn repo_list(repos: State<'_, RepoManager>) -> Result<Vec<(RepoId, Str
 // =====================
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_status(
     id: RepoId,
     repos: State<'_, RepoManager>,
@@ -72,6 +84,8 @@ pub async fn git_status(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_stage(
     id: RepoId,
     paths: Vec<String>,
@@ -84,6 +98,8 @@ pub async fn git_stage(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_unstage(
     id: RepoId,
     paths: Vec<String>,
@@ -96,6 +112,8 @@ pub async fn git_unstage(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_discard(
     id: RepoId,
     paths: Vec<String>,
@@ -108,6 +126,8 @@ pub async fn git_discard(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_commit(
     id: RepoId,
     message: String,
@@ -125,6 +145,8 @@ pub async fn git_commit(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_log(
     id: RepoId,
     limit: u32,
@@ -144,6 +166,8 @@ pub async fn git_log(
 // =====================
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_diff(
     id: RepoId,
     source: String,
@@ -177,6 +201,8 @@ pub async fn git_diff(
 // =====================
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_branches(
     id: RepoId,
     repos: State<'_, RepoManager>,
@@ -187,6 +213,8 @@ pub async fn git_branches(
 }
 
 #[tauri::command]
+#[specta::specta]
+
 pub async fn git_checkout_branch(
     id: RepoId,
     name: String,

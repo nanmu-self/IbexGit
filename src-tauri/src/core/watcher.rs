@@ -35,25 +35,25 @@ bitflags! {
 
 impl EventKinds {
     /// Stable string names for the frontend payload.
-    pub fn names(self) -> Vec<&'static str> {
+    pub fn names(self) -> Vec<String> {
         let mut out = Vec::new();
         if self.contains(Self::HEAD) {
-            out.push("head");
+            out.push("head".into());
         }
         if self.contains(Self::INDEX) {
-            out.push("index");
+            out.push("index".into());
         }
         if self.contains(Self::REFS) {
-            out.push("refs");
+            out.push("refs".into());
         }
         if self.contains(Self::MERGE_STATE) {
-            out.push("merge_state");
+            out.push("merge_state".into());
         }
         if self.contains(Self::WORKTREE) {
-            out.push("worktree");
+            out.push("worktree".into());
         }
         if self.contains(Self::CONFIG) {
-            out.push("config");
+            out.push("config".into());
         }
         out
     }
@@ -64,6 +64,16 @@ impl EventKinds {
 pub struct RepoEvent {
     pub repo_id: RepoId,
     pub kinds: EventKinds,
+}
+
+/// Typed event delivered to the frontend after an invalidation cycle
+/// completed and caches were re-read (tauri-specta generated bindings).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoChanged {
+    pub repo_id: RepoId,
+    pub kinds: Vec<String>,
+    pub generation: u32,
 }
 
 /// Locate the git dir for a worktree (handles the `.git` file of linked
@@ -430,7 +440,7 @@ mod tests {
     #[test]
     fn kinds_names_roundtrip() {
         let k = EventKinds::HEAD | EventKinds::WORKTREE;
-        assert_eq!(k.names(), vec!["head", "worktree"]);
+        assert_eq!(k.names(), vec!["head".to_string(), "worktree".to_string()]);
         assert_eq!(EventKinds::empty().names(), Vec::<&str>::new());
     }
 

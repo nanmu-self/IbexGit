@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { gitInvoke } from "$lib/git";
+  import { commands, normalizeError } from "$lib/git";
   import { toasts, removeToast } from "$lib/stores/toast";
 
   let gitCapabilities = $state<string>("Loading...");
@@ -9,7 +9,7 @@
 
   onMount(async () => {
     try {
-      const caps = await gitInvoke<string>("git_version");
+      const caps = await commands.gitVersion();
       gitCapabilities = caps;
     } catch (e) {
       errorMessage = e instanceof Error ? e.message : String(e);
@@ -67,9 +67,10 @@
           class="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           onclick={async () => {
             try {
-              await gitInvoke("greet", { name: "P0" });
-            } catch {
-              // error already toasted
+              await commands.greet("P0");
+            } catch (e) {
+              // surfaced as toast
+              normalizeError(e);
             }
           }}
         >
@@ -79,9 +80,10 @@
           class="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700"
           onclick={async () => {
             try {
-              await gitInvoke("nonexistent_command");
-            } catch {
-              // error already toasted
+              await commands.gitStatus("not-a-repo-id");
+            } catch (e) {
+              // surfaced as toast
+              normalizeError(e);
             }
           }}
         >

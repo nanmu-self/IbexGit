@@ -1,7 +1,6 @@
 use crate::core::error::AppError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 pub mod parse;
 
@@ -9,8 +8,7 @@ pub mod parse;
 // Types (shared)
 // =====================
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct FileStatus {
     pub path: String,
     pub status: String,
@@ -24,8 +22,7 @@ pub struct FileStatus {
     pub conflict: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct CommitInfo {
     pub hash: String,
     pub short_hash: String,
@@ -37,8 +34,7 @@ pub struct CommitInfo {
     pub parents: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DiffLine {
     pub content: String,
     pub left_no: Option<u32>,
@@ -46,8 +42,7 @@ pub struct DiffLine {
     pub kind: DiffLineKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffLineKind {
     Context,
@@ -56,8 +51,7 @@ pub enum DiffLineKind {
     Header,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DiffHunk {
     pub old_start: u32,
     pub old_count: u32,
@@ -67,8 +61,7 @@ pub struct DiffHunk {
     pub lines: Vec<DiffLine>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DiffFile {
     pub old_path: Option<String>,
     pub new_path: Option<String>,
@@ -77,8 +70,7 @@ pub struct DiffFile {
     pub hunks: Vec<DiffHunk>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DiffModel {
     pub source: DiffSource,
     pub old_revision: Option<String>,
@@ -86,8 +78,7 @@ pub struct DiffModel {
     pub files: Vec<DiffFile>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffSource {
     Worktree,
@@ -96,8 +87,7 @@ pub enum DiffSource {
     Stash,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct BranchInfo {
     pub name: String,
     pub full_name: String,
@@ -108,8 +98,7 @@ pub struct BranchInfo {
     pub detached: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct TagInfo {
     pub name: String,
     pub full_name: String,
@@ -119,8 +108,7 @@ pub struct TagInfo {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct RemoteInfo {
     pub name: String,
     pub url: String,
@@ -128,8 +116,7 @@ pub struct RemoteInfo {
     pub push_url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct StashEntry {
     pub index: usize,
     pub message: String,
@@ -137,8 +124,7 @@ pub struct StashEntry {
     pub date: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ReflogEntry {
     pub hash: String,
     pub short_hash: String,
@@ -148,8 +134,7 @@ pub struct ReflogEntry {
     pub author: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct RebaseState {
     pub state: String,
     pub current_step: u32,
@@ -157,31 +142,27 @@ pub struct RebaseState {
     pub current_commit: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct MergeResult {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct PullResult {
     pub success: bool,
     pub message: String,
     pub fast_forward: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct CommitResult {
     pub hash: String,
     pub short_hash: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/git/bindings/")]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct CloneProgress {
     pub phase: String,
     pub percent: Option<f32>,

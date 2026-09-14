@@ -26,8 +26,8 @@ pnpm tauri dev            # 桌面应用开发模式
 
 ```
 src/                        # SvelteKit 前端
-  lib/git/                  # invoke 封装、类型化命令 API、repo://changed 事件
-  lib/git/bindings/         # ts-rs 生成（勿手改）
+  lib/git/                  # 类型化命令 API、repo-changed 事件、错误归一化
+  lib/git/bindings.ts       # tauri-specta 生成（勿手改）
   lib/components/{ui,workspace,diff,history,refs,merge}
   lib/{keyboard,stores,i18n,theme}
 src-tauri/src/
@@ -66,8 +66,10 @@ docs/{PLAN.md,adr/,capability-matrix.md,design/}
    **不用** `thiserror::Error` derive（String source 与 AsDynError 冲突），
    手写 `Display` + `std::error::Error`——别"修复"回去。
 
-6. **`src/lib/git/bindings/` 由 ts-rs 生成**。改类型 = 改 Rust 结构体 +
-   `cargo test` 重新生成 + 提交产物。不要手改生成文件。
+6. **`src/lib/git/bindings.ts` 由 tauri-specta 生成**（ADR-009）。新增命令 =
+   Rust 端加 `#[tauri::command]` + `#[specta::specta]` → 登记进 lib.rs 的
+   `specta_builder()` → `cargo test` 重新生成 bindings.ts + 提交产物。
+   不要手改生成文件，不要用 `tauri::generate_handler!`。
 
 7. **Svelte 5 runes**（ADR-002）：新组件用 `$state/$derived/$effect`，
    不要引入 legacy `export let` / store 订阅语法（stores/ 目录的既有
@@ -83,8 +85,8 @@ docs/{PLAN.md,adr/,capability-matrix.md,design/}
   `tokio::time::advance`（tokio dev-dep 含 test-util）。
 - **真实 git 集成测试**（watcher 端到端、并发 stage、engine smoke 闭环）：
   临时目录 + `git init`，超时给足（≥10s）。CI 三平台都装了 git。
-- ts-rs 的导出测试在 `cargo test` 中运行；改了 Rust DTO 后记得提交
-  重新生成的 bindings。
+- bindings 导出测试（tests/bindings.rs）在 `cargo test` 中运行；改了
+  命令/事件/DTO 后记得提交重新生成的 bindings.ts。
 - 新增解析器/防抖/缓存行为必须有对应单测——这是 P1 的验收标准之一。
 
 ## CI（.github/workflows/ci.yml）
@@ -97,8 +99,12 @@ docs/{PLAN.md,adr/,capability-matrix.md,design/}
 - **版本钉子**：`typescript@^6` + `@typescript/native`（npm:typescript@^7）
   是 svelte-check 4.7 的要求，升级前先跑 `pnpm check` 验证。
 - 仓库用 LF（.gitattributes）；Windows 下开发也保持 LF。
-- 类型同步现状：P1 用 **ts-rs**（仅类型，产物入库），与 ADR-009 的
-  tauri-specta 决策有偏离——偏离理由见 ADR-009 附录，不要单方面切回。
+- 类型同步：tauri-specta（ADR-009），`ErrorHandlingMode::Throw`（命令
+  reject 而非 resolve 错误对象）；RepoId 走字符串序列化（u64 超 JS 安全
+  整数）。
+- Windows 已知坑：测试二进制没有 tauri-build 的 manifest，若链接 GUI 栈
+  （tao/muda 的 comctl32 v6 导入）会 STATUS_ENTRYPOINT_NOT_FOUND——
+  build.rs 已为 test 目标嵌入 tests.manifest，别删。
 - 提交信息风格：`<阶段>: <主题>`（如 `P1: ...`），正文列要点；
   一个逻辑单元一个提交。
 - PLAN.md 的阶段清单是进度真相源：完成一项勾一项（`[ ]` → `[x]`）。
