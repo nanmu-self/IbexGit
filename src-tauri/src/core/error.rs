@@ -1,7 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Application-wide error type.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum AppError {
     #[serde(rename_all = "snake_case")]
@@ -40,8 +41,8 @@ pub enum AppError {
     NotImplemented { feature: String },
 }
 
-impl std::fmt::Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { source, .. } => write!(f, "IO error: {}", source),
             Self::GitCommand { command, .. } => write!(f, "Git command failed: {}", command),
@@ -57,6 +58,8 @@ impl std::fmt::Display for AppError {
         }
     }
 }
+
+impl std::error::Error for AppError {}
 
 impl AppError {
     pub fn io(source: impl Into<String>) -> Self {

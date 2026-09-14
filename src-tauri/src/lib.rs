@@ -4,7 +4,14 @@ use tracing_subscriber::{fmt, EnvFilter};
 pub mod commands;
 pub mod core {
     pub mod compat;
+    pub mod engine;
     pub mod error;
+    pub mod graph;
+    pub mod recovery;
+    pub mod repo;
+    pub mod runner;
+    pub mod task;
+    pub mod watcher;
 }
 
 pub fn run() {
