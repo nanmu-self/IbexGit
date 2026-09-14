@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import Button from "$lib/components/ui/button/button.svelte";
 
   let name = $state("");
   let greetMsg = $state("");
@@ -12,9 +13,9 @@
 </script>
 
 <main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+  <h1 class="text-4xl font-bold mb-4">Welcome to Tauri + Svelte + shadcn-svelte</h1>
 
-  <div class="row">
+  <div class="row mb-8">
     <a href="https://vite.dev" target="_blank">
       <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
     </a>
@@ -25,13 +26,26 @@
       <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
     </a>
   </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
+  <p class="mb-4">Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
+  <form class="row mb-4" onsubmit={greet}>
+    <input
+      id="greet-input"
+      placeholder="Enter a name..."
+      bind:value={name}
+      class="border rounded-md px-3 py-2 mr-2"
+    />
+    <Button type="submit">Greet</Button>
   </form>
-  <p>{greetMsg}</p>
+  <p class="text-lg font-medium">{greetMsg}</p>
+
+  <div class="mt-8 flex gap-4 justify-center">
+    <Button variant="default">Default</Button>
+    <Button variant="destructive">Destructive</Button>
+    <Button variant="outline">Outline</Button>
+    <Button variant="secondary">Secondary</Button>
+    <Button variant="ghost">Ghost</Button>
+  </div>
 </main>
 
 <style>
