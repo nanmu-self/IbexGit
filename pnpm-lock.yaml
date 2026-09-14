@@ -16,7 +16,7 @@ importers:
         version: 2.5.5
       bits-ui:
         specifier: ^2.19.2
-        version: 2.19.2(@internationalized/date@3.12.4)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
+        version: 2.19.2(@internationalized/date@3.12.4)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -38,10 +38,10 @@ importers:
     devDependencies:
       '@sveltejs/adapter-static':
         specifier: ^3.0.10
-        version: 3.0.10(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))
+        version: 3.0.10(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))
       '@sveltejs/kit':
         specifier: ^2.65.1
-        version: 2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0))
+        version: 2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0))
       '@sveltejs/vite-plugin-svelte':
         specifier: ^7.1.2
         version: 7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0))
@@ -51,12 +51,15 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2
         version: 2.11.4
+      '@typescript/native':
+        specifier: npm:typescript@^7.0.2
+        version: typescript@7.0.2
       svelte:
         specifier: ^5.56.3
         version: 5.57.0
       svelte-check:
         specifier: ^4.6.0
-        version: 4.7.6(picomatch@4.0.7)(svelte@5.57.0)(typescript@7.0.2)
+        version: 4.7.6(picomatch@4.0.7)(svelte@5.57.0)(typescript@6.0.3)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -64,8 +67,8 @@ importers:
         specifier: ^1.4.0
         version: 1.4.0
       typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
+        specifier: ^6.0.3
+        version: 6.0.3
       vite:
         specifier: ^8.0.16
         version: 8.3.0(jiti@2.7.0)
@@ -959,6 +962,11 @@ packages:
   tw-animate-css@1.4.0:
     resolution: {integrity: sha512-7bziOlRqH0hJx80h/3mbicLW7o8qLsH5+RaLR2t+OHM3D0JlWGODQKQ4cxbK7WlvmUxpcj6Kgu6EKqjrGFe3QQ==}
 
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   typescript@7.0.2:
     resolution: {integrity: sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==}
     engines: {node: '>=16.20.0'}
@@ -1114,11 +1122,11 @@ snapshots:
     dependencies:
       acorn: 8.18.0
 
-  '@sveltejs/adapter-static@3.0.10(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))':
+  '@sveltejs/adapter-static@3.0.10(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))':
     dependencies:
-      '@sveltejs/kit': 2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0))
+      '@sveltejs/kit': 2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0))
 
-  '@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0))':
+  '@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0))':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@sveltejs/acorn-typescript': 1.0.13(acorn@8.18.0)
@@ -1136,7 +1144,7 @@ snapshots:
       svelte: 5.57.0
       vite: 8.3.0(jiti@2.7.0)
     optionalDependencies:
-      typescript: 7.0.2
+      typescript: 6.0.3
 
   '@sveltejs/load-config@0.2.3': {}
 
@@ -1344,15 +1352,15 @@ snapshots:
 
   axobject-query@4.1.0: {}
 
-  bits-ui@2.19.2(@internationalized/date@3.12.4)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0):
+  bits-ui@2.19.2(@internationalized/date@3.12.4)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0):
     dependencies:
       '@floating-ui/core': 1.8.0
       '@floating-ui/dom': 1.8.0
       '@internationalized/date': 3.12.4
       esm-env: 1.2.2
-      runed: 0.35.1(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
+      runed: 0.35.1(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
       svelte: 5.57.0
-      svelte-toolbelt: 0.10.6(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
+      svelte-toolbelt: 0.10.6(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
       tabbable: 6.5.0
     transitivePeerDependencies:
       - '@sveltejs/kit'
@@ -1574,14 +1582,14 @@ snapshots:
       '@rolldown/binding-win32-arm64-msvc': 1.2.8
       '@rolldown/binding-win32-x64-msvc': 1.2.8
 
-  runed@0.35.1(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0):
+  runed@0.35.1(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0):
     dependencies:
       dequal: 2.0.3
       esm-env: 1.2.2
       lz-string: 1.5.0
       svelte: 5.57.0
     optionalDependencies:
-      '@sveltejs/kit': 2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0))
+      '@sveltejs/kit': 2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0))
 
   sade@1.8.1:
     dependencies:
@@ -1609,7 +1617,7 @@ snapshots:
     dependencies:
       inline-style-parser: 0.2.4
 
-  svelte-check@4.7.6(picomatch@4.0.7)(svelte@5.57.0)(typescript@7.0.2):
+  svelte-check@4.7.6(picomatch@4.0.7)(svelte@5.57.0)(typescript@6.0.3):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@sveltejs/load-config': 0.2.3
@@ -1618,14 +1626,14 @@ snapshots:
       picocolors: 1.1.1
       sade: 1.8.1
       svelte: 5.57.0
-      typescript: 7.0.2
+      typescript: 6.0.3
     transitivePeerDependencies:
       - picomatch
 
-  svelte-toolbelt@0.10.6(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0):
+  svelte-toolbelt@0.10.6(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0):
     dependencies:
       clsx: 2.1.1
-      runed: 0.35.1(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@7.0.2)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
+      runed: 0.35.1(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.3.0(jiti@2.7.0)))(svelte@5.57.0)
       style-to-object: 1.0.8
       svelte: 5.57.0
     transitivePeerDependencies:
@@ -1674,6 +1682,8 @@ snapshots:
   tslib@2.8.1: {}
 
   tw-animate-css@1.4.0: {}
+
+  typescript@6.0.3: {}
 
   typescript@7.0.2:
     optionalDependencies:

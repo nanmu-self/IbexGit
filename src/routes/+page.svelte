@@ -1,170 +1,134 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
-  import Button from "$lib/components/ui/button/button.svelte";
+  import { onMount } from "svelte";
+  import { gitInvoke } from "$lib/git";
+  import { toasts, removeToast } from "$lib/stores/toast";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  let gitCapabilities = $state<string>("Loading...");
+  let errorMessage = $state<string>("");
+  let isDark = $state(false);
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  onMount(async () => {
+    try {
+      const caps = await gitInvoke<string>("git_version");
+      gitCapabilities = caps;
+    } catch (e) {
+      errorMessage = e instanceof Error ? e.message : String(e);
+    }
+  });
+
+  function toggleTheme() {
+    isDark = !isDark;
+    document.documentElement.classList.toggle("dark", isDark);
   }
 </script>
 
-<main class="container">
-  <h1 class="text-4xl font-bold mb-4">Welcome to Tauri + Svelte + shadcn-svelte</h1>
+<main class="flex flex-col h-screen">
+  <!-- Top Bar -->
+  <header class="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white font-bold">I</div>
+      <span class="font-semibold text-gray-900 dark:text-gray-100">IbexGit</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button
+        class="px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+        onclick={toggleTheme}
+      >
+        {isDark ? "Light" : "Dark"}
+      </button>
+    </div>
+  </header>
 
-  <div class="row mb-8">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
+  <!-- Content -->
+  <div class="flex-1 flex items-center justify-center p-8 bg-gray-50 dark:bg-gray-950">
+    <div class="max-w-2xl w-full space-y-6">
+      <div class="text-center space-y-2">
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100">IbexGit</h1>
+        <p class="text-gray-600 dark:text-gray-400">Local-first Git client · P0 空壳验证</p>
+      </div>
+
+      <!-- Git Version Card -->
+      <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4 shadow-sm">
+        <h2 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+          Git Capabilities
+        </h2>
+        {#if errorMessage}
+          <div class="text-red-600 dark:text-red-400 text-sm">
+            Failed to load: {errorMessage}
+          </div>
+        {:else}
+          <pre class="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{gitCapabilities}</pre>
+        {/if}
+      </div>
+
+      <!-- Actions -->
+      <div class="flex flex-wrap gap-3">
+        <button
+          class="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          onclick={async () => {
+            try {
+              await gitInvoke("greet", { name: "P0" });
+            } catch {
+              // error already toasted
+            }
+          }}
+        >
+          Test Greet
+        </button>
+        <button
+          class="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700"
+          onclick={async () => {
+            try {
+              await gitInvoke("nonexistent_command");
+            } catch {
+              // error already toasted
+            }
+          }}
+        >
+          Test Error Toast
+        </button>
+      </div>
+    </div>
   </div>
-  <p class="mb-4">Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
-  <form class="row mb-4" onsubmit={greet}>
-    <input
-      id="greet-input"
-      placeholder="Enter a name..."
-      bind:value={name}
-      class="border rounded-md px-3 py-2 mr-2"
-    />
-    <Button type="submit">Greet</Button>
-  </form>
-  <p class="text-lg font-medium">{greetMsg}</p>
-
-  <div class="mt-8 flex gap-4 justify-center">
-    <Button variant="default">Default</Button>
-    <Button variant="destructive">Destructive</Button>
-    <Button variant="outline">Outline</Button>
-    <Button variant="secondary">Secondary</Button>
-    <Button variant="ghost">Ghost</Button>
-  </div>
+  <!-- Status Bar -->
+  <footer class="flex items-center justify-between px-4 py-1.5 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400">
+    <span>P0 · Architecture bootstrap</span>
+    <span>No repository open</span>
+  </footer>
 </main>
 
+<!-- Toast Container -->
+<div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+  {#each $toasts as toast (toast.id)}
+    <div
+      class="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3 shadow-lg min-w-[300px] max-w-md"
+      role="alert"
+    >
+      <div class="flex-1">
+        <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
+          {toast.type === "error" ? "Error" : toast.type === "success" ? "Success" : toast.type}
+        </div>
+        {#if toast.detail}
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{toast.detail}</div>
+        {/if}
+      </div>
+      <button
+        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+        onclick={() => removeToast(toast.id)}
+      >
+        ×
+      </button>
+    </div>
+  {/each}
+</div>
+
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+  /* Dark mode is toggled via class on <html> */
+  :global(html.dark) {
+    color-scheme: dark;
   }
-
-  a:hover {
-    color: #24c8db;
+  :global(html:not(.dark)) {
+    color-scheme: light;
   }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
 </style>
