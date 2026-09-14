@@ -1,4 +1,4 @@
-use crate::core::engine::CliEngine;
+use crate::core::engine::GitEngine;
 use crate::core::error::AppError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -71,21 +71,33 @@ impl RepoQueue {
 /// RepoManager: open/close/list, session cache, per-repo queues.
 #[allow(dead_code)]
 pub struct RepoManager {
-    engine: Arc<CliEngine>,
+    engine: Arc<dyn GitEngine>,
     repos: Arc<Mutex<HashMap<RepoId, PathBuf>>>,
     queues: Arc<Mutex<HashMap<RepoId, RepoQueue>>>,
 }
 
 impl RepoManager {
-    pub fn new(engine: CliEngine) -> Self {
+    pub fn new(engine: Arc<dyn GitEngine>) -> Self {
         Self {
-            engine: Arc::new(engine),
+            engine,
             repos: Arc::new(Mutex::new(HashMap::new())),
             queues: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
+    /// Shared engine handle (GitEngine trait is the only entry point).
+    pub fn engine(&self) -> Arc<dyn GitEngine> {
+        self.engine.clone()
+    }
+
     pub async fn open(&self, path: PathBuf) -> Result<RepoId, AppError> {
+        // Validate: must be a git worktree (.git dir/file present).
+        let dot_git = path.join(".git");
+        if !dot_git.exists() {
+            return Err(AppError::InvalidRepo {
+                path: path.display().to_string(),
+            });
+        }
         let id = RepoId::new(&path);
         let mut repos = self.repos.lock().await;
         repos.insert(id, path);

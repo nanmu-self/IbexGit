@@ -1,4 +1,4 @@
-use crate::core::engine::{self, DiffModel, DiffSource};
+use crate::core::engine::{self, parse, DiffModel, DiffSource};
 use crate::core::error::AppError;
 use crate::core::runner::{GitProcessRunner, ProcessResult, StdinMode};
 
@@ -35,13 +35,13 @@ impl CliEngine {
             .await
     }
 
-    fn ensure_success(&self, res: ProcessResult) -> Result<(), AppError> {
+    fn ensure_success(&self, res: &ProcessResult) -> Result<(), AppError> {
         match res.exit_code {
             Some(0) => Ok(()),
             Some(code) => Err(AppError::git_command(
                 format!("git exited with code {}", code),
-                res.stderr,
-                res.stdout,
+                res.stderr.clone(),
+                res.stdout.clone(),
             )),
             None => Err(AppError::internal("git process terminated by signal")),
         }
@@ -53,54 +53,8 @@ impl engine::GitEngine for CliEngine {
     async fn status(&self, repo: &str) -> Result<Vec<engine::FileStatus>, AppError> {
         let args = ["-C", repo, "status", "--porcelain=v2", "-z"];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res.clone())?;
-
-        let mut out = Vec::new();
-        let raw = res.stdout;
-        for entry in raw.split('\0') {
-            if entry.is_empty() {
-                continue;
-            }
-            let parts: Vec<&str> = entry.split(' ').collect();
-            if parts.is_empty() {
-                continue;
-            }
-            let kind = parts[0];
-            let mut file_status = engine::FileStatus {
-                path: String::new(),
-                status: kind.to_string(),
-                submodule: false,
-                staged: false,
-                unstaged: false,
-                untracked: false,
-                skipped: false,
-                conflict: false,
-            };
-
-            if kind.starts_with('?') {
-                file_status.untracked = true;
-                file_status.path = parts.last().map(|s| s.to_string()).unwrap_or_default();
-            } else if kind.starts_with('M')
-                || kind.starts_with('A')
-                || kind.starts_with('D')
-                || kind.starts_with('R')
-                || kind.starts_with('C')
-            {
-                file_status.staged = true;
-                file_status.path = parts.last().map(|s| s.to_string()).unwrap_or_default();
-                if parts.len() > 1 && parts[1].contains('M') {
-                    file_status.unstaged = true;
-                }
-            } else if kind.starts_with('u') {
-                file_status.conflict = true;
-                file_status.path = parts.last().map(|s| s.to_string()).unwrap_or_default();
-            } else {
-                file_status.path = parts.last().map(|s| s.to_string()).unwrap_or_default();
-            }
-
-            out.push(file_status);
-        }
-        Ok(out)
+        self.ensure_success(&res)?;
+        Ok(parse::parse_status(&res.stdout))
     }
 
     async fn stage(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
@@ -110,7 +64,7 @@ impl engine::GitEngine for CliEngine {
         let mut args = vec!["-C", repo, "add"];
         args.extend(paths.iter().map(|s| s.as_str()));
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn unstage(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
@@ -120,7 +74,7 @@ impl engine::GitEngine for CliEngine {
         let mut args = vec!["-C", repo, "restore", "--staged"];
         args.extend(paths.iter().map(|s| s.as_str()));
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn discard(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
@@ -130,7 +84,7 @@ impl engine::GitEngine for CliEngine {
         let mut args = vec!["-C", repo, "restore"];
         args.extend(paths.iter().map(|s| s.as_str()));
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn commit(
@@ -151,7 +105,7 @@ impl engine::GitEngine for CliEngine {
         args.push(message);
 
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res.clone())?;
+        self.ensure_success(&res)?;
 
         let hash = extract_hash(&res.stdout).unwrap_or_default();
         Ok(engine::CommitResult {
@@ -168,7 +122,14 @@ impl engine::GitEngine for CliEngine {
         rev_range: Option<(&str, &str)>,
         paths: &[String],
     ) -> Result<DiffModel, AppError> {
-        let mut args = vec!["-C", repo, "diff", "--no-color", "--diff-filter=ACDMRTUXB"];
+        let mut args = vec![
+            "-C",
+            repo,
+            "diff",
+            "--no-color",
+            "-M",
+            "--diff-filter=ACDMRTUXB",
+        ];
         match source {
             DiffSource::Staged => args.push("--cached"),
             DiffSource::Commit => {
@@ -190,7 +151,7 @@ impl engine::GitEngine for CliEngine {
         }
 
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        let model = parse_diff(&res.stdout, source, rev_range)?;
+        let model = parse::parse_diff(&res.stdout, source, rev_range)?;
         Ok(model)
     }
 
@@ -228,14 +189,21 @@ impl engine::GitEngine for CliEngine {
 
         let args_refs: &[&str] = &args;
         let res = self.run(args_refs, StdinMode::Null, None, None).await?;
-        let commits = parse_log(&res.stdout);
+        let commits = parse::parse_log(&res.stdout);
         Ok(commits)
     }
 
     async fn list_branches(&self, repo: &str) -> Result<Vec<engine::BranchInfo>, AppError> {
-        let args = ["-C", repo, "branch", "-v", "--no-color"];
+        // for-each-ref gives upstream tracking (ahead/behind) that `branch -v` lacks.
+        let args = [
+            "-C",
+            repo,
+            "for-each-ref",
+            "--format=%(refname)%00%(refname:short)%00%(upstream:short)%00%(upstream:track)%00%(HEAD)%00%(objectname)",
+            "refs/heads/",
+        ];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        let branches = parse_branches(&res.stdout);
+        let branches = parse::parse_branches(&res.stdout);
         Ok(branches)
     }
 
@@ -250,7 +218,7 @@ impl engine::GitEngine for CliEngine {
             args.push(start);
         }
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn delete_branch(&self, repo: &str, name: &str, force: bool) -> Result<(), AppError> {
@@ -262,7 +230,7 @@ impl engine::GitEngine for CliEngine {
         }
         args.push(name);
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn rename_branch(
@@ -273,19 +241,19 @@ impl engine::GitEngine for CliEngine {
     ) -> Result<(), AppError> {
         let args = ["-C", repo, "branch", "-m", old_name, new_name];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn checkout_branch(&self, repo: &str, name: &str) -> Result<(), AppError> {
         let args = ["-C", repo, "checkout", name];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn list_tags(&self, repo: &str) -> Result<Vec<engine::TagInfo>, AppError> {
-        let args = ["-C", repo, "tag", "-l", "--format=%(refname:short)%n%(objectname:short)%n%(taggername)%n%(creatordate:iso)%n%(subject)"];
+        let args = ["-C", repo, "tag", "-l", "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(taggername)%00%(creatordate:iso)%00%(subject)"];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        let tags = parse_tags(&res.stdout);
+        let tags = parse::parse_tags(&res.stdout);
         Ok(tags)
     }
 
@@ -304,19 +272,19 @@ impl engine::GitEngine for CliEngine {
         }
         args.push(target);
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn delete_tag(&self, repo: &str, name: &str) -> Result<(), AppError> {
         let args = ["-C", repo, "tag", "-d", name];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn list_stash(&self, repo: &str) -> Result<Vec<engine::StashEntry>, AppError> {
-        let args = ["-C", repo, "stash", "list", "--format=%H%n%h%n%s%n%gd%n%cr"];
+        let args = ["-C", repo, "stash", "list", "--format=%H%00%gd%00%gs%00%cr"];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        let entries = parse_stash(&res.stdout);
+        let entries = parse::parse_stash(&res.stdout);
         Ok(entries)
     }
 
@@ -327,7 +295,7 @@ impl engine::GitEngine for CliEngine {
             args.push(msg);
         }
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res.clone())?;
+        self.ensure_success(&res)?;
         let idx = extract_stash_index(&res.stderr).unwrap_or(0);
         Ok(idx)
     }
@@ -335,19 +303,19 @@ impl engine::GitEngine for CliEngine {
     async fn stash_pop(&self, repo: &str, index: usize) -> Result<(), AppError> {
         let args = ["-C", repo, "stash", "pop", &format!("stash@{{{}}}", index)];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn stash_drop(&self, repo: &str, index: usize) -> Result<(), AppError> {
         let args = ["-C", repo, "stash", "drop", &format!("stash@{{{}}}", index)];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn list_remotes(&self, repo: &str) -> Result<Vec<engine::RemoteInfo>, AppError> {
         let args = ["-C", repo, "remote", "-v"];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        let remotes = parse_remotes(&res.stdout);
+        let remotes = parse::parse_remotes(&res.stdout);
         Ok(remotes)
     }
 
@@ -357,7 +325,7 @@ impl engine::GitEngine for CliEngine {
             args.push(r);
         }
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn reflog(
@@ -365,19 +333,19 @@ impl engine::GitEngine for CliEngine {
         repo: &str,
         ref_name: Option<&str>,
     ) -> Result<Vec<engine::ReflogEntry>, AppError> {
-        let mut args = vec!["-C", repo, "reflog", "--date=iso"];
+        let mut args = vec!["-C", repo, "reflog", "--format=%H%00%h%00%gd%00%gs%00%cr"];
         if let Some(r) = ref_name {
             args.push(r);
         }
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        let entries = parse_reflog(&res.stdout);
+        let entries = parse::parse_reflog(&res.stdout);
         Ok(entries)
     }
 
     async fn reset(&self, repo: &str, mode: &str, target: &str) -> Result<(), AppError> {
         let args = ["-C", repo, "reset", mode, target];
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn apply(
@@ -397,7 +365,7 @@ impl engine::GitEngine for CliEngine {
         let res = self
             .run(args, StdinMode::Feed, Some(patch.as_bytes()), None)
             .await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn push(
@@ -418,7 +386,7 @@ impl engine::GitEngine for CliEngine {
         args.push(remote);
         args.push(branch);
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)
+        self.ensure_success(&res)
     }
 
     async fn pull(
@@ -460,7 +428,7 @@ impl engine::GitEngine for CliEngine {
         }
         args.push(target);
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(res)?;
+        self.ensure_success(&res)?;
         Ok(engine::RebaseState {
             state: "finished".to_string(),
             current_step: 0,
@@ -489,87 +457,11 @@ impl engine::GitEngine for CliEngine {
         })
     }
 
-    async fn blame(&self, repo: &str, path: &str) -> Result<Vec<engine::ReflogEntry>, AppError> {
-        let args = ["-C", repo, "blame", "--porcelain", path];
-        let res = self.run(args, StdinMode::Null, None, None).await?;
-        let entries = parse_blame(&res.stdout);
-        Ok(entries)
+    async fn blame(&self, repo: &str, _path: &str) -> Result<Vec<engine::ReflogEntry>, AppError> {
+        // Blame lands in P4 (own BlameLine type); placeholder until then.
+        let _ = repo;
+        Err(AppError::not_implemented("blame"))
     }
-}
-
-// =====================
-// Parsers (P1 minimal)
-// =====================
-
-fn parse_diff(
-    _output: &str,
-    _source: DiffSource,
-    _rev_range: Option<(&str, &str)>,
-) -> Result<DiffModel, AppError> {
-    Ok(DiffModel {
-        source: _source,
-        old_revision: _rev_range.map(|(a, _)| a.to_string()),
-        new_revision: _rev_range.map(|(_, b)| b.to_string()),
-        files: Vec::new(),
-    })
-}
-
-fn parse_log(output: &str) -> Vec<engine::CommitInfo> {
-    let mut commits = Vec::new();
-    let lines: Vec<&str> = output.lines().collect();
-    let mut i = 0;
-    while i + 6 < lines.len() {
-        let hash = lines[i].to_string();
-        let short_hash = lines[i + 1].to_string();
-        let author = lines[i + 2].to_string();
-        let email = lines[i + 3].to_string();
-        let date = lines[i + 4].to_string();
-        let message = lines[i + 5].to_string();
-        let refs_str = lines[i + 6].to_string();
-        let refs: Vec<String> = refs_str
-            .trim_matches(|c| c == '(' || c == ')')
-            .split(", ")
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-        let parents = Vec::new();
-        commits.push(engine::CommitInfo {
-            hash,
-            short_hash,
-            author,
-            email,
-            date,
-            message,
-            refs,
-            parents,
-        });
-        i += 7;
-    }
-    commits
-}
-
-fn parse_branches(_output: &str) -> Vec<engine::BranchInfo> {
-    Vec::new()
-}
-
-fn parse_tags(_output: &str) -> Vec<engine::TagInfo> {
-    Vec::new()
-}
-
-fn parse_stash(_output: &str) -> Vec<engine::StashEntry> {
-    Vec::new()
-}
-
-fn parse_remotes(_output: &str) -> Vec<engine::RemoteInfo> {
-    Vec::new()
-}
-
-fn parse_reflog(_output: &str) -> Vec<engine::ReflogEntry> {
-    Vec::new()
-}
-
-fn parse_blame(_output: &str) -> Vec<engine::ReflogEntry> {
-    Vec::new()
 }
 
 // =====================

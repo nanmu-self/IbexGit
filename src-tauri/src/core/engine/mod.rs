@@ -2,6 +2,8 @@ use crate::core::error::AppError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+pub mod parse;
+
 // =====================
 // Types (shared)
 // =====================
@@ -10,6 +12,8 @@ use serde::{Deserialize, Serialize};
 pub struct FileStatus {
     pub path: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orig_path: Option<String>,
     pub submodule: bool,
     pub staged: bool,
     pub unstaged: bool,
