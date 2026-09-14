@@ -8,7 +8,7 @@ pub mod parse;
 // Types (shared)
 // =====================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileStatus {
     pub path: String,
     pub status: String,

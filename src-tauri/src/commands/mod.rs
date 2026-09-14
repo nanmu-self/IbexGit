@@ -2,6 +2,7 @@ use crate::core::compat::GitCapabilities;
 use crate::core::engine::DiffSource;
 use crate::core::error::AppError;
 use crate::core::repo::{RepoId, RepoManager};
+use crate::core::watcher::WatcherHub;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
@@ -26,13 +27,24 @@ pub fn greet(name: &str) -> String {
 pub async fn repo_open(
     path: String,
     repos: State<'_, RepoManager>,
+    hub: State<'_, WatcherHub>,
 ) -> Result<(RepoId, String), AppError> {
-    let id = repos.open(PathBuf::from(&path)).await?;
+    let pb = PathBuf::from(&path);
+    let id = repos.open(pb.clone()).await?;
+    // Start external-change watching (state invalidation system, PLAN §4.3).
+    if let Some(git_dir) = crate::core::watcher::resolve_git_dir(&pb) {
+        hub.add_repo(id, git_dir, pb).await?;
+    }
     Ok((id, path))
 }
 
 #[tauri::command]
-pub async fn repo_close(id: RepoId, repos: State<'_, RepoManager>) -> Result<(), AppError> {
+pub async fn repo_close(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+    hub: State<'_, WatcherHub>,
+) -> Result<(), AppError> {
+    hub.remove_repo(id).await;
     repos.close(id).await
 }
 
@@ -55,14 +67,8 @@ pub async fn git_status(
     id: RepoId,
     repos: State<'_, RepoManager>,
 ) -> Result<Vec<crate::core::engine::FileStatus>, AppError> {
-    let path = repos
-        .get_path(id)
-        .await
-        .ok_or_else(|| AppError::InvalidRepo {
-            path: id.0.to_string(),
-        })?;
-    let engine = repos.engine();
-    engine.status(&path.display().to_string()).await
+    // Display-cache fast path; invalidated by the watcher on every change.
+    repos.status(id).await
 }
 
 #[tauri::command]

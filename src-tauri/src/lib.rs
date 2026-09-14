@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tracing_subscriber::{fmt, EnvFilter};
 
 pub mod commands;
@@ -53,6 +53,34 @@ pub fn run() {
             let engine: std::sync::Arc<dyn crate::core::engine::GitEngine> =
                 std::sync::Arc::new(crate::core::engine::CliEngine::new(runner, "git"));
             app.manage(crate::core::repo::RepoManager::new(engine));
+
+            // State invalidation system (PLAN §4.3):
+            // fs event → classify → debounce(300ms, cap 1s) → invalidate caches
+            // → re-read status → emit repo://changed to the frontend.
+            let hub = std::sync::Arc::new(crate::core::watcher::WatcherHub::new());
+            app.manage(hub.clone());
+            if let Some(mut events) = hub.take_receiver() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Some(ev) = events.recv().await {
+                        let generation = {
+                            let repos = handle.state::<crate::core::repo::RepoManager>();
+                            repos.invalidate(ev.repo_id, ev.kinds).await
+                        };
+                        let Some(generation) = generation else {
+                            continue; // event for a repo we no longer know
+                        };
+                        let payload = serde_json::json!({
+                            "repoId": ev.repo_id.0,
+                            "kinds": ev.kinds.names(),
+                            "generation": generation,
+                        });
+                        if let Err(e) = handle.emit("repo://changed", payload) {
+                            tracing::warn!("failed to emit repo://changed: {}", e);
+                        }
+                    }
+                });
+            }
 
             #[cfg(debug_assertions)]
             {

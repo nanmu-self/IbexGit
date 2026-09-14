@@ -1,8 +1,10 @@
-use crate::core::engine::GitEngine;
+use crate::core::engine::{FileStatus, GitEngine};
 use crate::core::error::AppError;
+use crate::core::watcher::EventKinds;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -68,12 +70,30 @@ impl RepoQueue {
     }
 }
 
+/// Cached display snapshot for one repository. Per PLAN §4.3 the cache only
+/// accelerates display — the `.git` dir and worktree remain the source of
+/// truth, and every external event invalidates it.
+#[derive(Debug, Clone)]
+pub struct StatusSnapshot {
+    pub generation: u64,
+    /// Duration of the git re-read that produced this snapshot (SLA 埋点).
+    pub duration_ms: u64,
+    pub status: Vec<FileStatus>,
+}
+
+#[derive(Debug, Default)]
+struct Session {
+    generation: u64,
+    status: Option<StatusSnapshot>,
+}
+
 /// RepoManager: open/close/list, session cache, per-repo queues.
 #[allow(dead_code)]
 pub struct RepoManager {
     engine: Arc<dyn GitEngine>,
     repos: Arc<Mutex<HashMap<RepoId, PathBuf>>>,
     queues: Arc<Mutex<HashMap<RepoId, RepoQueue>>>,
+    sessions: Arc<Mutex<HashMap<RepoId, Session>>>,
 }
 
 impl RepoManager {
@@ -82,6 +102,7 @@ impl RepoManager {
             engine,
             repos: Arc::new(Mutex::new(HashMap::new())),
             queues: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -107,7 +128,101 @@ impl RepoManager {
     pub async fn close(&self, id: RepoId) -> Result<(), AppError> {
         let mut repos = self.repos.lock().await;
         repos.remove(&id);
+        drop(repos);
+        self.sessions.lock().await.remove(&id);
         Ok(())
+    }
+
+    /// Invalidate caches after an fs event (external or our own writes), then
+    /// re-read status (PLAN §4.3: 失效 → 防抖重读). Returns the new generation,
+    /// or `None` for unknown repositories.
+    pub async fn invalidate(&self, id: RepoId, kinds: EventKinds) -> Option<u64> {
+        let path = {
+            let repos = self.repos.lock().await;
+            repos.get(&id)?.clone()
+        };
+        let generation = {
+            let mut sessions = self.sessions.lock().await;
+            let s = sessions.entry(id).or_default();
+            s.generation += 1;
+            s.status = None;
+            s.generation
+        };
+        tracing::debug!(
+            repo = id.0,
+            ?kinds,
+            generation,
+            sla = "invalidate",
+            "cache invalidated; re-reading"
+        );
+
+        // 防抖重读：probe status right away so the next frontend read hits cache.
+        let started = Instant::now();
+        match self.engine.status(&path.display().to_string()).await {
+            Ok(status) => {
+                let duration_ms = started.elapsed().as_millis() as u64;
+                tracing::debug!(
+                    repo = id.0,
+                    generation,
+                    reread_ms = duration_ms,
+                    sla = "git_reread",
+                    "status re-read after invalidation"
+                );
+                let mut sessions = self.sessions.lock().await;
+                if let Some(s) = sessions.get_mut(&id) {
+                    // Only store if no newer invalidation happened meanwhile.
+                    if s.generation == generation {
+                        s.status = Some(StatusSnapshot {
+                            generation,
+                            duration_ms,
+                            status,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    repo = id.0,
+                    error = %e,
+                    "status re-read after invalidation failed; next read retries"
+                );
+            }
+        }
+        Some(generation)
+    }
+
+    /// Repository status with display-cache fast path (读取即校验版本：
+    /// the cache is dropped on every change event, so a hit implies freshness).
+    pub async fn status(&self, id: RepoId) -> Result<Vec<FileStatus>, AppError> {
+        {
+            let sessions = self.sessions.lock().await;
+            if let Some(snap) = sessions.get(&id).and_then(|s| s.status.as_ref()) {
+                return Ok(snap.status.clone());
+            }
+        }
+        let path = self
+            .get_path(id)
+            .await
+            .ok_or_else(|| AppError::InvalidRepo {
+                path: id.0.to_string(),
+            })?;
+        let started = Instant::now();
+        let status = self.engine.status(&path.display().to_string()).await?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        tracing::debug!(
+            repo = id.0,
+            reread_ms = duration_ms,
+            sla = "git_reread",
+            "cold status read"
+        );
+        let mut sessions = self.sessions.lock().await;
+        let s = sessions.entry(id).or_default();
+        s.status = Some(StatusSnapshot {
+            generation: s.generation,
+            duration_ms,
+            status: status.clone(),
+        });
+        Ok(status)
     }
 
     pub async fn get_path(&self, id: RepoId) -> Option<PathBuf> {
@@ -126,5 +241,239 @@ impl RepoManager {
             .entry(id)
             .or_insert_with(|| RepoQueue::new(id))
             .clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::engine::{
+        BranchInfo, CommitInfo, CommitResult, DiffModel, DiffSource, PullResult, RebaseState,
+        ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Minimal in-memory engine: counts status calls, fails everything else.
+    struct MockEngine {
+        status_calls: AtomicUsize,
+    }
+
+    fn err(feature: &str) -> AppError {
+        AppError::not_implemented(feature)
+    }
+
+    #[async_trait::async_trait]
+    impl GitEngine for MockEngine {
+        async fn status(&self, _repo: &str) -> Result<Vec<FileStatus>, AppError> {
+            self.status_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![FileStatus {
+                path: "a.txt".into(),
+                status: ".M".into(),
+                orig_path: None,
+                submodule: false,
+                staged: false,
+                unstaged: true,
+                untracked: false,
+                skipped: false,
+                conflict: false,
+            }])
+        }
+        async fn stage(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("stage"))
+        }
+        async fn unstage(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("unstage"))
+        }
+        async fn discard(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("discard"))
+        }
+        async fn commit(
+            &self,
+            _: &str,
+            _: &str,
+            _: bool,
+            _: bool,
+        ) -> Result<CommitResult, AppError> {
+            Err(err("commit"))
+        }
+        async fn diff(
+            &self,
+            _: &str,
+            _: DiffSource,
+            _: Option<(&str, &str)>,
+            _: &[String],
+        ) -> Result<DiffModel, AppError> {
+            Err(err("diff"))
+        }
+        async fn log(
+            &self,
+            _: &str,
+            _: u32,
+            _: u32,
+            _: &[String],
+        ) -> Result<Vec<CommitInfo>, AppError> {
+            Err(err("log"))
+        }
+        async fn list_branches(&self, _: &str) -> Result<Vec<BranchInfo>, AppError> {
+            Err(err("branches"))
+        }
+        async fn create_branch(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), AppError> {
+            Err(err("create_branch"))
+        }
+        async fn delete_branch(&self, _: &str, _: &str, _: bool) -> Result<(), AppError> {
+            Err(err("delete_branch"))
+        }
+        async fn rename_branch(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("rename_branch"))
+        }
+        async fn checkout_branch(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("checkout_branch"))
+        }
+        async fn list_tags(&self, _: &str) -> Result<Vec<TagInfo>, AppError> {
+            Err(err("tags"))
+        }
+        async fn create_tag(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &str,
+        ) -> Result<(), AppError> {
+            Err(err("create_tag"))
+        }
+        async fn delete_tag(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("delete_tag"))
+        }
+        async fn list_stash(&self, _: &str) -> Result<Vec<StashEntry>, AppError> {
+            Err(err("stash"))
+        }
+        async fn stash_push(&self, _: &str, _: Option<&str>) -> Result<usize, AppError> {
+            Err(err("stash_push"))
+        }
+        async fn stash_pop(&self, _: &str, _: usize) -> Result<(), AppError> {
+            Err(err("stash_pop"))
+        }
+        async fn stash_drop(&self, _: &str, _: usize) -> Result<(), AppError> {
+            Err(err("stash_drop"))
+        }
+        async fn list_remotes(&self, _: &str) -> Result<Vec<RemoteInfo>, AppError> {
+            Err(err("remotes"))
+        }
+        async fn fetch(&self, _: &str, _: Option<&str>) -> Result<(), AppError> {
+            Err(err("fetch"))
+        }
+        async fn reflog(&self, _: &str, _: Option<&str>) -> Result<Vec<ReflogEntry>, AppError> {
+            Err(err("reflog"))
+        }
+        async fn reset(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("reset"))
+        }
+        async fn apply(&self, _: &str, _: &str, _: bool, _: bool) -> Result<(), AppError> {
+            Err(err("apply"))
+        }
+        async fn push(&self, _: &str, _: &str, _: &str, _: bool, _: bool) -> Result<(), AppError> {
+            Err(err("push"))
+        }
+        async fn pull(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: Option<&str>,
+        ) -> Result<PullResult, AppError> {
+            Err(err("pull"))
+        }
+        async fn rebase(&self, _: &str, _: &str, _: &[&str]) -> Result<RebaseState, AppError> {
+            Err(err("rebase"))
+        }
+        async fn merge(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<crate::core::engine::MergeResult, AppError> {
+            Err(err("merge"))
+        }
+        async fn blame(&self, _: &str, _: &str) -> Result<Vec<ReflogEntry>, AppError> {
+            Err(err("blame"))
+        }
+    }
+
+    fn temp_repo() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ibexgit-repomgr-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn status_caches_until_invalidation() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+
+        // Two reads → one engine call (cache hit on the second).
+        let s1 = mgr.status(id).await.unwrap();
+        let s2 = mgr.status(id).await.unwrap();
+        assert_eq!(s1.len(), 1);
+        assert_eq!(s1, s2);
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 1);
+
+        // Invalidation re-reads immediately (防抖重读) → call 2.
+        let gen = mgr.invalidate(id, EventKinds::INDEX).await.unwrap();
+        assert_eq!(gen, 1);
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 2);
+
+        // Subsequent read hits the fresh cache → still 2.
+        let s3 = mgr.status(id).await.unwrap();
+        assert_eq!(s3, s1);
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 2);
+
+        // Generation monotonically increases per event.
+        let gen2 = mgr.invalidate(id, EventKinds::WORKTREE).await.unwrap();
+        assert_eq!(gen2, 2);
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 3);
+
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn invalidate_unknown_repo_returns_none() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        assert!(mgr
+            .invalidate(RepoId(999), EventKinds::INDEX)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn close_drops_session_cache() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+        let _ = mgr.status(id).await.unwrap();
+        mgr.close(id).await.unwrap();
+        // Re-open same path: fresh session → cold read again.
+        mgr.open(dir.clone()).await.unwrap();
+        let _ = mgr.status(id).await.unwrap();
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
