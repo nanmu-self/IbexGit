@@ -107,10 +107,21 @@ impl engine::GitEngine for CliEngine {
         let res = self.run(args, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)?;
 
-        let hash = extract_hash(&res.stdout).unwrap_or_default();
+        // The commit's stdout only carries an abbreviated, decorated hash —
+        // resolve the authoritative full hash via rev-parse.
+        let res = self
+            .run(
+                ["-C", repo, "rev-parse", "HEAD"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        let hash = res.stdout.trim().to_string();
         Ok(engine::CommitResult {
-            hash: hash.clone(),
             short_hash: hash.chars().take(7).collect(),
+            hash,
             message: message.to_string(),
         })
     }
@@ -467,20 +478,6 @@ impl engine::GitEngine for CliEngine {
 // =====================
 // Parsers (P1 minimal)
 // =====================
-
-fn extract_hash(output: &str) -> Option<String> {
-    for line in output.lines() {
-        if line.contains("[") && line.contains("]") {
-            let start = line.find('[')? + 1;
-            let end = line.find(']')?;
-            let hash = line[start..end].trim().to_string();
-            if hash.len() >= 7 {
-                return Some(hash);
-            }
-        }
-    }
-    None
-}
 
 fn extract_stash_index(stderr: &str) -> Option<usize> {
     for line in stderr.lines() {
