@@ -77,6 +77,8 @@ pub async fn git_stage(
     paths: Vec<String>,
     repos: State<'_, RepoManager>,
 ) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos.engine().stage(&path, &paths).await
 }
@@ -87,6 +89,8 @@ pub async fn git_unstage(
     paths: Vec<String>,
     repos: State<'_, RepoManager>,
 ) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos.engine().unstage(&path, &paths).await
 }
@@ -97,6 +101,8 @@ pub async fn git_discard(
     paths: Vec<String>,
     repos: State<'_, RepoManager>,
 ) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos.engine().discard(&path, &paths).await
 }
@@ -109,6 +115,8 @@ pub async fn git_commit(
     no_verify: bool,
     repos: State<'_, RepoManager>,
 ) -> Result<crate::core::engine::CommitResult, AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos
         .engine()
@@ -124,6 +132,7 @@ pub async fn git_log(
     paths: Option<Vec<String>>,
     repos: State<'_, RepoManager>,
 ) -> Result<Vec<crate::core::engine::CommitInfo>, AppError> {
+    let _permit = repos.read_permit().await?;
     let path = resolve(&repos, id).await?;
     let empty: Vec<String> = Vec::new();
     let paths = paths.as_deref().unwrap_or(&empty);
@@ -143,6 +152,7 @@ pub async fn git_diff(
     paths: Option<Vec<String>>,
     repos: State<'_, RepoManager>,
 ) -> Result<crate::core::engine::DiffModel, AppError> {
+    let _permit = repos.read_permit().await?;
     let path = resolve(&repos, id).await?;
     let diff_source = match source.as_str() {
         "staged" => DiffSource::Staged,
@@ -171,6 +181,7 @@ pub async fn git_branches(
     id: RepoId,
     repos: State<'_, RepoManager>,
 ) -> Result<Vec<crate::core::engine::BranchInfo>, AppError> {
+    let _permit = repos.read_permit().await?;
     let path = resolve(&repos, id).await?;
     repos.engine().list_branches(&path).await
 }
@@ -181,6 +192,8 @@ pub async fn git_checkout_branch(
     name: String,
     repos: State<'_, RepoManager>,
 ) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos.engine().checkout_branch(&path, &name).await
 }

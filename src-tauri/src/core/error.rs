@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use ts_rs::TS;
 
 /// Application-wide error type.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/git/bindings/")]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum AppError {
     #[serde(rename_all = "snake_case")]
@@ -20,25 +22,34 @@ pub enum AppError {
     },
 
     #[serde(rename_all = "snake_case")]
-    GitVersionTooOld { found: String, required: String },
+    GitVersionTooOld {
+        found: String,
+        required: String,
+    },
 
     #[serde(rename_all = "snake_case")]
-    InvalidRepo { path: String },
+    InvalidRepo {
+        path: String,
+    },
 
-    #[serde(rename_all = "snake_case")]
     OperationCancelled,
 
-    #[serde(rename_all = "snake_case")]
     CredentialCancelled,
 
     #[serde(rename_all = "snake_case")]
-    Parse { message: String },
+    Parse {
+        message: String,
+    },
 
     #[serde(rename_all = "snake_case")]
-    Internal { message: String },
+    Internal {
+        message: String,
+    },
 
     #[serde(rename_all = "snake_case")]
-    NotImplemented { feature: String },
+    NotImplemented {
+        feature: String,
+    },
 }
 
 impl fmt::Display for AppError {

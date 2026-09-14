@@ -5,7 +5,29 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Semaphore};
+use ts_rs::TS;
+
+/// Max parallel read-only git operations across all repositories (PLAN §4.3:
+/// 只读操作可并行但限制并发数).
+const MAX_CONCURRENT_READS: usize = 8;
+
+/// Per-repository write gate: mutating operations (stage/commit/checkout/…)
+/// hold it while running so they execute strictly serially, avoiding
+/// `index.lock` conflicts (PLAN §4.3 内部并发).
+///
+/// [`tokio::sync::Mutex`] is FIFO-fair, so the gate doubles as an ordered
+/// operation queue: whoever requests next runs next.
+#[derive(Clone, Debug, Default)]
+pub struct WriteGate {
+    inner: Arc<Mutex<()>>,
+}
+
+impl WriteGate {
+    pub async fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.lock().await
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RepoId(pub u64);
@@ -19,6 +41,24 @@ impl RepoId {
         }
         RepoId(h)
     }
+}
+
+/// Cached display snapshot for one repository. Per PLAN §4.3 the cache only
+/// accelerates display — the `.git` dir and worktree remain the source of
+/// truth, and every external event invalidates it.
+#[derive(Debug, Clone, TS)]
+#[ts(export, export_to = "../../src/lib/git/bindings/")]
+pub struct StatusSnapshot {
+    pub generation: u64,
+    /// Duration of the git re-read that produced this snapshot (SLA 埋点).
+    pub duration_ms: u64,
+    pub status: Vec<FileStatus>,
+}
+
+#[derive(Debug, Default)]
+struct Session {
+    generation: u64,
+    status: Option<StatusSnapshot>,
 }
 
 /// A queued operation (serialized per-repo).
@@ -70,30 +110,14 @@ impl RepoQueue {
     }
 }
 
-/// Cached display snapshot for one repository. Per PLAN §4.3 the cache only
-/// accelerates display — the `.git` dir and worktree remain the source of
-/// truth, and every external event invalidates it.
-#[derive(Debug, Clone)]
-pub struct StatusSnapshot {
-    pub generation: u64,
-    /// Duration of the git re-read that produced this snapshot (SLA 埋点).
-    pub duration_ms: u64,
-    pub status: Vec<FileStatus>,
-}
-
-#[derive(Debug, Default)]
-struct Session {
-    generation: u64,
-    status: Option<StatusSnapshot>,
-}
-
-/// RepoManager: open/close/list, session cache, per-repo queues.
-#[allow(dead_code)]
+/// RepoManager: open/close/list, session cache, per-repo write gates.
+#[derive(Clone)]
 pub struct RepoManager {
     engine: Arc<dyn GitEngine>,
     repos: Arc<Mutex<HashMap<RepoId, PathBuf>>>,
-    queues: Arc<Mutex<HashMap<RepoId, RepoQueue>>>,
+    gates: Arc<Mutex<HashMap<RepoId, WriteGate>>>,
     sessions: Arc<Mutex<HashMap<RepoId, Session>>>,
+    reads: Arc<Semaphore>,
 }
 
 impl RepoManager {
@@ -101,9 +125,30 @@ impl RepoManager {
         Self {
             engine,
             repos: Arc::new(Mutex::new(HashMap::new())),
-            queues: Arc::new(Mutex::new(HashMap::new())),
+            gates: Arc::new(Mutex::new(HashMap::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            reads: Arc::new(Semaphore::new(MAX_CONCURRENT_READS)),
         }
+    }
+
+    /// Gate for serializing mutating operations on a repository. Unknown
+    /// repositories are rejected so gates can't be created ad hoc.
+    pub async fn write_gate(&self, id: RepoId) -> Result<WriteGate, AppError> {
+        if self.get_path(id).await.is_none() {
+            return Err(AppError::InvalidRepo {
+                path: id.0.to_string(),
+            });
+        }
+        Ok(self.gates.lock().await.entry(id).or_default().clone())
+    }
+
+    /// Permit for one read-only git operation; caps global parallelism.
+    pub async fn read_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit, AppError> {
+        self.reads
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| AppError::internal(e.to_string()))
     }
 
     /// Shared engine handle (GitEngine trait is the only entry point).
@@ -233,14 +278,6 @@ impl RepoManager {
     pub async fn list(&self) -> Vec<(RepoId, PathBuf)> {
         let repos = self.repos.lock().await;
         repos.iter().map(|(k, v)| (*k, v.clone())).collect()
-    }
-
-    pub async fn queue(&self, id: RepoId) -> RepoQueue {
-        let mut queues = self.queues.lock().await;
-        queues
-            .entry(id)
-            .or_insert_with(|| RepoQueue::new(id))
-            .clone()
     }
 }
 
@@ -458,6 +495,132 @@ mod tests {
             .invalidate(RepoId(999), EventKinds::INDEX)
             .await
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn write_gate_serializes_and_rejects_unknown_repo() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
+        assert!(mgr.write_gate(RepoId(42)).await.is_err());
+
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+        let gate = mgr.write_gate(id).await.unwrap();
+
+        use std::sync::atomic::AtomicUsize;
+        let inside = Arc::new(AtomicUsize::new(0));
+
+        // Hold the gate; a second contender must wait.
+        let g1 = gate.lock().await;
+        let contender = {
+            let gate = gate.clone();
+            let inside = inside.clone();
+            tokio::spawn(async move {
+                let _g = gate.lock().await;
+                inside.fetch_add(1, Ordering::SeqCst);
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            inside.load(Ordering::SeqCst),
+            0,
+            "contender must not enter while gate is held"
+        );
+        drop(g1);
+        contender.await.unwrap();
+        assert_eq!(inside.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// PLAN §4.3 P1 acceptance: hammering stage concurrently must never
+    /// surface index.lock errors — the gate serializes the writes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_stages_never_hit_index_lock() {
+        use crate::core::engine::CliEngine;
+        use crate::core::runner::GitProcessRunner;
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join(format!(
+            "ibexgit-concurrent-stage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .expect("git available")
+            .success());
+        assert!(Command::new("git")
+            .args(["-C", dir.to_str().unwrap(), "config", "user.email", "t@t"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["-C", dir.to_str().unwrap(), "config", "user.name", "t"])
+            .status()
+            .unwrap()
+            .success());
+
+        let engine: Arc<dyn GitEngine> = Arc::new(CliEngine::new(GitProcessRunner::new(60), "git"));
+        let mgr = RepoManager::new(engine);
+        let id = mgr.open(dir.clone()).await.unwrap();
+        let gate = mgr.write_gate(id).await.unwrap();
+
+        let n = 8;
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let gate = gate.clone();
+            let mgr = mgr.clone();
+            let path = dir.clone();
+            handles.push(tokio::spawn(async move {
+                // Each task stages a distinct file, concurrently.
+                let file = path.join(format!("f{}.txt", i));
+                std::fs::write(&file, format!("content {}", i)).unwrap();
+                let _guard = gate.lock().await;
+                mgr.engine()
+                    .stage(&path.display().to_string(), &[format!("f{}.txt", i)])
+                    .await
+            }));
+        }
+        for h in handles {
+            let res = h.await.unwrap();
+            assert!(res.is_ok(), "concurrent stage failed: {:?}", res.err());
+        }
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn read_permit_caps_parallelism() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
+        let mut permits = Vec::new();
+        for _ in 0..MAX_CONCURRENT_READS {
+            permits.push(mgr.read_permit().await.unwrap());
+        }
+        // All permits held → the next acquire must pend (not error, not pass).
+        let mgr2 = std::sync::Arc::new(mgr);
+        let waiter = {
+            let mgr = mgr2.clone();
+            tokio::spawn(async move { mgr.read_permit().await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!waiter.is_finished(), "9th permit must wait");
+        drop(permits);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(500), waiter)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]

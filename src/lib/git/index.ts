@@ -3,78 +3,33 @@ import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
 
 // =====================
-// Types mirroring Rust engine structs
+// Types generated from Rust structs via ts-rs (cargo test regenerates
+// src/lib/git/bindings/). Do not edit manually — edit the Rust structs.
 // =====================
 
-export interface FileStatus {
-  path: string;
-  status: string;
-  orig_path?: string | null;
-  submodule: boolean;
-  staged: boolean;
-  unstaged: boolean;
-  untracked: boolean;
-  skipped: boolean;
-  conflict: boolean;
-}
+import type { BranchInfo } from "./bindings/BranchInfo";
+import type { CommitInfo } from "./bindings/CommitInfo";
+import type { CommitResult } from "./bindings/CommitResult";
+import type { DiffFile } from "./bindings/DiffFile";
+import type { DiffHunk } from "./bindings/DiffHunk";
+import type { DiffLine } from "./bindings/DiffLine";
+import type { DiffLineKind } from "./bindings/DiffLineKind";
+import type { DiffModel } from "./bindings/DiffModel";
+import type { DiffSource } from "./bindings/DiffSource";
+import type { FileStatus } from "./bindings/FileStatus";
 
-export interface CommitInfo {
-  hash: string;
-  short_hash: string;
-  author: string;
-  email: string;
-  date: string;
-  message: string;
-  refs: string[];
-  parents: string[];
-}
-
-export interface CommitResult {
-  hash: string;
-  short_hash: string;
-  message: string;
-}
-
-export interface BranchInfo {
-  name: string;
-  full_name: string;
-  upstream: string | null;
-  ahead: number;
-  behind: number;
-  current: boolean;
-  detached: boolean;
-}
-
-export interface DiffLine {
-  content: string;
-  left_no: number | null;
-  right_no: number | null;
-  kind: "context" | "add" | "remove" | "header";
-}
-
-export interface DiffHunk {
-  old_start: number;
-  old_count: number;
-  new_start: number;
-  new_count: number;
-  header: string;
-  lines: DiffLine[];
-}
-
-export interface DiffFile {
-  old_path: string | null;
-  new_path: string | null;
-  similarity: number | null;
-  binary: boolean;
-  hunks: DiffHunk[];
-}
-
-export interface DiffModel {
-  source: "worktree" | "staged" | "commit" | "stash";
-  old_revision: string | null;
-  new_revision: string | null;
-  files: DiffFile[];
-}
+export type {
+  BranchInfo,
+  CommitInfo,
+  CommitResult,
+  DiffFile,
+  DiffHunk,
+  DiffLine,
+  DiffLineKind,
+  DiffModel,
+  DiffSource,
+  FileStatus,
+};
 
 export type RepoId = number;
 
