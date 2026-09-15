@@ -350,8 +350,15 @@ impl engine::GitEngine for CliEngine {
                     args.push(b.to_string());
                 }
             }
+            // Stash content diff: `stash@{N}^..stash@{N}` when the caller
+            // selects an entry, otherwise the whole-latest `git diff stash`.
             DiffSource::Stash => {
-                args.push("stash".to_string());
+                if let Some((a, b)) = rev_range {
+                    args.push(a.to_string());
+                    args.push(b.to_string());
+                } else {
+                    args.push("stash".to_string());
+                }
             }
             DiffSource::Worktree => {}
         }
@@ -726,7 +733,35 @@ impl engine::GitEngine for CliEngine {
     }
 
     async fn checkout_branch(&self, repo: &str, name: &str) -> Result<(), AppError> {
+        // Also covers tags (detached HEAD) — the UI labels it accordingly.
         let args = ["-C", repo, "checkout", name];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn set_branch_upstream(
+        &self,
+        repo: &str,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> Result<(), AppError> {
+        let args: Vec<String> = match upstream {
+            Some(u) => vec![
+                "-C".to_string(),
+                repo.to_string(),
+                "branch".to_string(),
+                "--set-upstream-to".to_string(),
+                u.to_string(),
+                branch.to_string(),
+            ],
+            None => vec![
+                "-C".to_string(),
+                repo.to_string(),
+                "branch".to_string(),
+                "--unset-upstream".to_string(),
+                branch.to_string(),
+            ],
+        };
         let res = self.run(args, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)
     }
@@ -763,7 +798,15 @@ impl engine::GitEngine for CliEngine {
     }
 
     async fn list_stash(&self, repo: &str) -> Result<Vec<engine::StashEntry>, AppError> {
-        let args = ["-C", repo, "stash", "list", "--format=%H%00%gd%00%gs%00%cr"];
+        // log-family formats need `%x00` for a literal NUL (`%00` is not a
+        // placeholder there and would stay literal).
+        let args = [
+            "-C",
+            repo,
+            "stash",
+            "list",
+            "--format=%H%x00%gd%x00%gs%x00%cr",
+        ];
         let res = self.run(args, StdinMode::Null, None, None).await?;
         let entries = parse::parse_stash(&res.stdout);
         Ok(entries)
@@ -779,6 +822,18 @@ impl engine::GitEngine for CliEngine {
         self.ensure_success(&res)?;
         let idx = extract_stash_index(&res.stderr).unwrap_or(0);
         Ok(idx)
+    }
+
+    async fn stash_apply(&self, repo: &str, index: usize) -> Result<(), AppError> {
+        let args = [
+            "-C",
+            repo,
+            "stash",
+            "apply",
+            &format!("stash@{{{}}}", index),
+        ];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
     }
 
     async fn stash_pop(&self, repo: &str, index: usize) -> Result<(), AppError> {
@@ -800,6 +855,40 @@ impl engine::GitEngine for CliEngine {
         Ok(remotes)
     }
 
+    async fn add_remote(&self, repo: &str, name: &str, url: &str) -> Result<(), AppError> {
+        let args = ["-C", repo, "remote", "add", name, url];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn remove_remote(&self, repo: &str, name: &str) -> Result<(), AppError> {
+        let args = ["-C", repo, "remote", "remove", name];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn set_remote_url(
+        &self,
+        repo: &str,
+        name: &str,
+        url: &str,
+        push: bool,
+    ) -> Result<(), AppError> {
+        let args: Vec<&str> = if push {
+            vec!["-C", repo, "remote", "set-url", "--push", name, url]
+        } else {
+            vec!["-C", repo, "remote", "set-url", name, url]
+        };
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn prune_remote(&self, repo: &str, name: &str) -> Result<(), AppError> {
+        let args = ["-C", repo, "remote", "prune", name];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
     async fn fetch(&self, repo: &str, remote: Option<&str>) -> Result<(), AppError> {
         let mut args = vec!["-C", repo, "fetch"];
         if let Some(r) = remote {
@@ -814,7 +903,12 @@ impl engine::GitEngine for CliEngine {
         repo: &str,
         ref_name: Option<&str>,
     ) -> Result<Vec<engine::ReflogEntry>, AppError> {
-        let mut args = vec!["-C", repo, "reflog", "--format=%H%00%h%00%gd%00%gs%00%cr"];
+        let mut args = vec![
+            "-C",
+            repo,
+            "reflog",
+            "--format=%H%x00%h%x00%gd%x00%gs%x00%cr",
+        ];
         if let Some(r) = ref_name {
             args.push(r);
         }
@@ -849,6 +943,132 @@ impl engine::GitEngine for CliEngine {
         self.ensure_success(&res)
     }
 
+    async fn clean_list(&self, repo: &str) -> Result<Vec<String>, AppError> {
+        // Locale-independent equivalent of `git clean -nd` targets: untracked
+        // files/dirs (dirs collapsed with a trailing `/`), ignored files
+        // excluded — matching clean's default (no `-x`).
+        let args = [
+            "-C",
+            repo,
+            "ls-files",
+            "--others",
+            "--directory",
+            "--exclude-standard",
+            "-z",
+        ];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_nul_paths(&res.stdout))
+    }
+
+    async fn clean(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut args = vec!["-C", repo, "clean", "-fd", "--"];
+        args.extend(paths.iter().map(|s| s.as_str()));
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn merge_base(&self, repo: &str, a: &str, b: &str) -> Result<Option<String>, AppError> {
+        let args = ["-C", repo, "merge-base", a, b];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        match res.exit_code {
+            Some(0) => {
+                let line = res.stdout.lines().next().unwrap_or("").trim();
+                if line.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(line.to_string()))
+                }
+            }
+            // git exits 1 with "no merge base" — a result, not an error.
+            Some(1) => Ok(None),
+            Some(code) => Err(AppError::git_command(
+                format!("git merge-base exited with code {code}"),
+                res.stderr,
+                res.stdout,
+            )),
+            None => Err(AppError::internal("git process terminated by signal")),
+        }
+    }
+
+    async fn range_count(
+        &self,
+        repo: &str,
+        left: &str,
+        right: &str,
+    ) -> Result<(u32, u32), AppError> {
+        let spec = format!("{left}...{right}");
+        let args = ["-C", repo, "rev-list", "--left-right", "--count", &spec];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_range_count(&res.stdout))
+    }
+
+    async fn rev_list(
+        &self,
+        repo: &str,
+        range: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<engine::CommitInfo>, AppError> {
+        let mut args: Vec<String> = vec![
+            "-C".to_string(),
+            repo.to_string(),
+            "log".to_string(),
+            "--topo-order".to_string(),
+            "--no-color".to_string(),
+            format!("--format={LOG_FORMAT}"),
+        ];
+        if offset > 0 {
+            args.push(format!("--skip={offset}"));
+        }
+        if limit > 0 {
+            args.push(format!("-n{limit}"));
+        }
+        args.push(range.to_string());
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_log(&res.stdout))
+    }
+
+    async fn update_ref(&self, repo: &str, name: &str, target: &str) -> Result<(), AppError> {
+        let args = ["-C", repo, "update-ref", name, target];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn list_backup_refs(&self, repo: &str) -> Result<Vec<engine::BackupRef>, AppError> {
+        let args = [
+            "-C",
+            repo,
+            "for-each-ref",
+            "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(objectname:short)%00%(creatordate:iso)%00%(subject)",
+            "--sort=creatordate",
+            "refs/ibexgit/backups/",
+        ];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_backup_refs(&res.stdout))
+    }
+
+    async fn delete_backup_refs(&self, repo: &str, names: &[String]) -> Result<(), AppError> {
+        for name in names {
+            if !name.starts_with("refs/ibexgit/backups/") {
+                return Err(AppError::parse(format!(
+                    "refuse to delete non-backup ref {name:?}"
+                )));
+            }
+            let args = ["-C", repo, "update-ref", "-d", name.as_str()];
+            let res = self.run(args, StdinMode::Null, None, None).await?;
+            self.ensure_success(&res)?;
+        }
+        Ok(())
+    }
+
     async fn push(
         &self,
         repo: &str,
@@ -856,18 +1076,34 @@ impl engine::GitEngine for CliEngine {
         branch: &str,
         force_with_lease: bool,
         set_upstream: bool,
+        tags: bool,
     ) -> Result<(), AppError> {
-        let mut args = vec!["-C", repo, "push"];
-        if force_with_lease {
-            args.push("--force-with-lease");
+        if !branch.is_empty() {
+            let mut args: Vec<String> =
+                vec!["-C".to_string(), repo.to_string(), "push".to_string()];
+            if force_with_lease {
+                args.push("--force-with-lease".to_string());
+            }
+            if set_upstream {
+                args.push("--set-upstream".to_string());
+            }
+            args.push(remote.to_string());
+            args.push(branch.to_string());
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+            self.ensure_success(&res)?;
         }
-        if set_upstream {
-            args.push("--set-upstream");
+        if tags {
+            let args = ["-C", repo, "push", remote, "--tags"];
+            let res = self.run(args, StdinMode::Null, None, None).await?;
+            self.ensure_success(&res)?;
         }
-        args.push(remote);
-        args.push(branch);
-        let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(&res)
+        if branch.is_empty() && !tags {
+            return Err(AppError::parse(
+                "push: nothing to push (no branch and no tags requested)",
+            ));
+        }
+        Ok(())
     }
 
     async fn pull(
@@ -875,25 +1111,28 @@ impl engine::GitEngine for CliEngine {
         repo: &str,
         remote: Option<&str>,
         branch: Option<&str>,
-        strategy: Option<&str>,
+        mode: Option<&str>,
     ) -> Result<engine::PullResult, AppError> {
-        let mut args = vec!["-C", repo, "pull"];
+        let mut args: Vec<String> = vec!["-C".to_string(), repo.to_string(), "pull".to_string()];
+        match mode {
+            Some("rebase") => args.push("--rebase".to_string()),
+            Some("ff_only") => args.push("--ff-only".to_string()),
+            _ => {}
+        }
         if let Some(r) = remote {
-            args.push(r);
+            args.push(r.to_string());
         }
         if let Some(b) = branch {
-            args.push(b);
+            args.push(b.to_string());
         }
-        if let Some(s) = strategy {
-            args.push("--strategy");
-            args.push(s);
-        }
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
         let success = res.exit_code == Some(0);
+        let combined = format!("{}{}", res.stdout, res.stderr);
         Ok(engine::PullResult {
             success,
             message: res.stderr,
-            fast_forward: true,
+            fast_forward: combined.contains("Fast-forward") || combined.contains("fast-forward"),
         })
     }
 
@@ -922,19 +1161,24 @@ impl engine::GitEngine for CliEngine {
         &self,
         repo: &str,
         target: &str,
-        strategy: Option<&str>,
+        ff_only: bool,
     ) -> Result<engine::MergeResult, AppError> {
-        let mut args = vec!["-C", repo, "merge"];
-        if let Some(s) = strategy {
-            args.push("--strategy");
-            args.push(s);
+        let mut args: Vec<String> = vec!["-C".to_string(), repo.to_string(), "merge".to_string()];
+        if ff_only {
+            args.push("--ff-only".to_string());
         }
-        args.push(target);
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        args.push("--no-edit".to_string());
+        args.push(target.to_string());
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
         let success = res.exit_code == Some(0);
         Ok(engine::MergeResult {
             success,
-            message: res.stderr,
+            message: if res.stderr.is_empty() {
+                res.stdout
+            } else {
+                res.stderr
+            },
         })
     }
 

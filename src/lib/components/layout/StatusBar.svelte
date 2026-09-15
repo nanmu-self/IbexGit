@@ -3,12 +3,15 @@
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
   import { emitAction } from "$lib/keyboard";
+  import { netops } from "$lib/stores/netops.svelte";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import ListTodo from "@lucide/svelte/icons/list-todo";
   import Inbox from "@lucide/svelte/icons/inbox";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
   const active = $derived(repos.active);
+  const netOp = $derived(active ? (netops.busy[active.id] ?? null) : null);
 </script>
 
 <footer
@@ -25,6 +28,13 @@
       <span class="flex items-center gap-1.5 tabular-nums">
         {#if active.ahead > 0}<span class="text-blue-500">↑{active.ahead}</span>{/if}
         {#if active.behind > 0}<span class="text-red-500">↓{active.behind}</span>{/if}
+      </span>
+    {/if}
+    {#if netOp}
+      <!-- P6 进度提示: 网络操作进行中（Task 化进度待任务中心接入） -->
+      <span class="flex items-center gap-1 text-muted-foreground">
+        <LoaderCircle class="size-3 animate-spin" />
+        {t(`netops.${netOp}Running`)}
       </span>
     {/if}
   {:else}

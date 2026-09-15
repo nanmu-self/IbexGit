@@ -1,12 +1,14 @@
 use crate::core::compat::GitCapabilities;
 use crate::core::engine::patch::{self, LineOp};
 use crate::core::engine::{
-    CommitDetail, DiffOptions, DiffSource, FileContent, GraphFilter, GraphPage, LineSelection,
+    BackupRef, CommitDetail, CommitInfo, DiffOptions, DiffSource, FileContent, GraphFilter,
+    GraphPage, LineSelection, ResetUndo,
 };
 use crate::core::error::AppError;
 use crate::core::recovery::{DiscardScope, DiscardTarget, RecoveryEntry, RecoveryManager};
 use crate::core::repo::{RepoId, RepoManager, GRAPH_BATCH};
 use crate::core::watcher::WatcherHub;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -816,6 +818,620 @@ async fn resolve(repos: &State<'_, RepoManager>, id: RepoId) -> Result<String, A
         .ok_or_else(|| AppError::InvalidRepo {
             path: id.0.to_string(),
         })
+}
+
+// =====================
+// P6: branches / refs panel
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_delete_branch(
+    id: RepoId,
+    name: String,
+    force: bool,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().delete_branch(&path, &name, force).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_rename_branch(
+    id: RepoId,
+    old_name: String,
+    new_name: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .rename_branch(&path, &old_name, &new_name)
+        .await
+}
+
+/// Set (or clear with `None`) the upstream tracking of a branch.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_set_upstream(
+    id: RepoId,
+    branch: String,
+    upstream: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .set_branch_upstream(&path, &branch, upstream.as_deref())
+        .await
+}
+
+// =====================
+// P6: tags
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_tags(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::TagInfo>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().list_tags(&path).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_create_tag(
+    id: RepoId,
+    name: String,
+    message: Option<String>,
+    target: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .create_tag(&path, &name, message.as_deref(), &target)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_delete_tag(
+    id: RepoId,
+    name: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().delete_tag(&path, &name).await
+}
+
+// =====================
+// P6: stash
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_stash_list(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::StashEntry>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().list_stash(&path).await
+}
+
+/// Stash all changes (including untracked, matching the discard snapshot
+/// philosophy) and return the new entry's index.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_stash_push(
+    id: RepoId,
+    message: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<u32, AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .stash_push(&path, message.as_deref())
+        .await
+        .map(|i| i as u32)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_stash_apply(
+    id: RepoId,
+    index: u32,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().stash_apply(&path, index as usize).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_stash_pop(
+    id: RepoId,
+    index: u32,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().stash_pop(&path, index as usize).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_stash_drop(
+    id: RepoId,
+    index: u32,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().stash_drop(&path, index as usize).await
+}
+
+// =====================
+// P6: remotes
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_remotes(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::RemoteInfo>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().list_remotes(&path).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_add_remote(
+    id: RepoId,
+    name: String,
+    url: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().add_remote(&path, &name, &url).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_remove_remote(
+    id: RepoId,
+    name: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().remove_remote(&path, &name).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_set_remote_url(
+    id: RepoId,
+    name: String,
+    url: String,
+    push: bool,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .set_remote_url(&path, &name, &url, push)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_prune_remote(
+    id: RepoId,
+    name: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().prune_remote(&path, &name).await
+}
+
+// =====================
+// P6: fetch / pull / push / merge / rebase
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_fetch(
+    id: RepoId,
+    remote: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().fetch(&path, remote.as_deref()).await
+}
+
+/// Pull with an explicit strategy: merge (default) / rebase / ff_only.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_pull(
+    id: RepoId,
+    remote: Option<String>,
+    branch: Option<String>,
+    mode: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<crate::core::engine::PullResult, AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .pull(&path, remote.as_deref(), branch.as_deref(), mode.as_deref())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_push(
+    id: RepoId,
+    remote: String,
+    branch: String,
+    force_with_lease: bool,
+    set_upstream: bool,
+    tags: bool,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .push(
+            &path,
+            &remote,
+            &branch,
+            force_with_lease,
+            set_upstream,
+            tags,
+        )
+        .await
+}
+
+/// Merge `target` into the current branch. Conflicts surface as git errors
+/// (toast) — the visual conflict flow is P8.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_merge(
+    id: RepoId,
+    target: String,
+    ff_only: bool,
+    repos: State<'_, RepoManager>,
+) -> Result<crate::core::engine::MergeResult, AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().merge(&path, &target, ff_only).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_rebase(
+    id: RepoId,
+    target: String,
+    repos: State<'_, RepoManager>,
+) -> Result<crate::core::engine::RebaseState, AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().rebase(&path, &target, &[]).await
+}
+
+// =====================
+// P6: reset (soft/mixed/hard) with recovery + undo
+// =====================
+
+fn valid_reset_mode(mode: &str) -> bool {
+    matches!(mode, "soft" | "mixed" | "hard")
+}
+
+/// Reset the current branch to `target` with full recovery support:
+///
+/// - every mode first creates a track-B backup ref at HEAD (refs/ibexgit/
+///   backups/reset-<ts>) so the pre-reset commit stays reachable;
+/// - `mixed`/`hard` additionally take a track-A snapshot of every path with
+///   staged/unstaged/conflicted changes (mixed rewrites the index; hard also
+///   rewrites the worktree). Untracked files are untouched by reset.
+///
+/// Returns the undo anchors: the backup ref plus (for mixed/hard) the
+/// snapshot id. Undo = `reset --<mode> <backup_ref>` + snapshot restore.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_reset(
+    id: RepoId,
+    mode: String,
+    target: String,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<ResetUndo, AppError> {
+    if !valid_reset_mode(&mode) {
+        return Err(AppError::parse(format!(
+            "reset: invalid mode {mode:?} (soft|mixed|hard)"
+        )));
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    let engine = repos.engine();
+
+    // Track B: backup ref at the pre-reset HEAD (fails naturally on an
+    // unborn HEAD, which reset cannot serve anyway).
+    let backup_ref = recovery
+        .create_backup(&*engine, std::path::Path::new(&root), "reset", "HEAD")
+        .await?;
+
+    // Track A: snapshot every path mixed/hard will destroy (index and/or
+    // worktree content). Untracked paths are not reset targets.
+    let mut snapshot_id = None;
+    if mode != "soft" {
+        let status = engine.status(&root).await?;
+        let targets: Vec<DiscardTarget> = status
+            .iter()
+            .filter(|f| (f.staged || f.unstaged || f.conflict) && !f.untracked)
+            .map(|f| DiscardTarget {
+                path: f.path.clone(),
+                untracked: false,
+                conflict: f.conflict,
+            })
+            .collect();
+        if !targets.is_empty() {
+            let snap = recovery
+                .snapshot_discard(
+                    &*engine,
+                    std::path::Path::new(&root),
+                    &targets,
+                    DiscardScope::All,
+                )
+                .await?;
+            snapshot_id = Some(snap.id);
+        }
+    }
+
+    match engine.reset(&root, &mode, &target).await {
+        Ok(()) => Ok(ResetUndo {
+            backup_ref,
+            snapshot_id,
+        }),
+        Err(e) => {
+            // Roll back the anchors so a failed reset leaves no litter.
+            if let Some(snap) = &snapshot_id {
+                let _ = recovery.delete(std::path::Path::new(&root), snap);
+            }
+            let _ = recovery
+                .delete_backups(&*engine, std::path::Path::new(&root), &[backup_ref])
+                .await;
+            Err(e)
+        }
+    }
+}
+
+/// Undo one reset (PLAN P6 一键撤销): move the branch back to the backup
+/// ref with the same mode, then (mixed/hard) restore the track-A snapshot
+/// to rebuild the exact pre-reset index + worktree.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_undo_reset(
+    id: RepoId,
+    backup_ref: String,
+    mode: String,
+    snapshot_id: Option<String>,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<(), AppError> {
+    if !valid_reset_mode(&mode) {
+        return Err(AppError::parse(format!(
+            "undo reset: invalid mode {mode:?}"
+        )));
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    let engine = repos.engine();
+    engine.reset(&root, &mode, &backup_ref).await?;
+    if let Some(snap) = snapshot_id {
+        recovery
+            .restore_discard(&*engine, std::path::Path::new(&root), &snap)
+            .await?;
+    }
+    Ok(())
+}
+
+// =====================
+// P6: clean (preview → confirm → delete)
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_clean_list(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<String>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().clean_list(&path).await
+}
+
+/// Delete the confirmed untracked paths. A track-A snapshot is taken first
+/// so the removal stays undoable; returns the snapshot id for the toast.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_clean(
+    id: RepoId,
+    paths: Vec<String>,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<Option<String>, AppError> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    let engine = repos.engine();
+
+    // Snapshot the doomed untracked paths (physical copies) first.
+    let targets: Vec<DiscardTarget> = paths
+        .iter()
+        .map(|p| DiscardTarget {
+            path: p.trim_end_matches('/').to_string(),
+            untracked: true,
+            conflict: false,
+        })
+        .collect();
+    let snap = recovery
+        .snapshot_discard(
+            &*engine,
+            std::path::Path::new(&root),
+            &targets,
+            DiscardScope::Worktree,
+        )
+        .await?;
+    match engine.clean(&root, &paths).await {
+        Ok(()) => Ok(Some(snap.id)),
+        Err(e) => {
+            let _ = recovery.delete(std::path::Path::new(&root), &snap.id);
+            Err(e)
+        }
+    }
+}
+
+// =====================
+// P6: reflog browser
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_reflog(
+    id: RepoId,
+    ref_name: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::ReflogEntry>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().reflog(&path, ref_name.as_deref()).await
+}
+
+// =====================
+// P6: branch compare + merge/rebase previews
+// =====================
+
+/// Ahead/behind + merge base of two revs (branch compare view).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct BranchCompare {
+    /// Commits in `left` not in `right`.
+    pub ahead: u32,
+    /// Commits in `right` not in `left`.
+    pub behind: u32,
+    pub merge_base: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_branch_compare(
+    id: RepoId,
+    left: String,
+    right: String,
+    repos: State<'_, RepoManager>,
+) -> Result<BranchCompare, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    let engine = repos.engine();
+    let (ahead, behind) = engine.range_count(&path, &left, &right).await?;
+    let merge_base = engine.merge_base(&path, &left, &right).await?;
+    Ok(BranchCompare {
+        ahead,
+        behind,
+        merge_base,
+    })
+}
+
+/// Commits in a rev range — merge/rebase previews and the compare view's
+/// commit list.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_rev_list(
+    id: RepoId,
+    range: String,
+    limit: u32,
+    offset: u32,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<CommitInfo>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().rev_list(&path, &range, limit, offset).await
+}
+
+// =====================
+// P6: backup refs (孤儿备份清理)
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_backup_list(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<Vec<BackupRef>, AppError> {
+    let root = resolve(&repos, id).await?;
+    recovery
+        .list_backups(&*repos.engine(), std::path::Path::new(&root))
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn git_backup_delete(
+    id: RepoId,
+    names: Vec<String>,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    recovery
+        .delete_backups(&*repos.engine(), std::path::Path::new(&root), &names)
+        .await
 }
 
 // Keep Arc<RepoManager> constructible for tests without a Tauri app.

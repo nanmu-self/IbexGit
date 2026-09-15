@@ -5,7 +5,10 @@
   import { repos } from "$lib/stores/repos.svelte";
   import { pickRepo } from "$lib/repo-picker";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
-  import { normalizeError } from "$lib/git";
+  import { normalizeError, git } from "$lib/git";
+  import { showToast } from "$lib/stores/toast";
+  import { runFetch, isBusy } from "$lib/stores/netops.svelte";
+  import { requestRefAction } from "$lib/stores/refbus";
   import Download from "@lucide/svelte/icons/download";
   import ArrowDownToLine from "@lucide/svelte/icons/arrow-down-to-line";
   import ArrowUpFromLine from "@lucide/svelte/icons/arrow-up-from-line";
@@ -15,11 +18,27 @@
   import Terminal from "@lucide/svelte/icons/terminal";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import GitBranch from "@lucide/svelte/icons/git-branch";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+
+  const active = $derived(repos.active);
+  const netBusy = $derived(active ? isBusy(active.id) : false);
 
   function reveal(): void {
     const path = repos.active?.path;
     if (!path) return;
     revealItemInDir(path).catch((e) => normalizeError(e));
+  }
+
+  async function stashAll(): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    try {
+      await git.stashPush(id, null);
+      showToast("success", t("refs.stash.pushed"));
+      await repos.refresh(id);
+    } catch (e) {
+      normalizeError(e);
+    }
   }
 </script>
 
@@ -33,28 +52,96 @@
             variant="ghost"
             size="icon"
             class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
-            disabled
+            disabled={!active || netBusy}
+            onclick={() => active && void runFetch(active.id, null)}
           >
-            <Download class="size-4" />
+            {#if netBusy}
+              <LoaderCircle class="size-4 animate-spin" />
+            {:else}
+              <Download class="size-4" />
+            {/if}
             {t("toolbar.fetch")}
           </Button>
         {/snippet}
       </Tooltip.Trigger>
-      <Tooltip.Content>{t("sidebar.comingSoon", { phase: "P6" })}</Tooltip.Content>
+      <Tooltip.Content>{t("toolbar.fetchTip")}</Tooltip.Content>
     </Tooltip.Root>
 
-    {#each [{ icon: ArrowDownToLine, label: t("toolbar.pull") }, { icon: ArrowUpFromLine, label: t("toolbar.push") }, { icon: Archive, label: t("toolbar.stash") }, { icon: GitBranchPlus, label: t("toolbar.newBranch") }] as entry (entry.label)}
-      <Button
-        variant="ghost"
-        size="icon"
-        class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
-        disabled
-        title={t("sidebar.comingSoon", { phase: "P6" })}
-      >
-        <entry.icon class="size-4" />
-        {entry.label}
-      </Button>
-    {/each}
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="ghost"
+            size="icon"
+            class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
+            disabled={!active || netBusy}
+            onclick={() => requestRefAction({ kind: "pull" })}
+          >
+            <ArrowDownToLine class="size-4" />
+            {t("toolbar.pull")}
+          </Button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content>{t("toolbar.pullTip")}</Tooltip.Content>
+    </Tooltip.Root>
+
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="ghost"
+            size="icon"
+            class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
+            disabled={!active || netBusy}
+            onclick={() => requestRefAction({ kind: "push" })}
+          >
+            <ArrowUpFromLine class="size-4" />
+            {t("toolbar.push")}
+          </Button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content>{t("toolbar.pushTip")}</Tooltip.Content>
+    </Tooltip.Root>
+
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="ghost"
+            size="icon"
+            class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
+            disabled={!active}
+            onclick={stashAll}
+          >
+            <Archive class="size-4" />
+            {t("toolbar.stash")}
+          </Button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content>{t("toolbar.stashTip")}</Tooltip.Content>
+    </Tooltip.Root>
+
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="ghost"
+            size="icon"
+            class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
+            disabled={!active}
+            onclick={() => requestRefAction({ kind: "newBranch" })}
+          >
+            <GitBranchPlus class="size-4" />
+            {t("toolbar.newBranch")}
+          </Button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content>{t("toolbar.newBranchTip")}</Tooltip.Content>
+    </Tooltip.Root>
 
     <Tooltip.Root>
       <Tooltip.Trigger>
@@ -76,11 +163,11 @@
 
     <!-- 中间：当前仓库名 + 分支 -->
     <div class="mx-4 flex min-w-0 flex-1 flex-col items-center justify-center leading-tight">
-      {#if repos.active}
-        <span class="max-w-60 truncate text-[13px] font-medium">{repos.active.name}</span>
+      {#if active}
+        <span class="max-w-60 truncate text-[13px] font-medium">{active.name}</span>
         <span class="flex items-center gap-1 text-[11px] text-muted-foreground">
           <GitBranch class="size-3" />
-          {repos.active.branch || t("statusbar.detached")}
+          {active.branch || t("statusbar.detached")}
         </span>
       {/if}
     </div>
@@ -101,7 +188,7 @@
           </Button>
         {/snippet}
       </Tooltip.Trigger>
-      <Tooltip.Content>{t("sidebar.comingSoon", { phase: "P6" })}</Tooltip.Content>
+      <Tooltip.Content>{t("sidebar.comingSoon", { phase: "P10" })}</Tooltip.Content>
     </Tooltip.Root>
 
     <Tooltip.Root>

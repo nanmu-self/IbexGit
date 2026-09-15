@@ -252,9 +252,33 @@ pub struct RemoteInfo {
     pub push_url: String,
 }
 
+/// One backup ref under `refs/ibexgit/backups/` (PLAN §4.7 轨道 B): a
+/// recovery anchor created before dangerous branch/HEAD rewrites.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct BackupRef {
+    /// Short name, e.g. `reset-1699999999999`.
+    pub name: String,
+    /// Full refname, e.g. `refs/ibexgit/backups/reset-1699999999999`.
+    pub full_name: String,
+    pub hash: String,
+    pub short_hash: String,
+    pub date: String,
+    pub subject: String,
+}
+
+/// What the frontend needs to undo one reset (PLAN P6: 一键撤销).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct ResetUndo {
+    /// Backup ref created at the pre-reset HEAD (track B).
+    pub backup_ref: String,
+    /// Track-A snapshot id (hard resets only; restores index + worktree).
+    pub snapshot_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct StashEntry {
-    pub index: usize,
+    /// Position in the stash stack (`stash@{N}`); u32 on the wire.
+    pub index: u32,
     pub message: String,
     pub branch: Option<String>,
     pub date: String,
@@ -431,6 +455,14 @@ pub trait GitEngine: Send + Sync {
         new_name: &str,
     ) -> Result<(), AppError>;
     async fn checkout_branch(&self, repo: &str, name: &str) -> Result<(), AppError>;
+    /// Track a remote branch (`git branch --set-upstream-to=<upstream>`);
+    /// `None` removes the tracking relationship.
+    async fn set_branch_upstream(
+        &self,
+        repo: &str,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> Result<(), AppError>;
 
     // Tag
     async fn list_tags(&self, repo: &str) -> Result<Vec<TagInfo>, AppError>;
@@ -446,11 +478,25 @@ pub trait GitEngine: Send + Sync {
     // Stash
     async fn list_stash(&self, repo: &str) -> Result<Vec<StashEntry>, AppError>;
     async fn stash_push(&self, repo: &str, message: Option<&str>) -> Result<usize, AppError>;
+    /// Apply a stash without dropping it (`git stash apply`).
+    async fn stash_apply(&self, repo: &str, index: usize) -> Result<(), AppError>;
     async fn stash_pop(&self, repo: &str, index: usize) -> Result<(), AppError>;
     async fn stash_drop(&self, repo: &str, index: usize) -> Result<(), AppError>;
 
     // Remote
     async fn list_remotes(&self, repo: &str) -> Result<Vec<RemoteInfo>, AppError>;
+    async fn add_remote(&self, repo: &str, name: &str, url: &str) -> Result<(), AppError>;
+    async fn remove_remote(&self, repo: &str, name: &str) -> Result<(), AppError>;
+    /// Rewrite the fetch (default) or push URL of a remote.
+    async fn set_remote_url(
+        &self,
+        repo: &str,
+        name: &str,
+        url: &str,
+        push: bool,
+    ) -> Result<(), AppError>;
+    /// Drop stale remote-tracking refs (`git remote prune <name>`).
+    async fn prune_remote(&self, repo: &str, name: &str) -> Result<(), AppError>;
     async fn fetch(&self, repo: &str, remote: Option<&str>) -> Result<(), AppError>;
 
     // Reflog
@@ -463,6 +509,42 @@ pub trait GitEngine: Send + Sync {
     // Reset
     async fn reset(&self, repo: &str, mode: &str, target: &str) -> Result<(), AppError>;
 
+    // Clean (P6: preview → per-item confirm → delete; never run blind)
+    /// Untracked files/dirs `git clean -fd` would remove (ignored files are
+    /// not included, matching clean without `-x`). Directories end with `/`.
+    async fn clean_list(&self, repo: &str) -> Result<Vec<String>, AppError>;
+    /// Remove the given untracked paths (`git clean -fd -- <paths>`).
+    async fn clean(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
+
+    // Branch compare / merge-rebase previews (P6)
+    /// Best common ancestor of two revs; `None` when they share no history.
+    async fn merge_base(&self, repo: &str, a: &str, b: &str) -> Result<Option<String>, AppError>;
+    /// `(ahead, behind)` of `left` relative to `right` via
+    /// `git rev-list --left-right --count left...right`.
+    async fn range_count(
+        &self,
+        repo: &str,
+        left: &str,
+        right: &str,
+    ) -> Result<(u32, u32), AppError>;
+    /// Commits in a rev range (e.g. `HEAD..origin/main`), oldest not
+    /// guaranteed — order follows `git log` (newest first).
+    async fn rev_list(
+        &self,
+        repo: &str,
+        range: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<CommitInfo>, AppError>;
+
+    // Backup refs (PLAN §4.7 轨道 B: RecoveryManager 的提交级备份锚点)
+    /// Point an arbitrary ref at `target` (`git update-ref <name> <target>`).
+    async fn update_ref(&self, repo: &str, name: &str, target: &str) -> Result<(), AppError>;
+    /// All refs under `refs/ibexgit/backups/` (oldest first).
+    async fn list_backup_refs(&self, repo: &str) -> Result<Vec<BackupRef>, AppError>;
+    /// Delete the given backup refs (孤儿备份清理入口).
+    async fn delete_backup_refs(&self, repo: &str, names: &[String]) -> Result<(), AppError>;
+
     // Apply (patch)
     async fn apply(
         &self,
@@ -473,6 +555,10 @@ pub trait GitEngine: Send + Sync {
     ) -> Result<(), AppError>;
 
     // Push / Pull / Rebase / Merge
+    /// Push `branch` to `remote`. `force_with_lease` is the safe rewrite
+    /// guard (P6: 前端二次确认); `set_upstream` publishes tracking; `tags`
+    /// additionally pushes tags (`git push <remote> --tags`, used alone when
+    /// `branch` is empty).
     async fn push(
         &self,
         repo: &str,
@@ -480,13 +566,16 @@ pub trait GitEngine: Send + Sync {
         branch: &str,
         force_with_lease: bool,
         set_upstream: bool,
+        tags: bool,
     ) -> Result<(), AppError>;
+    /// Pull with an explicit mode: `None`/"merge" → default merge,
+    /// `"rebase"` → `--rebase`, `"ff_only"` → `--ff-only` (P6 策略选择).
     async fn pull(
         &self,
         repo: &str,
         remote: Option<&str>,
         branch: Option<&str>,
-        strategy: Option<&str>,
+        mode: Option<&str>,
     ) -> Result<PullResult, AppError>;
     async fn rebase(
         &self,
@@ -494,12 +583,10 @@ pub trait GitEngine: Send + Sync {
         target: &str,
         options: &[&str],
     ) -> Result<RebaseState, AppError>;
-    async fn merge(
-        &self,
-        repo: &str,
-        target: &str,
-        strategy: Option<&str>,
-    ) -> Result<MergeResult, AppError>;
+    /// Merge `target` into the current branch; `ff_only` refuses to create
+    /// a merge commit (P6 dry-run 预览由前端 rev-list 提供).
+    async fn merge(&self, repo: &str, target: &str, ff_only: bool)
+        -> Result<MergeResult, AppError>;
 
     // Blame (P9)
     async fn blame(&self, repo: &str, path: &str) -> Result<Vec<ReflogEntry>, AppError>;

@@ -111,6 +111,72 @@ export const commands = {
 	 *  the branch panel).
 	 */
 	gitCreateBranch: (id: RepoId_Deserialize, name: string, startPoint: string | null) => __TAURI_INVOKE<null>("git_create_branch", { id, name, startPoint }),
+	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
+	gitDeleteBranch: (id: RepoId_Deserialize, name: string, force: boolean) => __TAURI_INVOKE<null>("git_delete_branch", { id, name, force }),
+	gitRenameBranch: (id: RepoId_Deserialize, oldName: string, newName: string) => __TAURI_INVOKE<null>("git_rename_branch", { id, oldName, newName }),
+	/**  Set (or clear with `None`) the upstream tracking of a branch. */
+	gitSetUpstream: (id: RepoId_Deserialize, branch: string, upstream: string | null) => __TAURI_INVOKE<null>("git_set_upstream", { id, branch, upstream }),
+	gitTags: (id: RepoId_Deserialize) => __TAURI_INVOKE<TagInfo[]>("git_tags", { id }),
+	gitCreateTag: (id: RepoId_Deserialize, name: string, message: string | null, target: string) => __TAURI_INVOKE<null>("git_create_tag", { id, name, message, target }),
+	gitDeleteTag: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_delete_tag", { id, name }),
+	gitStashList: (id: RepoId_Deserialize) => __TAURI_INVOKE<StashEntry[]>("git_stash_list", { id }),
+	/**
+	 *  Stash all changes (including untracked, matching the discard snapshot
+	 *  philosophy) and return the new entry's index.
+	 */
+	gitStashPush: (id: RepoId_Deserialize, message: string | null) => __TAURI_INVOKE<number>("git_stash_push", { id, message }),
+	gitStashApply: (id: RepoId_Deserialize, index: number) => __TAURI_INVOKE<null>("git_stash_apply", { id, index }),
+	gitStashPop: (id: RepoId_Deserialize, index: number) => __TAURI_INVOKE<null>("git_stash_pop", { id, index }),
+	gitStashDrop: (id: RepoId_Deserialize, index: number) => __TAURI_INVOKE<null>("git_stash_drop", { id, index }),
+	gitRemotes: (id: RepoId_Deserialize) => __TAURI_INVOKE<RemoteInfo[]>("git_remotes", { id }),
+	gitAddRemote: (id: RepoId_Deserialize, name: string, url: string) => __TAURI_INVOKE<null>("git_add_remote", { id, name, url }),
+	gitRemoveRemote: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_remove_remote", { id, name }),
+	gitSetRemoteUrl: (id: RepoId_Deserialize, name: string, url: string, push: boolean) => __TAURI_INVOKE<null>("git_set_remote_url", { id, name, url, push }),
+	gitPruneRemote: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_prune_remote", { id, name }),
+	gitFetch: (id: RepoId_Deserialize, remote: string | null) => __TAURI_INVOKE<null>("git_fetch", { id, remote }),
+	/**  Pull with an explicit strategy: merge (default) / rebase / ff_only. */
+	gitPull: (id: RepoId_Deserialize, remote: string | null, branch: string | null, mode: string | null) => __TAURI_INVOKE<PullResult>("git_pull", { id, remote, branch, mode }),
+	gitPush: (id: RepoId_Deserialize, remote: string, branch: string, forceWithLease: boolean, setUpstream: boolean, tags: boolean) => __TAURI_INVOKE<null>("git_push", { id, remote, branch, forceWithLease, setUpstream, tags }),
+	/**
+	 *  Merge `target` into the current branch. Conflicts surface as git errors
+	 *  (toast) — the visual conflict flow is P8.
+	 */
+	gitMerge: (id: RepoId_Deserialize, target: string, ffOnly: boolean) => __TAURI_INVOKE<MergeResult>("git_merge", { id, target, ffOnly }),
+	gitRebase: (id: RepoId_Deserialize, target: string) => __TAURI_INVOKE<RebaseState>("git_rebase", { id, target }),
+	/**
+	 *  Reset the current branch to `target` with full recovery support:
+	 * 
+	 *  - every mode first creates a track-B backup ref at HEAD (refs/ibexgit/
+	 *    backups/reset-<ts>) so the pre-reset commit stays reachable;
+	 *  - `mixed`/`hard` additionally take a track-A snapshot of every path with
+	 *    staged/unstaged/conflicted changes (mixed rewrites the index; hard also
+	 *    rewrites the worktree). Untracked files are untouched by reset.
+	 * 
+	 *  Returns the undo anchors: the backup ref plus (for mixed/hard) the
+	 *  snapshot id. Undo = `reset --<mode> <backup_ref>` + snapshot restore.
+	 */
+	gitReset: (id: RepoId_Deserialize, mode: string, target: string) => __TAURI_INVOKE<ResetUndo>("git_reset", { id, mode, target }),
+	/**
+	 *  Undo one reset (PLAN P6 一键撤销): move the branch back to the backup
+	 *  ref with the same mode, then (mixed/hard) restore the track-A snapshot
+	 *  to rebuild the exact pre-reset index + worktree.
+	 */
+	gitUndoReset: (id: RepoId_Deserialize, backupRef: string, mode: string, snapshotId: string | null) => __TAURI_INVOKE<null>("git_undo_reset", { id, backupRef, mode, snapshotId }),
+	gitCleanList: (id: RepoId_Deserialize) => __TAURI_INVOKE<string[]>("git_clean_list", { id }),
+	/**
+	 *  Delete the confirmed untracked paths. A track-A snapshot is taken first
+	 *  so the removal stays undoable; returns the snapshot id for the toast.
+	 */
+	gitClean: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<string | null>("git_clean", { id, paths }),
+	gitReflog: (id: RepoId_Deserialize, refName: string | null) => __TAURI_INVOKE<ReflogEntry[]>("git_reflog", { id, refName }),
+	gitBranchCompare: (id: RepoId_Deserialize, left: string, right: string) => __TAURI_INVOKE<BranchCompare>("git_branch_compare", { id, left, right }),
+	/**
+	 *  Commits in a rev range — merge/rebase previews and the compare view's
+	 *  commit list.
+	 */
+	gitRevList: (id: RepoId_Deserialize, range: string, limit: number, offset: number) => __TAURI_INVOKE<CommitInfo[]>("git_rev_list", { id, range, limit, offset }),
+	gitBackupList: (id: RepoId_Deserialize) => __TAURI_INVOKE<BackupRef[]>("git_backup_list", { id }),
+	gitBackupDelete: (id: RepoId_Deserialize, names: string[]) => __TAURI_INVOKE<null>("git_backup_delete", { id, names }),
 	/**
 	 *  Parse a diff for the given source/paths into a [`DiffModel`], cache it in
 	 *  the RepoManager session and return it with its cache id.
@@ -144,7 +210,6 @@ export const commands = {
 	 */
 	gitFileContent: (id: RepoId_Deserialize, path: string, rev: string | null) => __TAURI_INVOKE<FileContent>("git_file_content", { id, path, rev }),
 	gitBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_branches", { id }),
-	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
 	recoveryList: (id: RepoId_Deserialize) => __TAURI_INVOKE<RecoveryEntry[]>("recovery_list", { id }),
 	recoveryRestore: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_restore", { id, snapshotId }),
 	recoveryDelete: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_delete", { id, snapshotId }),
@@ -197,6 +262,30 @@ export type AppError = { code: "io"; source: string; detail: string | null } | {
  */
 export type AppOpenPaths = {
 	paths: string[],
+};
+
+/**
+ *  One backup ref under `refs/ibexgit/backups/` (PLAN §4.7 轨道 B): a
+ *  recovery anchor created before dangerous branch/HEAD rewrites.
+ */
+export type BackupRef = {
+	/**  Short name, e.g. `reset-1699999999999`. */
+	name: string,
+	/**  Full refname, e.g. `refs/ibexgit/backups/reset-1699999999999`. */
+	full_name: string,
+	hash: string,
+	short_hash: string,
+	date: string,
+	subject: string,
+};
+
+/**  Ahead/behind + merge base of two revs (branch compare view). */
+export type BranchCompare = {
+	/**  Commits in `left` not in `right`. */
+	ahead: number,
+	/**  Commits in `right` not in `left`. */
+	behind: number,
+	merge_base: string | null,
 };
 
 export type BranchInfo = {
@@ -466,6 +555,24 @@ export type LineSelection = {
 	line: number,
 };
 
+export type MergeResult = {
+	success: boolean,
+	message: string,
+};
+
+export type PullResult = {
+	success: boolean,
+	message: string,
+	fast_forward: boolean,
+};
+
+export type RebaseState = {
+	state: string,
+	current_step: number,
+	total_steps: number,
+	current_commit: string | null,
+};
+
 export type RecentRepo = {
 	path: string,
 	name: string,
@@ -486,6 +593,22 @@ export type RecoveryEntry = {
 	file_count: number,
 	size_bytes: number | null,
 	warnings: string[],
+};
+
+export type ReflogEntry = {
+	hash: string,
+	short_hash: string,
+	ref_name: string,
+	message: string,
+	date: string,
+	author: string,
+};
+
+export type RemoteInfo = {
+	name: string,
+	url: string,
+	fetch_url: string,
+	push_url: string,
 };
 
 /**
@@ -614,11 +737,36 @@ export type RepoUiState_Serialize = {
 	tree_collapsed?: string[],
 };
 
+/**  What the frontend needs to undo one reset (PLAN P6: 一键撤销). */
+export type ResetUndo = {
+	/**  Backup ref created at the pre-reset HEAD (track B). */
+	backup_ref: string,
+	/**  Track-A snapshot id (hard resets only; restores index + worktree). */
+	snapshot_id: string | null,
+};
+
 /**  Selected diff target in the workspace view (frontend-owned UI state). */
 export type SelectedFile = {
 	path: string,
 	/**  `worktree` or `staged` — which diff to show for the file. */
 	source: string,
+};
+
+export type StashEntry = {
+	/**  Position in the stash stack (`stash@{N}`); u32 on the wire. */
+	index: number,
+	message: string,
+	branch: string | null,
+	date: string,
+};
+
+export type TagInfo = {
+	name: string,
+	full_name: string,
+	target: string,
+	tagger: string | null,
+	date: string | null,
+	message: string | null,
 };
 
 /* Tauri Specta runtime */

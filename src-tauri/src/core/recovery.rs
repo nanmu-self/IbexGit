@@ -38,6 +38,12 @@ pub const MAX_COPY_BYTES: u64 = 10 * 1024 * 1024;
 /// Snapshot retention window (PLAN §4.7: 如 7 天).
 pub const RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
 
+/// Backup ref namespace (PLAN §4.7 轨道 B): Recovery Points live under
+/// `refs/ibexgit/backups/<op>-<ts>` — while the ref exists, the referenced
+/// commits stay reachable and safe from GC; cleanup deletes the ref and
+/// leaves the rest to normal Git garbage collection.
+pub const BACKUP_REF_PREFIX: &str = "refs/ibexgit/backups/";
+
 /// The discard scope a snapshot was taken for (mirrors the command param).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -267,6 +273,51 @@ impl RecoveryManager {
         validate_id(id)?;
         let bytes = std::fs::read(self.snapshot_dir(repo_path, id).join("meta.json"))?;
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// Create a track-B recovery point (backup ref) at `target` (usually
+    /// `HEAD`) before a dangerous operation. Must be called while holding
+    /// the repo write gate. Returns the full refname.
+    pub async fn create_backup(
+        &self,
+        engine: &dyn GitEngine,
+        repo_path: &Path,
+        op: &str,
+        target: &str,
+    ) -> Result<String, AppError> {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let name = format!("{}{}-{}", BACKUP_REF_PREFIX, op, ts);
+        engine
+            .update_ref(&repo_path.display().to_string(), &name, target)
+            .await?;
+        Ok(name)
+    }
+
+    /// All track-B recovery points (oldest first).
+    pub async fn list_backups(
+        &self,
+        engine: &dyn GitEngine,
+        repo_path: &Path,
+    ) -> Result<Vec<crate::core::engine::BackupRef>, AppError> {
+        engine
+            .list_backup_refs(&repo_path.display().to_string())
+            .await
+    }
+
+    /// Delete the given backup refs (孤儿备份清理入口). The referenced
+    /// commits become garbage-collectable again.
+    pub async fn delete_backups(
+        &self,
+        engine: &dyn GitEngine,
+        repo_path: &Path,
+        names: &[String],
+    ) -> Result<(), AppError> {
+        engine
+            .delete_backup_refs(&repo_path.display().to_string(), names)
+            .await
     }
 
     /// List snapshots for a repo (newest first), pruning expired ones first.

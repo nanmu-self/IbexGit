@@ -476,8 +476,8 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::core::engine::{
-        BranchInfo, CommitInfo, CommitResult, DiffModel, DiffSource, IndexEntry, PullResult,
-        RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        BackupRef, BranchInfo, CommitInfo, CommitResult, DiffModel, DiffSource, IndexEntry,
+        PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -615,6 +615,14 @@ mod tests {
         async fn checkout_branch(&self, _: &str, _: &str) -> Result<(), AppError> {
             Err(err("checkout_branch"))
         }
+        async fn set_branch_upstream(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<(), AppError> {
+            Err(err("set_branch_upstream"))
+        }
         async fn list_tags(&self, _: &str) -> Result<Vec<TagInfo>, AppError> {
             Err(err("tags"))
         }
@@ -636,6 +644,9 @@ mod tests {
         async fn stash_push(&self, _: &str, _: Option<&str>) -> Result<usize, AppError> {
             Err(err("stash_push"))
         }
+        async fn stash_apply(&self, _: &str, _: usize) -> Result<(), AppError> {
+            Err(err("stash_apply"))
+        }
         async fn stash_pop(&self, _: &str, _: usize) -> Result<(), AppError> {
             Err(err("stash_pop"))
         }
@@ -644,6 +655,18 @@ mod tests {
         }
         async fn list_remotes(&self, _: &str) -> Result<Vec<RemoteInfo>, AppError> {
             Err(err("remotes"))
+        }
+        async fn add_remote(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("add_remote"))
+        }
+        async fn remove_remote(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("remove_remote"))
+        }
+        async fn set_remote_url(&self, _: &str, _: &str, _: &str, _: bool) -> Result<(), AppError> {
+            Err(err("set_remote_url"))
+        }
+        async fn prune_remote(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("prune_remote"))
         }
         async fn fetch(&self, _: &str, _: Option<&str>) -> Result<(), AppError> {
             Err(err("fetch"))
@@ -654,10 +677,48 @@ mod tests {
         async fn reset(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
             Err(err("reset"))
         }
+        async fn clean_list(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Err(err("clean_list"))
+        }
+        async fn clean(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("clean"))
+        }
+        async fn merge_base(&self, _: &str, _: &str, _: &str) -> Result<Option<String>, AppError> {
+            Err(err("merge_base"))
+        }
+        async fn range_count(&self, _: &str, _: &str, _: &str) -> Result<(u32, u32), AppError> {
+            Err(err("range_count"))
+        }
+        async fn rev_list(
+            &self,
+            _: &str,
+            _: &str,
+            _: u32,
+            _: u32,
+        ) -> Result<Vec<CommitInfo>, AppError> {
+            Err(err("rev_list"))
+        }
+        async fn update_ref(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("update_ref"))
+        }
+        async fn list_backup_refs(&self, _: &str) -> Result<Vec<BackupRef>, AppError> {
+            Err(err("list_backup_refs"))
+        }
+        async fn delete_backup_refs(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("delete_backup_refs"))
+        }
         async fn apply(&self, _: &str, _: &str, _: bool, _: bool) -> Result<(), AppError> {
             Err(err("apply"))
         }
-        async fn push(&self, _: &str, _: &str, _: &str, _: bool, _: bool) -> Result<(), AppError> {
+        async fn push(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: bool,
+            _: bool,
+            _: bool,
+        ) -> Result<(), AppError> {
             Err(err("push"))
         }
         async fn pull(
@@ -676,7 +737,7 @@ mod tests {
             &self,
             _: &str,
             _: &str,
-            _: Option<&str>,
+            _: bool,
         ) -> Result<crate::core::engine::MergeResult, AppError> {
             Err(err("merge"))
         }

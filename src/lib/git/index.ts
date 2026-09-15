@@ -13,6 +13,8 @@ export { commands };
 
 export type {
   AppError,
+  BackupRef,
+  BranchCompare,
   BranchInfo,
   CommitDetail,
   CommitFileStat,
@@ -34,11 +36,16 @@ export type {
   LineSelection,
   RecentRepo,
   RecoveryEntry,
+  ReflogEntry,
+  RemoteInfo,
   RepoGroup,
   RepoId,
   RepoMeta,
   RepoUiState,
+  ResetUndo,
   SelectedFile,
+  StashEntry,
+  TagInfo,
 } from "./bindings";
 
 /**
@@ -157,6 +164,82 @@ export const git = {
     wrap(commands.gitCheckoutBranch(id, name)),
   createBranch: (id: RepoId, name: string, startPoint?: string) =>
     wrap(commands.gitCreateBranch(id, name, startPoint ?? null)),
+  deleteBranch: (id: RepoId, name: string, force = false) =>
+    wrap(commands.gitDeleteBranch(id, name, force)),
+  renameBranch: (id: RepoId, oldName: string, newName: string) =>
+    wrap(commands.gitRenameBranch(id, oldName, newName)),
+  /** Set (or clear with null) the upstream tracking of a branch. */
+  setUpstream: (id: RepoId, branch: string, upstream: string | null) =>
+    wrap(commands.gitSetUpstream(id, branch, upstream)),
+
+  // ---- tags (P6) ----
+  tags: (id: RepoId) => wrap(commands.gitTags(id)),
+  createTag: (id: RepoId, name: string, message: string | null, target: string) =>
+    wrap(commands.gitCreateTag(id, name, message, target)),
+  deleteTag: (id: RepoId, name: string) => wrap(commands.gitDeleteTag(id, name)),
+
+  // ---- stash (P6) ----
+  stashList: (id: RepoId) => wrap(commands.gitStashList(id)),
+  stashPush: (id: RepoId, message: string | null) =>
+    wrap(commands.gitStashPush(id, message)),
+  stashApply: (id: RepoId, index: number) => wrap(commands.gitStashApply(id, index)),
+  stashPop: (id: RepoId, index: number) => wrap(commands.gitStashPop(id, index)),
+  stashDrop: (id: RepoId, index: number) => wrap(commands.gitStashDrop(id, index)),
+
+  // ---- remotes (P6) ----
+  remotes: (id: RepoId) => wrap(commands.gitRemotes(id)),
+  addRemote: (id: RepoId, name: string, url: string) =>
+    wrap(commands.gitAddRemote(id, name, url)),
+  removeRemote: (id: RepoId, name: string) => wrap(commands.gitRemoveRemote(id, name)),
+  setRemoteUrl: (id: RepoId, name: string, url: string, push = false) =>
+    wrap(commands.gitSetRemoteUrl(id, name, url, push)),
+  pruneRemote: (id: RepoId, name: string) => wrap(commands.gitPruneRemote(id, name)),
+
+  // ---- network / history ops (P6) ----
+  fetch: (id: RepoId, remote?: string | null) =>
+    wrap(commands.gitFetch(id, remote ?? null)),
+  /** mode: "merge" | "rebase" | "ff_only". */
+  pull: (id: RepoId, remote: string | null, branch: string | null, mode: string | null) =>
+    wrap(commands.gitPull(id, remote, branch, mode)),
+  push: (
+    id: RepoId,
+    remote: string,
+    branch: string,
+    forceWithLease = false,
+    setUpstream = false,
+    tags = false
+  ) => wrap(commands.gitPush(id, remote, branch, forceWithLease, setUpstream, tags)),
+  merge: (id: RepoId, target: string, ffOnly = false) =>
+    wrap(commands.gitMerge(id, target, ffOnly)),
+  rebase: (id: RepoId, target: string) => wrap(commands.gitRebase(id, target)),
+
+  // ---- reset with recovery + undo (P6) ----
+  /** soft | mixed | hard; resolves to the undo anchors. */
+  reset: (id: RepoId, mode: string, target: string) =>
+    wrap(commands.gitReset(id, mode, target)),
+  undoReset: (id: RepoId, backupRef: string, mode: string, snapshotId: string | null) =>
+    wrap(commands.gitUndoReset(id, backupRef, mode, snapshotId)),
+
+  // ---- clean (P6): preview → per-item confirm → delete ----
+  cleanList: (id: RepoId) => wrap(commands.gitCleanList(id)),
+  /** Resolves to the recovery snapshot id for undo. */
+  clean: (id: RepoId, paths: string[]) => wrap(commands.gitClean(id, paths)),
+
+  // ---- reflog browser (P6) ----
+  reflog: (id: RepoId, refName?: string | null) =>
+    wrap(commands.gitReflog(id, refName ?? null)),
+
+  // ---- branch compare + previews (P6) ----
+  branchCompare: (id: RepoId, left: string, right: string) =>
+    wrap(commands.gitBranchCompare(id, left, right)),
+  /** Commits in a rev range (e.g. "HEAD..origin/main"), newest first. */
+  revList: (id: RepoId, range: string, limit = 200, offset = 0) =>
+    wrap(commands.gitRevList(id, range, limit, offset)),
+
+  // ---- backup refs (P6 孤儿备份清理) ----
+  backupList: (id: RepoId) => wrap(commands.gitBackupList(id)),
+  backupDelete: (id: RepoId, names: string[]) =>
+    wrap(commands.gitBackupDelete(id, names)),
 
   // ---- history / commit graph (P5) ----
   /** First page of the laid-out commit graph (500 rows per batch). */

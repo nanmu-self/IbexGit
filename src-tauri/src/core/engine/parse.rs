@@ -4,8 +4,8 @@
 //! spawning processes (P1 acceptance: full parser unit-test coverage).
 
 use super::{
-    BranchInfo, CommitFileStat, CommitInfo, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffModel,
-    DiffSource, FileStatus, IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+    BackupRef, BranchInfo, CommitFileStat, CommitInfo, DiffFile, DiffHunk, DiffLine, DiffLineKind,
+    DiffModel, DiffSource, FileStatus, IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
 };
 use crate::core::error::AppError;
 
@@ -685,7 +685,7 @@ pub fn parse_stash(output: &str) -> Vec<StashEntry> {
         let index = f[1]
             .rsplit_once('{')
             .and_then(|(_, rest)| rest.strip_suffix('}'))
-            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(|n| n.parse::<u32>().ok())
             .unwrap_or(0);
         let (branch, message) = split_stash_subject(f[2]);
         out.push(StashEntry {
@@ -782,6 +782,60 @@ pub fn parse_reflog(output: &str) -> Vec<ReflogEntry> {
             message: f[3].to_string(),
             date: f[4].to_string(),
             author: String::new(),
+        });
+    }
+    out
+}
+
+// =====================
+// clean / backup refs (P6)
+// =====================
+
+/// Split a NUL-separated path list (`git ls-files -z` family) into paths.
+/// Empty records are skipped; a trailing NUL yields no phantom entry.
+pub fn parse_nul_paths(output: &str) -> Vec<String> {
+    output
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Parse `git rev-list --left-right --count A...B` → `(left, right)`.
+pub fn parse_range_count(output: &str) -> (u32, u32) {
+    let line = output.lines().next().unwrap_or("");
+    let mut it = line.split_whitespace();
+    let left = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let right = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+    (left, right)
+}
+
+/// Parse `git for-each-ref refs/ibexgit/backups/` with the backup-ref
+/// format (refname, short name, objectname, short objectname,
+/// creatordate:iso, subject — NUL separated).
+pub fn parse_backup_refs(output: &str) -> Vec<BackupRef> {
+    let mut out = Vec::new();
+    for rec in output.lines() {
+        if rec.is_empty() {
+            continue;
+        }
+        let f: Vec<&str> = rec.split('\0').collect();
+        if f.len() < 6 {
+            continue;
+        }
+        // Display name: strip the fixed namespace from the full refname
+        // (`refname:short` only strips `refs/`, which is noisy here).
+        let name = f[0]
+            .strip_prefix("refs/ibexgit/backups/")
+            .unwrap_or(f[1])
+            .to_string();
+        out.push(BackupRef {
+            full_name: f[0].to_string(),
+            name,
+            hash: f[2].to_string(),
+            short_hash: f[3].to_string(),
+            date: f[4].to_string(),
+            subject: f[5].to_string(),
         });
     }
     out
@@ -1378,5 +1432,44 @@ mod tests {
         assert_eq!(out[1].status, "C");
         assert_eq!(out[1].score, Some(75));
         assert_eq!(out[1].orig_path.as_deref(), Some("orig\\20name"));
+    }
+
+    // ---------- clean / backup refs (P6) ----------
+
+    #[test]
+    fn nul_paths_split_and_skip_empty() {
+        let raw = "a.txt\0dir/\0中 文.txt\0\0";
+        let out = parse_nul_paths(raw);
+        assert_eq!(out, vec!["a.txt", "dir/", "中 文.txt"]);
+        assert!(parse_nul_paths("").is_empty());
+    }
+
+    #[test]
+    fn range_count_parses_tab_and_space() {
+        assert_eq!(parse_range_count("3\t7\n"), (3, 7));
+        assert_eq!(parse_range_count("0 0"), (0, 0));
+        assert_eq!(parse_range_count(""), (0, 0));
+        assert_eq!(parse_range_count("garbage"), (0, 0));
+    }
+
+    #[test]
+    fn backup_refs_parse() {
+        // NOTE: `\0` must stay isolated — `\02024` would parse as octal.
+        let raw = concat!(
+            "refs/ibexgit/backups/reset-123\0reset-123\0h1\0s1\0",
+            "2024-01-01 10:00:00 +0800\0",
+            "commit: point\n",
+            "refs/ibexgit/backups/rebase-456\0rebase-456\0h2\0s2\0\0\n"
+        );
+        let out = parse_backup_refs(raw);
+        assert_eq!(out.len(), 2);
+        let b = &out[0];
+        assert_eq!(b.full_name, "refs/ibexgit/backups/reset-123");
+        assert_eq!(b.name, "reset-123");
+        assert_eq!(b.hash, "h1");
+        assert_eq!(b.short_hash, "s1");
+        assert_eq!(b.subject, "commit: point");
+        assert_eq!(out[1].date, "");
+        assert_eq!(out[1].subject, "");
     }
 }

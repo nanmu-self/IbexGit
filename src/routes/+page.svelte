@@ -7,7 +7,9 @@
   import StatusBar from "$lib/components/layout/StatusBar.svelte";
   import Welcome from "$lib/components/welcome/Welcome.svelte";
   import WorkspaceView from "$lib/components/workspace/WorkspaceView.svelte";
-import HistoryView from "$lib/components/history/HistoryView.svelte";
+  import HistoryView from "$lib/components/history/HistoryView.svelte";
+  import TagsView from "$lib/components/refs/TagsView.svelte";
+  import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
   import { Button } from "$lib/components/ui/button";
@@ -18,7 +20,6 @@ import HistoryView from "$lib/components/history/HistoryView.svelte";
   import { t } from "$lib/i18n";
   import { showToast } from "$lib/stores/toast";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
-  import Tags from "@lucide/svelte/icons/tags";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
 
   let restored = $state(false);
@@ -113,16 +114,13 @@ import HistoryView from "$lib/components/history/HistoryView.svelte";
         {:else if repos.ui.view === "history"}
           <HistoryView />
         {:else if repos.ui.view === "tags"}
-          <EmptyState
-            icon={Tags}
-            title={t("sidebar.tagsView")}
-            hint={t("sidebar.comingSoon", { phase: "P6" })}
-          />
+          <TagsView />
         {:else}
           <WorkspaceView />
         {/if}
       </main>
     </div>
     <StatusBar />
+    <RefsDialogsHost />
   </div>
 {/if}

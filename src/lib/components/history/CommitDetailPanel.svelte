@@ -17,11 +17,13 @@
   import { repos } from "$lib/stores/repos.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { showToast } from "$lib/stores/toast";
+  import { requestRefAction } from "$lib/stores/refbus";
   import List from "@lucide/svelte/icons/list";
   import FolderTree from "@lucide/svelte/icons/folder-tree";
   import Copy from "@lucide/svelte/icons/copy";
   import History from "@lucide/svelte/icons/history";
   import DiffFileIcon from "@lucide/svelte/icons/file-diff";
+  import Tag from "@lucide/svelte/icons/tag";
 
   let {
     hash,
@@ -239,6 +241,14 @@
           {detail.commit.message}
         </h3>
         <div class="flex shrink-0 items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title={t("refs.tagDialog.title")}
+            onclick={() => requestRefAction({ kind: "newTag", target: hash })}
+          >
+            <Tag class="size-3.5" />
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"

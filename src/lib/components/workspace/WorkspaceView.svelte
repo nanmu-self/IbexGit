@@ -25,6 +25,7 @@
     type RecoveryEntry,
   } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
+  import { runPush } from "$lib/stores/netops.svelte";
   import { onAction } from "$lib/keyboard";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -351,8 +352,22 @@
       const res = await git.commit(id, message, amend, noVerify);
       showToast("success", t("commit.done", { hash: res.short_hash }));
       if (andPush) {
-        // 占位推送（P6 接入真实 push + P7 凭据）。
-        showToast("info", t("commit.pushSoon"));
+        // P6: 真实推送（凭据接管在 P7 接入；HTTPS 公仓 / 已存凭据场景可用）。
+        const tab = repos.active;
+        const branch = tab?.branch;
+        if (tab && branch) {
+          try {
+            const remotes = await git.remotes(id);
+            const remote = remotes[0]?.name;
+            if (remote) {
+              await runPush(id, remote, branch, { setUpstream: true });
+            } else {
+              showToast("warning", t("commit.pushNoRemote"));
+            }
+          } catch (e) {
+            normalizeError(e);
+          }
+        }
       }
       await repos.refresh(id);
     } catch (e) {
