@@ -7,6 +7,7 @@ pub mod core {
     pub mod engine;
     pub mod error;
     pub mod graph;
+    pub mod proctree;
     pub mod recovery;
     pub mod repo;
     pub mod runner;

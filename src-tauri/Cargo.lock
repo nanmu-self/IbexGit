@@ -1687,6 +1687,7 @@ dependencies = [
  "bitflags 2.13.2",
  "chrono",
  "keyring",
+ "libc",
  "notify",
  "regex",
  "serde",
@@ -1702,6 +1703,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
