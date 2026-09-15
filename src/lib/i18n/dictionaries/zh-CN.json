@@ -3,7 +3,6 @@
   "app.tagline": "本地优先的 Git 图形客户端",
   "app.dropToOpen": "松开以打开仓库",
   "app.loading": "正在启动…",
-
   "menu.file": "文件",
   "menu.view": "查看",
   "menu.repository": "仓库",
@@ -24,12 +23,10 @@
   "menu.repo.newBranch": "新建分支",
   "menu.help.shortcuts": "快捷键…",
   "menu.help.about": "关于 IbexGit",
-
   "win.minimize": "最小化",
   "win.maximize": "最大化",
   "win.restore": "还原",
   "win.close": "关闭",
-
   "toolbar.fetch": "获取",
   "toolbar.pull": "拉取",
   "toolbar.push": "推送",
@@ -38,13 +35,11 @@
   "toolbar.openRepo": "打开仓库",
   "toolbar.openTerminal": "在终端打开",
   "toolbar.showInExplorer": "在资源管理器中显示",
-
   "tabs.open": "打开仓库…",
   "tabs.close": "关闭标签页",
   "tabs.closeOthers": "关闭其他标签页",
   "tabs.addTab": "打开仓库列表",
   "tabs.reposTab": "仓库",
-
   "repos.title": "全部仓库",
   "repos.count": "共 {n} 个仓库",
   "repos.search": "搜索仓库…",
@@ -68,7 +63,6 @@
   "repos.deleteGroupTitle": "删除分组",
   "repos.groupName": "分组名称",
   "repos.deleteGroupConfirm": "删除分组「{name}」？其中的仓库将移到未分组，不会删除仓库本身。",
-
   "welcome.title": "欢迎使用 IbexGit",
   "welcome.subtitle": "本地优先的 Git 图形客户端",
   "welcome.open": "打开本地仓库",
@@ -79,7 +73,6 @@
   "welcome.dragHint": "提示：也可以把文件夹（或仓库内任意文件）拖进本窗口打开",
   "welcome.cloneSoon": "克隆功能将在 P7 提供",
   "welcome.newSoon": "新建仓库功能将在 P7 提供",
-
   "sidebar.workspace": "工作空间",
   "sidebar.changes": "本地更改",
   "sidebar.history": "提交历史",
@@ -93,7 +86,6 @@
   "sidebar.checkout": "检出分支 {name}",
   "sidebar.checkoutMsg": "确定检出分支“{name}”吗？未提交的更改可能被带入或受阻。",
   "sidebar.checkoutDone": "已检出 {name}",
-
   "statusbar.noRepo": "未打开仓库",
   "statusbar.detached": "HEAD 已分离",
   "statusbar.tasks": "任务中心",
@@ -101,7 +93,6 @@
   "statusbar.tasksEmptyHint": "获取、推送、变基等长任务会显示在这里",
   "statusbar.refresh": "刷新",
   "statusbar.lastRefresh": "上次刷新耗时 {ms}ms",
-
   "workspace.filter": "输入关键词过滤…",
   "workspace.staged": "已暂存文件",
   "workspace.unstaged": "未暂存文件",
@@ -146,13 +137,11 @@
   "workspace.ctx.copyPath": "复制路径",
   "workspace.ctx.copied": "路径已复制",
   "workspace.ctx.ignore": "忽略此文件",
-
   "diff.loading": "正在加载差异…",
   "diff.binary": "二进制文件",
   "diff.binaryHint": "二进制文件不支持文本差异展示",
   "diff.noChanges": "该文件暂无差异",
   "diff.truncated": "差异过大，仅显示前 {lines} 行（虚拟滚动与语法高亮将在 P4 提供）",
-
   "commit.subject": "提交主题",
   "commit.description": "描述（可选）",
   "commit.amend": "修改最后一次提交",
@@ -164,7 +153,6 @@
   "commit.done": "提交成功 {hash}",
   "commit.pushSoon": "推送功能将在 P6/P7 提供，本次仅完成本地提交",
   "commit.needsMessage": "请先输入提交信息",
-
   "recovery.title": "恢复列表",
   "recovery.description": "丢弃操作前的自动快照，可一键还原当时的工作区与暂存状态。",
   "recovery.empty": "暂无恢复快照",
@@ -174,12 +162,10 @@
   "recovery.scope.worktree": "丢弃未暂存更改",
   "recovery.scope.all": "丢弃暂存与未暂存更改",
   "recovery.fileCount": "{n} 个文件",
-
   "dialog.checkout.title": "检出分支",
   "dialog.about.title": "关于 IbexGit",
   "dialog.about.desc": "{name} v{version} — 本地优先的 Git 图形客户端。当前进度：P2 应用骨架。",
   "dialog.shortcuts.title": "键盘快捷键",
-
   "shortcut.repo.open": "打开本地仓库",
   "shortcut.repo.refresh": "刷新当前仓库",
   "shortcut.repo.closeTab": "关闭当前仓库标签",
@@ -189,7 +175,6 @@
   "shortcut.view.toggleTheme": "切换明暗主题",
   "shortcut.workspace.focusFilter": "聚焦工作区过滤框",
   "shortcut.app.tasks": "任务中心",
-
   "common.cancel": "取消",
   "common.close": "关闭",
   "common.ok": "确定",
@@ -198,12 +183,35 @@
   "common.comingSoonPhase": "{feature} 将在 {phase} 提供",
   "common.error": "出错了",
   "common.openRepoFailed": "打开仓库失败",
-
   "theme.light": "浅色",
   "theme.dark": "深色",
   "theme.system": "跟随系统",
   "theme.toggle": "切换主题",
-
   "lang.zhCN": "简体中文",
-  "lang.en": "English"
+  "lang.en": "English",
+  "diff.unified": "统一",
+  "diff.split": "双栏",
+  "diff.whitespace": "空白",
+  "diff.showWhitespace": "显示空白字符",
+  "diff.ignoreWhitespace": "忽略空白字符差异（重新加载）",
+  "diff.ignoreWsShort": "忽略空白",
+  "diff.syntax": "语法高亮",
+  "diff.syntaxShort": "高亮",
+  "diff.expandAll": "展开全部",
+  "diff.expandContext": "{arrow} 展开 {n} 行",
+  "diff.collapsedLines": "{n} 行未变更，点击展开",
+  "diff.stageSelected": "暂存 {n} 行",
+  "diff.discardSelected": "丢弃 {n} 行",
+  "diff.unstageSelected": "取消暂存 {n} 行",
+  "diff.stageHunk": "暂存块",
+  "diff.discardHunk": "丢弃块",
+  "diff.unstageHunk": "取消暂存块",
+  "diff.lineDiscardDone": "已丢弃所选行（可撤销）",
+  "diff.image.side": "并排",
+  "diff.image.slider": "滑动",
+  "diff.image.onion": "叠加",
+  "diff.image.tooLarge": "文件超过 10MB，已跳过图片对比",
+  "diff.image.missing": "无法加载图像内容",
+  "diff.image.noOld": "旧图（新增）",
+  "diff.image.noNew": "新图（已删除）"
 }

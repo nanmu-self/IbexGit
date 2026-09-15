@@ -1,4 +1,5 @@
 import { commands, type RepoId } from "./bindings";
+import type { LineSelection } from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
 import type { RepoMeta, RepoUiState } from "./bindings";
@@ -21,8 +22,10 @@ export type {
   DiffLineKind,
   DiffModel,
   DiffSource,
+  FileContent,
   FileStatus,
   GroupsFile,
+  LineSelection,
   RecentRepo,
   RecoveryEntry,
   RepoGroup,
@@ -63,6 +66,8 @@ function humanize(code: string, e: Record<string, unknown>): string {
       return "Operation cancelled";
     case "credential_cancelled":
       return "Credential prompt cancelled";
+    case "diff_model_expired":
+      return "Diff expired (repository changed) — please retry";
     case "parse":
       return str(e.message) || "Failed to parse git output";
     case "not_implemented":
@@ -114,8 +119,33 @@ export const git = {
     source: "worktree" | "staged" | "commit" | "stash",
     oldRev?: string,
     newRev?: string,
-    paths?: string[]
-  ) => wrap(commands.gitDiff(id, source, oldRev ?? null, newRev ?? null, paths ?? null)),
+    paths?: string[],
+    contextLines?: number,
+    ignoreWhitespace?: boolean
+  ) =>
+    wrap(
+      commands.gitDiff(
+        id,
+        source,
+        oldRev ?? null,
+        newRev ?? null,
+        paths ?? null,
+        contextLines ?? null,
+        ignoreWhitespace ?? null
+      )
+    ),
+  /** Line-level stage (`git apply --cached`) against a cached DiffModel. */
+  stageLines: (id: RepoId, modelId: number, path: string, selections: LineSelection[]) =>
+    wrap(commands.gitStageLines(id, modelId, path, selections)),
+  /** Line-level discard; resolves to the recovery snapshot id for undo. */
+  discardLines: (id: RepoId, modelId: number, path: string, selections: LineSelection[]) =>
+    wrap(commands.gitDiscardLines(id, modelId, path, selections)),
+  /** Line-level unstage (`git apply --cached --reverse`). */
+  unstageLines: (id: RepoId, modelId: number, path: string, selections: LineSelection[]) =>
+    wrap(commands.gitUnstageLines(id, modelId, path, selections)),
+  /** Content of one revision of a file (image diff); null data = too large. */
+  fileContent: (id: RepoId, path: string, rev: string | null) =>
+    wrap(commands.gitFileContent(id, path, rev)),
   branches: (id: RepoId) => wrap(commands.gitBranches(id)),
   checkoutBranch: (id: RepoId, name: string) =>
     wrap(commands.gitCheckoutBranch(id, name)),

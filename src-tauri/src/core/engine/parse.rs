@@ -261,7 +261,24 @@ pub fn parse_diff(
 
     let flush_hunk = |hunk: &mut Option<DiffHunk>| -> Option<DiffHunk> { hunk.take() };
 
-    for line in output.lines() {
+    // NOTE: `str::lines()` strips a trailing `\r` (CRLF-aware) — that would
+    // silently corrupt CRLF content and make reconstructed patches fail to
+    // apply. Split on `\n` only; the `\r` stays part of the line content.
+    let body = output.strip_suffix('\n').unwrap_or(output);
+    for line in body.split('\n') {
+        // `\ No newline at end of file` (LC_ALL=C locale is forced by the
+        // runner): flags the preceding line as the no-trailing-newline
+        // last line of its side. Consumes nothing else. The marker may
+        // trail the body AFTER the remaining-line counters hit zero, so
+        // this check runs before the body-consumption gate.
+        if line.starts_with('\\') {
+            if let Some(hunk) = cur_hunk.as_mut() {
+                if let Some(last) = hunk.lines.last_mut() {
+                    last.no_eol = true;
+                }
+            }
+            continue;
+        }
         // Inside a hunk: every line belongs to the body.
         if hunk_left.0 > 0 || hunk_left.1 > 0 {
             let Some(hunk) = cur_hunk.as_mut() else {
@@ -274,6 +291,7 @@ pub fn parse_diff(
                     left_no: Some(line_no.0),
                     right_no: Some(line_no.1),
                     kind: DiffLineKind::Context,
+                    no_eol: false,
                 });
                 line_no = (line_no.0 + 1, line_no.1 + 1);
                 hunk_left.0 = hunk_left.0.saturating_sub(1);
@@ -284,6 +302,7 @@ pub fn parse_diff(
                     left_no: None,
                     right_no: Some(line_no.1),
                     kind: DiffLineKind::Add,
+                    no_eol: false,
                 });
                 line_no.1 += 1;
                 hunk_left.1 = hunk_left.1.saturating_sub(1);
@@ -293,11 +312,12 @@ pub fn parse_diff(
                     left_no: Some(line_no.0),
                     right_no: None,
                     kind: DiffLineKind::Remove,
+                    no_eol: false,
                 });
                 line_no.0 += 1;
                 hunk_left.0 = hunk_left.0.saturating_sub(1);
             }
-            // `\ No newline at end of file` and malformed lines consume nothing.
+            // Malformed lines consume nothing.
             continue;
         }
 
@@ -361,6 +381,7 @@ pub fn parse_diff(
     }
 
     Ok(DiffModel {
+        id: 0,
         source,
         old_revision: rev_range.map(|(a, _)| a.to_string()),
         new_revision: rev_range.map(|(_, b)| b.to_string()),
@@ -1068,6 +1089,61 @@ mod tests {
         let model = parse_diff(raw, DiffSource::Worktree, None).unwrap();
         let f = &model.files[0];
         assert_eq!(f.old_path, Some("文.txt".to_string()));
+    }
+
+    #[test]
+    fn diff_no_newline_marker_flags_lines() {
+        // Old side: "old" without trailing newline; new side adds two lines.
+        let raw = "diff --git a/x.txt b/x.txt\n\
+                   index 333..444 100644\n\
+                   --- a/x.txt\n\
+                   +++ b/x.txt\n\
+                   @@ -1 +1,2 @@\n\
+                   -old\n\
+                   \\ No newline at end of file\n\
+                   +old\n\
+                   +new\n";
+        let model = parse_diff(raw, DiffSource::Worktree, None).unwrap();
+        let lines = &model.files[0].hunks[0].lines;
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].no_eol, "remove line must be flagged");
+        assert!(!lines[1].no_eol);
+        assert!(!lines[2].no_eol);
+    }
+
+    #[test]
+    fn diff_no_newline_on_both_sides_and_add_only() {
+        // Both sides end without newline (context marker) + a pure-add tail.
+        let raw = "diff --git a/y.txt b/y.txt\n\
+                   index 333..444 100644\n\
+                   --- a/y.txt\n\
+                   +++ b/y.txt\n\
+                   @@ -1 +1,2 @@\n\
+                   \x20last\n\
+                   \\ No newline at end of file\n\
+                   +appended\n\
+                   \\ No newline at end of file\n";
+        let model = parse_diff(raw, DiffSource::Worktree, None).unwrap();
+        let lines = &model.files[0].hunks[0].lines;
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].kind == DiffLineKind::Context && lines[0].no_eol);
+        assert!(lines[1].kind == DiffLineKind::Add && lines[1].no_eol);
+    }
+
+    #[test]
+    fn diff_worktree_only_change_removes_trailing_newline() {
+        let raw = "diff --git a/z.txt b/z.txt\n\
+                   index 333..444 100644\n\
+                   --- a/z.txt\n\
+                   +++ b/z.txt\n\
+                   @@ -1 +1 @@\n\
+                   -tail\n\
+                   +tail\n\
+                   \\ No newline at end of file\n";
+        let model = parse_diff(raw, DiffSource::Worktree, None).unwrap();
+        let lines = &model.files[0].hunks[0].lines;
+        assert!(!lines[0].no_eol);
+        assert!(lines[1].no_eol);
     }
 
     // ---------- log ----------

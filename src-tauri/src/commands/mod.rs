@@ -1,5 +1,6 @@
 use crate::core::compat::GitCapabilities;
-use crate::core::engine::DiffSource;
+use crate::core::engine::patch::{self, LineOp};
+use crate::core::engine::{DiffOptions, DiffSource, FileContent, LineSelection};
 use crate::core::error::AppError;
 use crate::core::recovery::{DiscardScope, DiscardTarget, RecoveryEntry, RecoveryManager};
 use crate::core::repo::{RepoId, RepoManager};
@@ -262,37 +263,219 @@ pub async fn git_log(
 }
 
 // =====================
-// Diff
+// Diff (P4: 管线分层 + 行级操作)
 // =====================
 
+/// Parse a diff for the given source/paths into a [`DiffModel`], cache it in
+/// the RepoManager session and return it with its cache id.
+///
+/// Untracked worktree paths never appear in `git diff`; they are synthesized
+/// as pure-addition files (P4) so line-level stage/discard works on them.
+/// The model id is what line-level operations send back — Rust rebuilds the
+/// patch from the same cached model (同源，杜绝双端解析漂移).
 #[tauri::command]
 #[specta::specta]
-
+#[allow(clippy::too_many_arguments)]
 pub async fn git_diff(
     id: RepoId,
-    source: String,
+    source: DiffSource,
     old_rev: Option<String>,
     new_rev: Option<String>,
     paths: Option<Vec<String>>,
+    context_lines: Option<u32>,
+    ignore_whitespace: Option<bool>,
     repos: State<'_, RepoManager>,
 ) -> Result<crate::core::engine::DiffModel, AppError> {
     let _permit = repos.read_permit().await?;
-    let path = resolve(&repos, id).await?;
-    let diff_source = match source.as_str() {
-        "staged" => DiffSource::Staged,
-        "commit" => DiffSource::Commit,
-        "stash" => DiffSource::Stash,
-        _ => DiffSource::Worktree,
+    let root = resolve(&repos, id).await?;
+    let opts = DiffOptions {
+        // Guardrail against absurd context requests.
+        context_lines: context_lines.unwrap_or(3).clamp(0, 100_000),
+        ignore_whitespace: ignore_whitespace.unwrap_or(false),
     };
     let rev_range = match (old_rev.as_deref(), new_rev.as_deref()) {
         (Some(a), Some(b)) => Some((a, b)),
         _ => None,
     };
-    let empty: Vec<String> = Vec::new();
-    let paths = paths.as_deref().unwrap_or(&empty);
+    let requested: Vec<String> = paths.unwrap_or_default();
+
+    // Split worktree path requests into tracked (git diff) and untracked
+    // (synthesized). Non-worktree sources have no untracked concept.
+    let (tracked, untracked): (Vec<String>, Vec<String>) =
+        if source == DiffSource::Worktree && !requested.is_empty() {
+            let status = repos.status(id).await?;
+            requested.into_iter().partition(|p| {
+                !status
+                    .iter()
+                    .any(|f| &f.path == p && f.untracked && !f.conflict)
+            })
+        } else {
+            (requested, Vec::new())
+        };
+
+    let mut model = if tracked.is_empty() && !untracked.is_empty() {
+        // Only untracked paths: pure synthesis, no git diff call.
+        crate::core::engine::DiffModel {
+            id: 0,
+            source,
+            old_revision: None,
+            new_revision: None,
+            files: Vec::new(),
+        }
+    } else {
+        repos
+            .engine()
+            .diff(&root, source, rev_range, &tracked, opts)
+            .await?
+    };
+    for p in &untracked {
+        match crate::core::engine::untracked::synthesize_untracked(std::path::Path::new(&root), p) {
+            Ok(file) => model.files.push(file),
+            // File vanished between status and read: skip it.
+            Err(AppError::Io { .. }) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    repos.cache_diff(id, &mut model).await?;
+    Ok(model)
+}
+
+/// Shared body of the three line-level operations (PLAN P4 行级暂存/丢弃/
+/// 取消暂存): validate the cached model → build the patch → apply.
+async fn apply_line_op(
+    id: RepoId,
+    model_id: u32,
+    path: &str,
+    selections: &[LineSelection],
+    op: LineOp,
+    repos: &State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(repos, id).await?;
+    let model = repos.get_diff(id, model_id).await?;
+    let file = model
+        .find_file(path)
+        .ok_or_else(|| AppError::parse(format!("diff model does not contain path {path:?}")))?;
+    let text = patch::build_line_patch(file, path, selections, op)?;
+    if text.is_empty() {
+        return Ok(());
+    }
+    let (cached, reverse) = match op {
+        LineOp::Stage => (true, false),
+        LineOp::Discard => (false, true),
+        LineOp::Unstage => (true, true),
+    };
+    repos.engine().apply(&root, &text, cached, reverse).await
+}
+
+/// Stage the selected lines of one file into the index
+/// (`git apply --cached`; P4 行级暂存).
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_stage_lines(
+    id: RepoId,
+    model_id: u32,
+    path: String,
+    selections: Vec<LineSelection>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    apply_line_op(id, model_id, &path, &selections, LineOp::Stage, &repos).await
+}
+
+/// Discard the selected lines from the worktree (`git apply --reverse`),
+/// with a whole-file recovery snapshot taken first (§4.7 轨道 A) so the
+/// operation is undoable. Returns the snapshot id for the undo entry.
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_discard_lines(
+    id: RepoId,
+    model_id: u32,
+    path: String,
+    selections: Vec<LineSelection>,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<Option<String>, AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    let model = repos.get_diff(id, model_id).await?;
+    let file = model
+        .find_file(&path)
+        .ok_or_else(|| AppError::parse(format!("diff model does not contain path {path:?}")))?;
+    let text = patch::build_line_patch(file, &path, &selections, LineOp::Discard)?;
+    if text.is_empty() {
+        return Ok(None);
+    }
+
+    // Snapshot before destroying worktree content (untracked-ness from the
+    // status view is enough for the snapshot's copy classification).
+    let untracked = repos
+        .status(id)
+        .await
+        .map(|st| {
+            st.iter()
+                .any(|f| f.path == path && f.untracked && !f.conflict)
+        })
+        .unwrap_or(false);
+    let targets = [DiscardTarget {
+        path: path.clone(),
+        untracked,
+        conflict: false,
+    }];
+    let snap = recovery
+        .snapshot_discard(
+            &*repos.engine(),
+            std::path::Path::new(&root),
+            &targets,
+            DiscardScope::Worktree,
+        )
+        .await?;
+    let result = repos.engine().apply(&root, &text, false, true).await;
+    match result {
+        Ok(()) => Ok(Some(snap.id)),
+        Err(e) => {
+            let _ = recovery.delete(std::path::Path::new(&root), &snap.id);
+            Err(e)
+        }
+    }
+}
+
+/// Remove the selected lines from the index
+/// (`git apply --cached --reverse`; P4 行级取消暂存).
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_unstage_lines(
+    id: RepoId,
+    model_id: u32,
+    path: String,
+    selections: Vec<LineSelection>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    apply_line_op(id, model_id, &path, &selections, LineOp::Unstage, &repos).await
+}
+
+/// Content of one file revision for the image diff: `rev = None` reads the
+/// worktree file, otherwise `git cat-file blob <rev>:<path>` (e.g. `HEAD`,
+/// `:0` for the index, or a commit-ish). Oversized files return `data: null`.
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_file_content(
+    id: RepoId,
+    path: String,
+    rev: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<FileContent, AppError> {
+    let _permit = repos.read_permit().await?;
+    let root = resolve(&repos, id).await?;
     repos
         .engine()
-        .diff(&path, diff_source, rev_range, paths)
+        .file_content(&root, &path, rev.as_deref())
         .await
 }
 

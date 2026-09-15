@@ -100,6 +100,17 @@ pub struct ProcessResult {
     pub duration_ms: u64,
 }
 
+/// Binary-safe variant of [`ProcessResult`]: stdout is raw bytes (P4
+/// `git cat-file blob` for image diff). stderr is lossily decoded for
+/// diagnostics.
+#[derive(Debug, Clone)]
+pub struct RawResult {
+    pub exit_code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: String,
+    pub duration_ms: u64,
+}
+
 /// GitProcessRunner: spawn / cancel / kill / wait / streams / stdin / timeout / env.
 ///
 /// 进程树 kill（PLAN P1）：cancel 与超时都经 [`proctree::TreeChild`] 终止
@@ -169,6 +180,27 @@ impl GitProcessRunner {
         timeout_secs: Option<u64>,
         cancel: Option<&CancelToken>,
     ) -> Result<ProcessResult, AppError> {
+        let out = self
+            .run_raw(git, args, stdin_mode, stdin_bytes, timeout_secs, cancel)
+            .await?;
+        Ok(ProcessResult {
+            exit_code: out.exit_code,
+            stdout: String::from_utf8(out.stdout).map_err(|_| RunnerError::Utf8)?,
+            stderr: out.stderr,
+            duration_ms: out.duration_ms,
+        })
+    }
+
+    /// Binary-safe run: stdout returned as raw bytes (P4 `cat-file blob`).
+    pub async fn run_raw(
+        &self,
+        git: &str,
+        args: &[&str],
+        stdin_mode: StdinMode,
+        stdin_bytes: Option<&[u8]>,
+        timeout_secs: Option<u64>,
+        cancel: Option<&CancelToken>,
+    ) -> Result<RawResult, AppError> {
         let mut cmd = self.base_command(git);
         cmd.args(args);
         cmd.stdout(process::Stdio::piped());
@@ -187,7 +219,7 @@ impl GitProcessRunner {
             }
         }
 
-        self.run_command(&mut cmd, stdin_mode, stdin_bytes, timeout_secs, cancel)
+        self.run_command_bytes(&mut cmd, stdin_mode, stdin_bytes, timeout_secs, cancel)
             .await
     }
 
@@ -202,6 +234,26 @@ impl GitProcessRunner {
         timeout_secs: Option<u64>,
         cancel: Option<&CancelToken>,
     ) -> Result<ProcessResult, AppError> {
+        let out = self
+            .run_command_bytes(cmd, stdin_mode, stdin_bytes, timeout_secs, cancel)
+            .await?;
+        Ok(ProcessResult {
+            exit_code: out.exit_code,
+            stdout: String::from_utf8(out.stdout).map_err(|_| RunnerError::Utf8)?,
+            stderr: out.stderr,
+            duration_ms: out.duration_ms,
+        })
+    }
+
+    /// Core execution path returning raw stdout bytes.
+    async fn run_command_bytes(
+        &self,
+        cmd: &mut Command,
+        stdin_mode: StdinMode,
+        stdin_bytes: Option<&[u8]>,
+        timeout_secs: Option<u64>,
+        cancel: Option<&CancelToken>,
+    ) -> Result<RawResult, AppError> {
         // Safety net only: normal paths reap or kill explicitly. `kill_on_drop`
         // plus the Windows job's KILL_ON_JOB_CLOSE make even panic paths clean up.
         cmd.kill_on_drop(true);
@@ -253,11 +305,10 @@ impl GitProcessRunner {
             Ok(RunOutcome::Done(Err(e))) => Err(e.into()),
             Ok(RunOutcome::Done(Ok(output))) => {
                 let exit_code = output.status.code();
-                let stdout = String::from_utf8(output.stdout).map_err(|_| RunnerError::Utf8)?;
-                let stderr = String::from_utf8(output.stderr).map_err(|_| RunnerError::Utf8)?;
-                Ok(ProcessResult {
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                Ok(RawResult {
                     exit_code,
-                    stdout,
+                    stdout: output.stdout,
                     stderr,
                     duration_ms: started_at.elapsed().as_millis() as u64,
                 })

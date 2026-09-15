@@ -3,6 +3,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod parse;
+pub mod patch;
+pub mod untracked;
 
 // =====================
 // Types (shared)
@@ -61,6 +63,12 @@ pub struct DiffLine {
     pub left_no: Option<u32>,
     pub right_no: Option<u32>,
     pub kind: DiffLineKind,
+    /// The line is followed by `\\ No newline at end of file`: the file on
+    /// this line's side ends without a trailing newline. Only the genuine
+    /// last line of a side can carry this; the patch builder uses it to
+    /// reproduce correct `\\ No newline` markers (P4 行级暂存边界用例).
+    #[serde(default)]
+    pub no_eol: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -93,10 +101,63 @@ pub struct DiffFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DiffModel {
+    /// Identity of the cached model on the Rust side (PLAN P4: 行级操作由前端
+    /// 上报 model id + 行号，Rust 从同一模型构造 patch，杜绝双端解析漂移).
+    /// 0 = not cached (parse-time default).
+    #[serde(default)]
+    pub id: u32,
     pub source: DiffSource,
     pub old_revision: Option<String>,
     pub new_revision: Option<String>,
     pub files: Vec<DiffFile>,
+}
+
+impl DiffModel {
+    /// Find a file by its displayed path (new path, falling back to old).
+    pub fn find_file(&self, path: &str) -> Option<&DiffFile> {
+        self.files
+            .iter()
+            .find(|f| f.new_path.as_deref() == Some(path) || f.old_path.as_deref() == Some(path))
+    }
+}
+
+/// Options for [`GitEngine::diff`] (P4: context expansion + whitespace modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct DiffOptions {
+    /// `--unified=N` context lines (git default 3). The diff viewer expands
+    /// collapsed context by re-fetching with a larger value.
+    pub context_lines: u32,
+    /// `--ignore-all-space` (`-w`): ignore whitespace when comparing lines.
+    pub ignore_whitespace: bool,
+}
+
+impl Default for DiffOptions {
+    fn default() -> Self {
+        Self {
+            context_lines: 3,
+            ignore_whitespace: false,
+        }
+    }
+}
+
+/// One selected diff line for line-level operations (P4 行级暂存): indices
+/// into the cached [`DiffModel`] the frontend is displaying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct LineSelection {
+    /// Index into `DiffFile.hunks`.
+    pub hunk: u32,
+    /// Index into `DiffHunk.lines`.
+    pub line: u32,
+}
+
+/// Content of one file revision (worktree or a git object), base64-encoded
+/// for the wire; `data` is `None` when the file exceeds the transfer cap.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct FileContent {
+    /// Saturates at `u32::MAX` for absurd sizes (the UI only needs a
+    /// "too large" signal past the transfer cap).
+    pub size: u32,
+    pub data: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -249,7 +310,18 @@ pub trait GitEngine: Send + Sync {
         source: DiffSource,
         rev_range: Option<(&str, &str)>,
         paths: &[String],
+        opts: DiffOptions,
     ) -> Result<DiffModel, AppError>;
+
+    /// Content of one file: `rev = None` reads the worktree file, otherwise
+    /// `git cat-file blob <rev>:<path>`. Files above the transfer cap return
+    /// `data = None` with the size filled in (image diff / P4 protection).
+    async fn file_content(
+        &self,
+        repo: &str,
+        path: &str,
+        rev: Option<&str>,
+    ) -> Result<FileContent, AppError>;
 
     // Log
     async fn log(

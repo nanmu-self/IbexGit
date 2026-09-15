@@ -22,6 +22,10 @@ class SettingsStore {
   activePath = $state<string | null>(null);
   /** Whether the repositories overview tab ("+" tab, P3.5) was open. */
   reposTabOpen = $state(false);
+  // ---- Diff viewer (P4) ----
+  diffViewMode = $state<"unified" | "split">("unified");
+  diffShowWhitespace = $state(false);
+  diffSyntax = $state(true);
 
   #store: Store | null = null;
 
@@ -39,6 +43,11 @@ class SettingsStore {
       this.openPaths = (await this.#store.get<string[]>("openPaths")) ?? [];
       this.activePath = (await this.#store.get<string | null>("activePath")) ?? null;
       this.reposTabOpen = (await this.#store.get<boolean>("reposTabOpen")) ?? false;
+      this.diffViewMode =
+        (await this.#store.get<"unified" | "split">("diffViewMode")) ?? "unified";
+      this.diffShowWhitespace =
+        (await this.#store.get<boolean>("diffShowWhitespace")) ?? false;
+      this.diffSyntax = (await this.#store.get<boolean>("diffSyntax")) ?? true;
     } finally {
       setLocale(this.locale);
       this.ready = true;
@@ -69,6 +78,21 @@ class SettingsStore {
   async setFileListWidth(width: number): Promise<void> {
     this.fileListWidth = width;
     await this.#store?.set("fileListWidth", width);
+  }
+
+  async setDiffViewMode(mode: "unified" | "split"): Promise<void> {
+    this.diffViewMode = mode;
+    await this.#store?.set("diffViewMode", mode);
+  }
+
+  async setDiffShowWhitespace(v: boolean): Promise<void> {
+    this.diffShowWhitespace = v;
+    await this.#store?.set("diffShowWhitespace", v);
+  }
+
+  async setDiffSyntax(v: boolean): Promise<void> {
+    this.diffSyntax = v;
+    await this.#store?.set("diffSyntax", v);
   }
 
   async setSession(

@@ -34,6 +34,11 @@ pub enum AppError {
 
     CredentialCancelled,
 
+    /// The cached DiffModel referenced by a line-level operation is gone
+    /// (invalidated by a watcher event or evicted). The UI must re-fetch
+    /// the diff and retry (PLAN P4: 同源保证 — 不重建，宁可拒绝).
+    DiffModelExpired,
+
     #[serde(rename_all = "snake_case")]
     Parse {
         message: String,
@@ -61,6 +66,7 @@ impl fmt::Display for AppError {
             Self::InvalidRepo { path } => write!(f, "Invalid repository: {}", path),
             Self::OperationCancelled => write!(f, "Operation cancelled by user"),
             Self::CredentialCancelled => write!(f, "Credential cancelled by user"),
+            Self::DiffModelExpired => write!(f, "Diff model expired; please refresh"),
             Self::Parse { message } => write!(f, "Parse error: {}", message),
             Self::Internal { message } => write!(f, "Internal error: {}", message),
             Self::NotImplemented { feature } => write!(f, "Not implemented: {}", feature),

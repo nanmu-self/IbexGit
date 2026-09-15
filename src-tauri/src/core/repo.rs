@@ -1,4 +1,4 @@
-use crate::core::engine::{FileStatus, GitEngine};
+use crate::core::engine::{DiffModel, FileStatus, GitEngine};
 use crate::core::error::AppError;
 use crate::core::watcher::EventKinds;
 use std::collections::HashMap;
@@ -10,6 +10,10 @@ use tokio::sync::{mpsc, Mutex, Semaphore};
 /// Max parallel read-only git operations across all repositories (PLAN §4.3:
 /// 只读操作可并行但限制并发数).
 const MAX_CONCURRENT_READS: usize = 8;
+
+/// Max cached DiffModels per repository (line-level operations reference
+/// them by id; oldest ids are evicted first).
+const MAX_CACHED_DIFFS: u32 = 8;
 
 /// Per-repository write gate: mutating operations (stage/commit/checkout/…)
 /// hold it while running so they execute strictly serially, avoiding
@@ -77,6 +81,12 @@ pub struct StatusSnapshot {
 struct Session {
     generation: u64,
     status: Option<StatusSnapshot>,
+    /// Monotonic DiffModel id source (never reused within a session).
+    next_diff_id: u32,
+    /// Cached DiffModels for line-level operations (PLAN P4 同源保证):
+    /// the frontend sends {model_id, path, selections} and Rust builds the
+    /// patch from the same model it served. Cleared on every invalidation.
+    diffs: HashMap<u32, DiffModel>,
 }
 
 /// A queued operation (serialized per-repo).
@@ -219,6 +229,9 @@ impl RepoManager {
             let s = sessions.entry(id).or_default();
             s.generation += 1;
             s.status = None;
+            // DiffModels describe a point-in-time state; after any change
+            // they are suspect and must not feed line-level patches.
+            s.diffs.clear();
             s.generation
         };
         tracing::debug!(
@@ -301,6 +314,31 @@ impl RepoManager {
     pub async fn get_path(&self, id: RepoId) -> Option<PathBuf> {
         let repos = self.repos.lock().await;
         repos.get(&id).cloned()
+    }
+
+    /// Store a DiffModel for later line-level operations; assigns and
+    /// returns its id (mutates the model in place).
+    pub async fn cache_diff(&self, id: RepoId, model: &mut DiffModel) -> Result<(), AppError> {
+        let mut sessions = self.sessions.lock().await;
+        let s = sessions.entry(id).or_default();
+        s.next_diff_id += 1;
+        model.id = s.next_diff_id;
+        // Evict the oldest ids beyond the cap (ids are monotonic).
+        let floor = s.next_diff_id.saturating_sub(MAX_CACHED_DIFFS);
+        s.diffs.retain(|k, _| *k > floor);
+        s.diffs.insert(model.id, model.clone());
+        Ok(())
+    }
+
+    /// Fetch a cached DiffModel by id. Errors with [`AppError::DiffModelExpired`]
+    /// when the model was invalidated or evicted — the frontend must re-fetch.
+    pub async fn get_diff(&self, id: RepoId, model_id: u32) -> Result<DiffModel, AppError> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(&id)
+            .and_then(|s| s.diffs.get(&model_id))
+            .cloned()
+            .ok_or(AppError::DiffModelExpired)
     }
 
     pub async fn list(&self) -> Vec<(RepoId, PathBuf)> {
@@ -391,8 +429,17 @@ mod tests {
             _: DiffSource,
             _: Option<(&str, &str)>,
             _: &[String],
+            _: crate::core::engine::DiffOptions,
         ) -> Result<DiffModel, AppError> {
             Err(err("diff"))
+        }
+        async fn file_content(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<crate::core::engine::FileContent, AppError> {
+            Err(err("file_content"))
         }
         async fn log(
             &self,
@@ -689,6 +736,63 @@ mod tests {
         mgr.open(dir.clone()).await.unwrap();
         let _ = mgr.status(id).await.unwrap();
         assert_eq!(engine.status_calls.load(Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn diff_cache_assigns_ids_and_expires_on_invalidate() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+
+        let mut m1 = DiffModel {
+            id: 0,
+            source: DiffSource::Worktree,
+            old_revision: None,
+            new_revision: None,
+            files: Vec::new(),
+        };
+        let mut m2 = m1.clone();
+        mgr.cache_diff(id, &mut m1).await.unwrap();
+        mgr.cache_diff(id, &mut m2).await.unwrap();
+        assert_eq!(m1.id, 1);
+        assert_eq!(m2.id, 2);
+        assert!(mgr.get_diff(id, 1).await.is_ok());
+
+        // Invalidation clears cached models (同源保证).
+        mgr.invalidate(id, EventKinds::WORKTREE).await.unwrap();
+        assert!(matches!(
+            mgr.get_diff(id, 1).await,
+            Err(AppError::DiffModelExpired)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn diff_cache_evicts_oldest_beyond_cap() {
+        let engine = Arc::new(MockEngine {
+            status_calls: AtomicUsize::new(0),
+        });
+        let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+        for _ in 0..10 {
+            let mut m = DiffModel {
+                id: 0,
+                source: DiffSource::Worktree,
+                old_revision: None,
+                new_revision: None,
+                files: Vec::new(),
+            };
+            mgr.cache_diff(id, &mut m).await.unwrap();
+        }
+        // Oldest ids evicted (cap 8), newest retained.
+        assert!(mgr.get_diff(id, 1).await.is_err());
+        assert!(mgr.get_diff(id, 3).await.is_ok());
+        assert!(mgr.get_diff(id, 10).await.is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

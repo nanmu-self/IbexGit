@@ -1,7 +1,7 @@
 //! P1 acceptance smoke loop: status → stage → commit → log against a real
 //! git repository (PLAN §P1 验收).
 
-use ibexgit_lib::core::engine::{CliEngine, DiffSource, GitEngine};
+use ibexgit_lib::core::engine::{CliEngine, DiffOptions, DiffSource, GitEngine};
 use ibexgit_lib::core::runner::{GitProcessRunner, StdinMode};
 use std::path::PathBuf;
 use std::process::Command;
@@ -71,7 +71,7 @@ async fn status_stage_commit_log_smoke_loop() {
 
     // 4. diff (staged): the added file is visible
     let diff = engine
-        .diff(&path, DiffSource::Staged, None, &[])
+        .diff(&path, DiffSource::Staged, None, &[], DiffOptions::default())
         .await
         .expect("diff staged");
     assert_eq!(diff.files.len(), 1);
@@ -115,7 +115,13 @@ async fn status_stage_commit_log_smoke_loop() {
 
     // 9. worktree diff is empty; commit-range diff shows the second commit
     let diff = engine
-        .diff(&path, DiffSource::Worktree, None, &[])
+        .diff(
+            &path,
+            DiffSource::Worktree,
+            None,
+            &[],
+            DiffOptions::default(),
+        )
         .await
         .expect("diff worktree");
     assert!(diff.files.is_empty(), "clean worktree has no diff");

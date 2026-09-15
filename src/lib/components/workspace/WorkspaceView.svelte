@@ -9,7 +9,9 @@
   import CommitBox from "./CommitBox.svelte";
   import RecoveryDialog from "./RecoveryDialog.svelte";
   import FileContextMenu from "./FileContextMenu.svelte";
-  import type { ContextTarget } from "./FileContextMenu.svelte";
+  import type {
+    ContextTarget,
+  } from "./FileContextMenu.svelte";
   import { t } from "$lib/i18n";
   import { repos, splitFiles } from "$lib/stores/repos.svelte";
   import { settings } from "$lib/stores/settings.svelte";
@@ -19,6 +21,7 @@
     normalizeError,
     type FileStatus,
     type DiffModel,
+    type LineSelection,
     type RecoveryEntry,
   } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
@@ -113,9 +116,15 @@
   }
 
   // ---- diff loading (re-fetch after watcher refresh) ----
+  // P4: context expansion + ignore-whitespace refetch; the expansion state
+  // is per selected file and resets when the selection changes.
   let diffModel = $state<DiffModel | null>(null);
   let diffLoading = $state(false);
-  let fileListDragging = $state(false);
+  let diffIgnoreWs = $state(false);
+  let diffContext = $state<{ path: string | null; context: number }>({
+    path: null,
+    context: 3,
+  });
 
   $effect(() => {
     const sel = repos.ui.selected_file;
@@ -126,9 +135,12 @@
       diffLoading = false;
       return;
     }
+    // Effective context: the override only applies to the file it was
+    // expanded for; switching files falls back to git's default 3.
+    const context = diffContext.path === sel.path ? diffContext.context : 3;
     diffLoading = true;
     git
-      .diff(tab.id, sel.source, undefined, undefined, [sel.path])
+      .diff(tab.id, sel.source, undefined, undefined, [sel.path], context, diffIgnoreWs)
       .then((model) => {
         const cur = repos.ui.selected_file;
         if (cur?.path === sel.path && cur.source === sel.source) diffModel = model;
@@ -142,6 +154,51 @@
       });
     void refreshMark;
   });
+
+  function handleExpand(path: string, dir: "up" | "down" | "all"): void {
+    const current = diffContext.path === path ? diffContext.context : 3;
+    if (dir === "all") {
+      diffContext = { path, context: 100_000 };
+    } else {
+      diffContext = { path, context: Math.min(current + 10, 100_000) };
+    }
+  }
+
+  function handleLineOp(
+    op: "stage" | "discard" | "unstage",
+    path: string,
+    selections: LineSelection[]
+  ): void {
+    const id = repos.activeId;
+    const modelId = diffModel?.id ?? 0;
+    if (id === null || modelId === 0 || selections.length === 0) return;
+    const run = async (): Promise<void> => {
+      let snapshotId: string | null = null;
+      if (op === "stage") await git.stageLines(id, modelId, path, selections);
+      else if (op === "unstage") await git.unstageLines(id, modelId, path, selections);
+      else snapshotId = await git.discardLines(id, modelId, path, selections);
+      if (snapshotId) {
+        showToast(
+          "success",
+          t("diff.lineDiscardDone"),
+          t("workspace.discardUndoHint"),
+          8000,
+          {
+            label: t("workspace.undo"),
+            run: () => void undoDiscard(id, snapshotId!),
+          },
+        );
+      }
+      await repos.refresh(id);
+    };
+    run().catch((e) => normalizeError(e));
+  }
+
+  let fileListDragging = $state(false);
+
+  function handleIgnoreWs(v: boolean): void {
+    diffIgnoreWs = v;
+  }
 
   $effect(() => {
     return onAction("workspace.focusFilter", () => {
@@ -441,7 +498,15 @@
   <!-- 差异 + 提交框 -->
   <div class="flex min-w-0 flex-1 flex-col">
     <div class="min-h-0 flex-1">
-      <DiffViewer model={diffModel} loading={diffLoading} />
+      <DiffViewer
+        model={diffModel}
+        loading={diffLoading}
+        repoId={active?.id ?? null}
+        ignoreWhitespace={diffIgnoreWs}
+        onlineop={handleLineOp}
+        onexpand={handleExpand}
+        onignorewschange={handleIgnoreWs}
+      />
     </div>
 
     <CommitBox

@@ -39,7 +39,38 @@ export const commands = {
 	/**  Append paths to `.gitignore` (right-click "ignore" action). */
 	gitIgnorePaths: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_ignore_paths", { id, paths }),
 	gitLog: (id: RepoId_Deserialize, limit: number, offset: number, paths: string[] | null) => __TAURI_INVOKE<CommitInfo[]>("git_log", { id, limit, offset, paths }),
-	gitDiff: (id: RepoId_Deserialize, source: string, oldRev: string | null, newRev: string | null, paths: string[] | null) => __TAURI_INVOKE<DiffModel>("git_diff", { id, source, oldRev, newRev, paths }),
+	/**
+	 *  Parse a diff for the given source/paths into a [`DiffModel`], cache it in
+	 *  the RepoManager session and return it with its cache id.
+	 * 
+	 *  Untracked worktree paths never appear in `git diff`; they are synthesized
+	 *  as pure-addition files (P4) so line-level stage/discard works on them.
+	 *  The model id is what line-level operations send back — Rust rebuilds the
+	 *  patch from the same cached model (同源，杜绝双端解析漂移).
+	 */
+	gitDiff: (id: RepoId_Deserialize, source: DiffSource, oldRev: string | null, newRev: string | null, paths: string[] | null, contextLines: number | null, ignoreWhitespace: boolean | null) => __TAURI_INVOKE<DiffModel>("git_diff", { id, source, oldRev, newRev, paths, contextLines, ignoreWhitespace }),
+	/**
+	 *  Stage the selected lines of one file into the index
+	 *  (`git apply --cached`; P4 行级暂存).
+	 */
+	gitStageLines: (id: RepoId_Deserialize, modelId: number, path: string, selections: LineSelection[]) => __TAURI_INVOKE<null>("git_stage_lines", { id, modelId, path, selections }),
+	/**
+	 *  Discard the selected lines from the worktree (`git apply --reverse`),
+	 *  with a whole-file recovery snapshot taken first (§4.7 轨道 A) so the
+	 *  operation is undoable. Returns the snapshot id for the undo entry.
+	 */
+	gitDiscardLines: (id: RepoId_Deserialize, modelId: number, path: string, selections: LineSelection[]) => __TAURI_INVOKE<string | null>("git_discard_lines", { id, modelId, path, selections }),
+	/**
+	 *  Remove the selected lines from the index
+	 *  (`git apply --cached --reverse`; P4 行级取消暂存).
+	 */
+	gitUnstageLines: (id: RepoId_Deserialize, modelId: number, path: string, selections: LineSelection[]) => __TAURI_INVOKE<null>("git_unstage_lines", { id, modelId, path, selections }),
+	/**
+	 *  Content of one file revision for the image diff: `rev = None` reads the
+	 *  worktree file, otherwise `git cat-file blob <rev>:<path>` (e.g. `HEAD`,
+	 *  `:0` for the index, or a commit-ish). Oversized files return `data: null`.
+	 */
+	gitFileContent: (id: RepoId_Deserialize, path: string, rev: string | null) => __TAURI_INVOKE<FileContent>("git_file_content", { id, path, rev }),
 	gitBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_branches", { id }),
 	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
 	recoveryList: (id: RepoId_Deserialize) => __TAURI_INVOKE<RecoveryEntry[]>("recovery_list", { id }),
@@ -80,7 +111,13 @@ export const events = {
 
 /* Types */
 /**  Application-wide error type. */
-export type AppError = { code: "io"; source: string; detail: string | null } | { code: "git_command"; command: string; stderr: string; stdout: string; detail: string | null } | { code: "git_version_too_old"; found: string; required: string } | { code: "invalid_repo"; path: string } | { code: "operation_cancelled" } | { code: "credential_cancelled" } | { code: "parse"; message: string } | { code: "internal"; message: string } | { code: "not_implemented"; feature: string };
+export type AppError = { code: "io"; source: string; detail: string | null } | { code: "git_command"; command: string; stderr: string; stdout: string; detail: string | null } | { code: "git_version_too_old"; found: string; required: string } | { code: "invalid_repo"; path: string } | { code: "operation_cancelled" } | { code: "credential_cancelled" } | 
+/**
+ *  The cached DiffModel referenced by a line-level operation is gone
+ *  (invalidated by a watcher event or evicted). The UI must re-fetch
+ *  the diff and retry (PLAN P4: 同源保证 — 不重建，宁可拒绝).
+ */
+{ code: "diff_model_expired" } | { code: "parse"; message: string } | { code: "internal"; message: string } | { code: "not_implemented"; feature: string };
 
 /**
  *  Emitted to the frontend when a second app instance was launched with
@@ -139,11 +176,24 @@ export type DiffLine = {
 	left_no: number | null,
 	right_no: number | null,
 	kind: DiffLineKind,
+	/**
+	 *  The line is followed by `\\ No newline at end of file`: the file on
+	 *  this line's side ends without a trailing newline. Only the genuine
+	 *  last line of a side can carry this; the patch builder uses it to
+	 *  reproduce correct `\\ No newline` markers (P4 行级暂存边界用例).
+	 */
+	no_eol?: boolean,
 };
 
 export type DiffLineKind = "context" | "add" | "remove" | "header";
 
 export type DiffModel = {
+	/**
+	 *  Identity of the cached model on the Rust side (PLAN P4: 行级操作由前端
+	 *  上报 model id + 行号，Rust 从同一模型构造 patch，杜绝双端解析漂移).
+	 *  0 = not cached (parse-time default).
+	 */
+	id?: number,
 	source: DiffSource,
 	old_revision: string | null,
 	new_revision: string | null,
@@ -151,6 +201,19 @@ export type DiffModel = {
 };
 
 export type DiffSource = "worktree" | "staged" | "commit" | "stash";
+
+/**
+ *  Content of one file revision (worktree or a git object), base64-encoded
+ *  for the wire; `data` is `None` when the file exceeds the transfer cap.
+ */
+export type FileContent = {
+	/**
+	 *  Saturates at `u32::MAX` for absurd sizes (the UI only needs a
+	 *  "too large" signal past the transfer cap).
+	 */
+	size: number,
+	data: string | null,
+};
 
 export type FileStatus = FileStatus_Serialize | FileStatus_Deserialize;
 
@@ -236,6 +299,17 @@ export type GroupsFile_Serialize = {
 	 *  (same normalization as `RepoId`) to avoid Windows case ambiguity.
 	 */
 	repos: { [key in string]: RepoMeta_Serialize },
+};
+
+/**
+ *  One selected diff line for line-level operations (P4 行级暂存): indices
+ *  into the cached [`DiffModel`] the frontend is displaying.
+ */
+export type LineSelection = {
+	/**  Index into `DiffFile.hunks`. */
+	hunk: number,
+	/**  Index into `DiffHunk.lines`. */
+	line: number,
 };
 
 export type RecentRepo = {

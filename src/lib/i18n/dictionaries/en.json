@@ -3,7 +3,6 @@
   "app.tagline": "Local-first Git graphical client",
   "app.dropToOpen": "Drop to open repository",
   "app.loading": "Starting…",
-
   "menu.file": "File",
   "menu.view": "View",
   "menu.repository": "Repository",
@@ -24,12 +23,10 @@
   "menu.repo.newBranch": "New Branch",
   "menu.help.shortcuts": "Keyboard Shortcuts…",
   "menu.help.about": "About IbexGit",
-
   "win.minimize": "Minimize",
   "win.maximize": "Maximize",
   "win.restore": "Restore",
   "win.close": "Close",
-
   "toolbar.fetch": "Fetch",
   "toolbar.pull": "Pull",
   "toolbar.push": "Push",
@@ -38,13 +35,11 @@
   "toolbar.openRepo": "Open Repository",
   "toolbar.openTerminal": "Open in Terminal",
   "toolbar.showInExplorer": "Reveal in File Manager",
-
   "tabs.open": "Open Repository…",
   "tabs.close": "Close Tab",
   "tabs.closeOthers": "Close Other Tabs",
   "tabs.addTab": "Open Repository List",
   "tabs.reposTab": "Repositories",
-
   "repos.title": "All Repositories",
   "repos.count": "{n} repositories",
   "repos.search": "Search repositories…",
@@ -68,7 +63,6 @@
   "repos.deleteGroupTitle": "Delete Group",
   "repos.groupName": "Group name",
   "repos.deleteGroupConfirm": "Delete group \"{name}\"? Its repositories move to Ungrouped; the repositories themselves are not deleted.",
-
   "welcome.title": "Welcome to IbexGit",
   "welcome.subtitle": "Local-first Git graphical client",
   "welcome.open": "Open Local Repository",
@@ -79,7 +73,6 @@
   "welcome.dragHint": "Tip: you can also drop a folder (or any file inside a repo) into this window",
   "welcome.cloneSoon": "Cloning will arrive in P7",
   "welcome.newSoon": "Repository creation will arrive in P7",
-
   "sidebar.workspace": "Workspace",
   "sidebar.changes": "Local Changes",
   "sidebar.history": "Commit History",
@@ -93,7 +86,6 @@
   "sidebar.checkout": "Checkout branch {name}",
   "sidebar.checkoutMsg": "Checkout branch \"{name}\"? Uncommitted changes may block or carry over.",
   "sidebar.checkoutDone": "Checked out {name}",
-
   "statusbar.noRepo": "No repository open",
   "statusbar.detached": "HEAD detached",
   "statusbar.tasks": "Task Center",
@@ -101,7 +93,6 @@
   "statusbar.tasksEmptyHint": "Long tasks (fetch, push, rebase…) will appear here",
   "statusbar.refresh": "Refresh",
   "statusbar.lastRefresh": "Last refresh took {ms}ms",
-
   "workspace.filter": "Type to filter…",
   "workspace.staged": "Staged Files",
   "workspace.unstaged": "Unstaged Files",
@@ -146,13 +137,11 @@
   "workspace.ctx.copyPath": "Copy path",
   "workspace.ctx.copied": "Path copied",
   "workspace.ctx.ignore": "Ignore this file",
-
   "diff.loading": "Loading diff…",
   "diff.binary": "Binary file",
   "diff.binaryHint": "Binary files are not shown as text diff",
   "diff.noChanges": "No changes in this file",
   "diff.truncated": "Diff too large, showing first {lines} lines (virtual scrolling and syntax highlighting arrive in P4)",
-
   "commit.subject": "Commit Subject",
   "commit.description": "Description (optional)",
   "commit.amend": "Amend last commit",
@@ -164,7 +153,6 @@
   "commit.done": "Committed {hash}",
   "commit.pushSoon": "Push arrives in P6/P7; only a local commit was made",
   "commit.needsMessage": "Enter a commit message first",
-
   "recovery.title": "Recovery snapshots",
   "recovery.description": "Automatic snapshots taken before discards — restore the exact worktree and index state with one click.",
   "recovery.empty": "No recovery snapshots",
@@ -174,12 +162,10 @@
   "recovery.scope.worktree": "Discarded unstaged changes",
   "recovery.scope.all": "Discarded staged + unstaged changes",
   "recovery.fileCount": "{n} file(s)",
-
   "dialog.checkout.title": "Checkout Branch",
   "dialog.about.title": "About IbexGit",
   "dialog.about.desc": "{name} v{version} — local-first Git graphical client. Progress: P2 app skeleton.",
   "dialog.shortcuts.title": "Keyboard Shortcuts",
-
   "shortcut.repo.open": "Open local repository",
   "shortcut.repo.refresh": "Refresh current repository",
   "shortcut.repo.closeTab": "Close current repository tab",
@@ -189,7 +175,6 @@
   "shortcut.view.toggleTheme": "Toggle theme",
   "shortcut.workspace.focusFilter": "Focus workspace filter",
   "shortcut.app.tasks": "Task center",
-
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.ok": "OK",
@@ -198,12 +183,35 @@
   "common.comingSoonPhase": "{feature} will arrive in {phase}",
   "common.error": "Something went wrong",
   "common.openRepoFailed": "Failed to open repository",
-
   "theme.light": "Light",
   "theme.dark": "Dark",
   "theme.system": "System",
   "theme.toggle": "Toggle theme",
-
   "lang.zhCN": "简体中文",
-  "lang.en": "English"
+  "lang.en": "English",
+  "diff.unified": "Unified",
+  "diff.split": "Split",
+  "diff.whitespace": "Whitespace",
+  "diff.showWhitespace": "Show whitespace characters",
+  "diff.ignoreWhitespace": "Ignore whitespace changes (refetches)",
+  "diff.ignoreWsShort": "Ignore WS",
+  "diff.syntax": "Syntax highlighting",
+  "diff.syntaxShort": "Highlight",
+  "diff.expandAll": "Expand all",
+  "diff.expandContext": "{arrow} Expand {n} lines",
+  "diff.collapsedLines": "{n} unchanged lines, click to expand",
+  "diff.stageSelected": "Stage {n} lines",
+  "diff.discardSelected": "Discard {n} lines",
+  "diff.unstageSelected": "Unstage {n} lines",
+  "diff.stageHunk": "Stage hunk",
+  "diff.discardHunk": "Discard hunk",
+  "diff.unstageHunk": "Unstage hunk",
+  "diff.lineDiscardDone": "Discarded selected lines (undoable)",
+  "diff.image.side": "Side by side",
+  "diff.image.slider": "Slider",
+  "diff.image.onion": "Onion",
+  "diff.image.tooLarge": "File exceeds 10MB — image comparison skipped",
+  "diff.image.missing": "Unable to load image content",
+  "diff.image.noOld": "Old image (added)",
+  "diff.image.noNew": "New image (deleted)"
 }

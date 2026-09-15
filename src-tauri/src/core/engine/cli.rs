@@ -1,4 +1,4 @@
-use crate::core::engine::{self, parse, DiffModel, DiffSource};
+use crate::core::engine::{self, parse, DiffModel, DiffOptions, DiffSource, FileContent};
 use crate::core::error::AppError;
 use crate::core::runner::{GitProcessRunner, ProcessResult, StdinMode};
 use std::collections::HashSet;
@@ -322,38 +322,117 @@ impl engine::GitEngine for CliEngine {
         source: DiffSource,
         rev_range: Option<(&str, &str)>,
         paths: &[String],
+        opts: DiffOptions,
     ) -> Result<DiffModel, AppError> {
         let mut args = vec![
-            "-C",
-            repo,
-            "diff",
-            "--no-color",
-            "-M",
-            "--diff-filter=ACDMRTUXB",
+            "-C".to_string(),
+            repo.to_string(),
+            "diff".to_string(),
+            "--no-color".to_string(),
+            "-M".to_string(),
+            "--diff-filter=ACDMRTUXB".to_string(),
         ];
+        if opts.context_lines != 3 {
+            args.push(format!("--unified={}", opts.context_lines));
+        }
+        if opts.ignore_whitespace {
+            args.push("-w".to_string());
+        }
         match source {
-            DiffSource::Staged => args.push("--cached"),
+            DiffSource::Staged => args.push("--cached".to_string()),
             DiffSource::Commit => {
                 if let Some((a, b)) = rev_range {
-                    args.push(a);
-                    args.push(b);
+                    args.push(a.to_string());
+                    args.push(b.to_string());
                 }
             }
             DiffSource::Stash => {
-                args.push("stash");
+                args.push("stash".to_string());
             }
             DiffSource::Worktree => {}
         }
         if !paths.is_empty() {
-            args.push("--");
+            args.push("--".to_string());
             for p in paths {
-                args.push(p.as_str());
+                args.push(p.clone());
             }
         }
 
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
         let model = parse::parse_diff(&res.stdout, source, rev_range)?;
         Ok(model)
+    }
+
+    async fn file_content(
+        &self,
+        repo: &str,
+        path: &str,
+        rev: Option<&str>,
+    ) -> Result<FileContent, AppError> {
+        const MAX_CONTENT_BYTES: u64 = 10 * 1024 * 1024; // PLAN P4: >10MB 提示跳过
+        match rev {
+            None => {
+                // Worktree file: size-check first, then read.
+                let abs = safe_join(repo, path)?;
+                let size = std::fs::metadata(&abs).map(|m| m.len()).unwrap_or(0);
+                if size > MAX_CONTENT_BYTES {
+                    return Ok(FileContent {
+                        size: size.min(u32::MAX as u64) as u32,
+                        data: None,
+                    });
+                }
+                let bytes = std::fs::read(&abs)?;
+                use base64::Engine as _;
+                Ok(FileContent {
+                    size: bytes.len() as u32,
+                    data: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+                })
+            }
+            Some(rev) => {
+                // Object revision: `git cat-file -s <rev>:<path>` then blob.
+                let spec = format!("{rev}:{path}");
+                let size_res = self
+                    .run(
+                        ["-C", repo, "cat-file", "-s", &spec],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                self.ensure_success(&size_res)?;
+                let size: u64 = size_res.stdout.trim().parse().unwrap_or(0);
+                if size > MAX_CONTENT_BYTES {
+                    return Ok(FileContent {
+                        size: size.min(u32::MAX as u64) as u32,
+                        data: None,
+                    });
+                }
+                let res = self
+                    .runner
+                    .run_raw(
+                        &self.git_path,
+                        &["-C", repo, "cat-file", "blob", &spec],
+                        StdinMode::Null,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                if res.exit_code != Some(0) {
+                    return Err(AppError::git_command(
+                        format!("git cat-file blob {spec}"),
+                        res.stderr,
+                        String::new(),
+                    ));
+                }
+                use base64::Engine as _;
+                Ok(FileContent {
+                    size: res.stdout.len() as u32,
+                    data: Some(base64::engine::general_purpose::STANDARD.encode(res.stdout)),
+                })
+            }
+        }
     }
 
     async fn log(
