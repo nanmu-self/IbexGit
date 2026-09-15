@@ -4,8 +4,8 @@
 //! spawning processes (P1 acceptance: full parser unit-test coverage).
 
 use super::{
-    BranchInfo, CommitInfo, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffSource,
-    FileStatus, IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+    BranchInfo, CommitFileStat, CommitInfo, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffModel,
+    DiffSource, FileStatus, IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
 };
 use crate::core::error::AppError;
 
@@ -531,6 +531,47 @@ pub fn parse_log(output: &str) -> Vec<CommitInfo> {
         i += 8;
     }
     commits
+}
+
+// =====================
+// commit changed files (P5 提交详情)
+// =====================
+
+/// Parse `git diff-tree -r --root -M -z --name-status <hash>` output.
+///
+/// `-z` record shape (NUL-terminated fields, no quoting):
+/// `"M" NUL "path" NUL` — or for renames/copies with score:
+/// `"R93" NUL "src" NUL "dst" NUL`. The score rides on the status
+/// token (`R100`, `C75`), which makes the two-path case unambiguous.
+pub fn parse_commit_files(output: &str) -> Vec<CommitFileStat> {
+    let mut toks = output.split('\0');
+    let mut out = Vec::new();
+    while let Some(st) = toks.next() {
+        if st.is_empty() {
+            // Trailing NUL or end of stream.
+            break;
+        }
+        let letter = st.chars().next().unwrap_or('M').to_string();
+        let score = st[letter.len()..].parse::<u32>().ok();
+        let Some(path) = toks.next() else { break };
+        if letter == "R" || letter == "C" {
+            let Some(dst) = toks.next() else { break };
+            out.push(CommitFileStat {
+                status: letter,
+                score,
+                path: dst.to_string(),
+                orig_path: Some(path.to_string()),
+            });
+        } else {
+            out.push(CommitFileStat {
+                status: letter,
+                score: None,
+                path: path.to_string(),
+                orig_path: None,
+            });
+        }
+    }
+    out
 }
 
 // =====================
@@ -1277,5 +1318,65 @@ mod tests {
         assert_eq!(r0.ref_name, "HEAD");
         assert_eq!(r0.message, "commit: fix bug");
         assert_eq!(r0.date, "2024-01-01 10:00:00 +0800");
+    }
+
+    // ---------- commit files (name-status -z) ----------
+
+    use crate::core::engine::CommitFileStat;
+
+    #[test]
+    fn commit_files_parse_basic_and_rename() {
+        // M, A, D and a rename with score; trailing NUL terminates.
+        let raw = "M\0src/app.rs\0A\0new.txt\0D\0old.txt\0R93\0a.txt\0b.txt\0\0";
+        let out = parse_commit_files(raw);
+        assert_eq!(
+            out,
+            vec![
+                CommitFileStat {
+                    status: "M".into(),
+                    score: None,
+                    path: "src/app.rs".into(),
+                    orig_path: None
+                },
+                CommitFileStat {
+                    status: "A".into(),
+                    score: None,
+                    path: "new.txt".into(),
+                    orig_path: None
+                },
+                CommitFileStat {
+                    status: "D".into(),
+                    score: None,
+                    path: "old.txt".into(),
+                    orig_path: None
+                },
+                CommitFileStat {
+                    status: "R".into(),
+                    score: Some(93),
+                    path: "b.txt".into(),
+                    orig_path: Some("a.txt".into())
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn commit_files_parse_empty_output() {
+        assert!(parse_commit_files("").is_empty());
+        assert!(parse_commit_files("\0").is_empty());
+    }
+
+    /// Chinese paths pass through raw (core.quotepath=false enforced at the
+    /// runner level); typechange letters carry no score.
+    #[test]
+    fn commit_files_parse_unicode_and_typechange() {
+        let raw = "T\0链接\0C75\0orig\\20name\0dst\0\0";
+        let out = parse_commit_files(raw);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].status, "T");
+        assert_eq!(out[0].path, "链接");
+        assert_eq!(out[1].status, "C");
+        assert_eq!(out[1].score, Some(75));
+        assert_eq!(out[1].orig_path.as_deref(), Some("orig\\20name"));
     }
 }

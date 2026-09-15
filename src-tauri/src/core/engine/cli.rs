@@ -4,6 +4,10 @@ use crate::core::runner::{GitProcessRunner, ProcessResult, StdinMode};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+/// Log format shared by `log`, `graph` and `commit_detail` (8 lines per
+/// commit, see `parse_log`).
+const LOG_FORMAT: &str = "%H%n%h%n%an%n%ae%n%aI%n%s%n%d%n%P";
+
 pub struct CliEngine {
     runner: GitProcessRunner,
     git_path: String,
@@ -473,6 +477,203 @@ impl engine::GitEngine for CliEngine {
         Ok(commits)
     }
 
+    async fn graph(
+        &self,
+        repo: &str,
+        skip: u32,
+        limit: u32,
+        filter: &engine::GraphFilter,
+    ) -> Result<Vec<engine::CommitInfo>, AppError> {
+        // Hash-jump: a pure-hex text of ≥4 chars resolves to a starting
+        // commit; on failure it degrades to a message grep below.
+        let mut start: Option<String> = None;
+        if let Some(t) = filter.text.as_deref() {
+            if t.len() >= 4 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+                let probe = format!("{t}^{{commit}}");
+                if let Ok(res) = self
+                    .run(
+                        ["-C", repo, "rev-parse", "--verify", "--quiet", &probe],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await
+                {
+                    if res.exit_code == Some(0) {
+                        start = Some(res.stdout.trim().to_string());
+                    }
+                }
+            }
+        }
+
+        let mut args: Vec<String> = vec![
+            "-C".into(),
+            repo.into(),
+            "log".into(),
+            "--topo-order".into(),
+            "--no-color".into(),
+            format!("--format={}", LOG_FORMAT),
+        ];
+        if let Some(s) = &start {
+            args.push(s.clone());
+        }
+        if let Some(t) = filter.text.as_deref() {
+            if start.is_none() && !t.is_empty() {
+                args.push("-i".into());
+                args.push("--grep".into());
+                args.push(t.into());
+            }
+        }
+        if let Some(a) = filter.author.as_deref() {
+            if !a.is_empty() {
+                args.push("-i".into());
+                args.push("--author".into());
+                args.push(a.into());
+            }
+        }
+        if let Some(s) = filter.since.as_deref() {
+            if !s.is_empty() {
+                args.push("--since".into());
+                args.push(s.into());
+            }
+        }
+        if let Some(u) = filter.until.as_deref() {
+            if !u.is_empty() {
+                args.push("--until".into());
+                args.push(u.into());
+            }
+        }
+        if skip > 0 {
+            args.push("--skip".into());
+            args.push(skip.to_string());
+        }
+        if limit > 0 && limit != u32::MAX {
+            args.push("-n".into());
+            args.push(limit.to_string());
+        }
+        if !filter.paths.is_empty() {
+            args.push("--".into());
+            args.extend(filter.paths.iter().cloned());
+        }
+
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+        if res.exit_code != Some(0) {
+            // Unborn HEAD (fresh repository): an empty graph, not an error.
+            if res.stderr.contains("does not have any commits") {
+                return Ok(Vec::new());
+            }
+            return Err(AppError::git_command(
+                format!("git exited with code {:?}", res.exit_code),
+                res.stderr,
+                res.stdout,
+            ));
+        }
+        Ok(parse::parse_log(&res.stdout))
+    }
+
+    async fn commit_detail(
+        &self,
+        repo: &str,
+        hash: &str,
+    ) -> Result<engine::CommitDetail, AppError> {
+        // 1. Commit metadata (same 8-line format as log).
+        let res = self
+            .run(
+                [
+                    "-C",
+                    repo,
+                    "log",
+                    "-1",
+                    "--no-color",
+                    &format!("--format={}", LOG_FORMAT),
+                    hash,
+                ],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        let mut commits = parse::parse_log(&res.stdout);
+        let commit = commits
+            .pop()
+            .ok_or_else(|| AppError::parse(format!("no commit {hash:?}")))?;
+
+        // 2. Changed files. Merge commits diff against the first parent;
+        // root commits need `--root` (diff against the empty tree).
+        let diff_args: Vec<&str> = if commit.parents.len() > 1 {
+            vec![
+                "-C",
+                repo,
+                "diff-tree",
+                "-r",
+                "-M",
+                "-z",
+                "--name-status",
+                "--no-commit-id",
+                &commit.parents[0],
+                &commit.hash,
+            ]
+        } else {
+            vec![
+                "-C",
+                repo,
+                "diff-tree",
+                "--root",
+                "-r",
+                "-M",
+                "-z",
+                "--name-status",
+                "--no-commit-id",
+                &commit.hash,
+            ]
+        };
+        let res = self.run(diff_args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        let files = parse::parse_commit_files(&res.stdout);
+        Ok(engine::CommitDetail {
+            parent: commit.parents.first().cloned(),
+            commit,
+            files,
+        })
+    }
+
+    async fn cherry_pick(&self, repo: &str, hashes: &[String]) -> Result<(), AppError> {
+        let mut args = vec!["-C", repo, "cherry-pick"];
+        args.extend(hashes.iter().map(|s| s.as_str()));
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn revert(&self, repo: &str, hashes: &[String]) -> Result<(), AppError> {
+        let mut args = vec!["-C", repo, "revert", "--no-edit"];
+        args.extend(hashes.iter().map(|s| s.as_str()));
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn restore_from(
+        &self,
+        repo: &str,
+        source: &str,
+        paths: &[String],
+    ) -> Result<(), AppError> {
+        // Worktree-only restore: the index is untouched.
+        let mut args = vec![
+            "-C",
+            repo,
+            "restore",
+            "--source",
+            source,
+            "--worktree",
+            "--",
+        ];
+        args.extend(paths.iter().map(|s| s.as_str()));
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
     async fn list_branches(&self, repo: &str) -> Result<Vec<engine::BranchInfo>, AppError> {
         // for-each-ref gives upstream tracking (ahead/behind) that `branch -v` lacks.
         let args = [
@@ -623,7 +824,7 @@ impl engine::GitEngine for CliEngine {
     }
 
     async fn reset(&self, repo: &str, mode: &str, target: &str) -> Result<(), AppError> {
-        let args = ["-C", repo, "reset", mode, target];
+        let args = ["-C", repo, "reset", &format!("--{mode}"), target];
         let res = self.run(args, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)
     }

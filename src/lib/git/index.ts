@@ -1,5 +1,5 @@
 import { commands, type RepoId } from "./bindings";
-import type { LineSelection } from "./bindings";
+import type { GraphFilter, LineSelection } from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
 import type { RepoMeta, RepoUiState } from "./bindings";
@@ -14,6 +14,8 @@ export { commands };
 export type {
   AppError,
   BranchInfo,
+  CommitDetail,
+  CommitFileStat,
   CommitInfo,
   CommitResult,
   DiffFile,
@@ -24,6 +26,10 @@ export type {
   DiffSource,
   FileContent,
   FileStatus,
+  GraphEdge,
+  GraphFilter,
+  GraphPage,
+  GraphRow,
   GroupsFile,
   LineSelection,
   RecentRepo,
@@ -149,7 +155,38 @@ export const git = {
   branches: (id: RepoId) => wrap(commands.gitBranches(id)),
   checkoutBranch: (id: RepoId, name: string) =>
     wrap(commands.gitCheckoutBranch(id, name)),
+  createBranch: (id: RepoId, name: string, startPoint?: string) =>
+    wrap(commands.gitCreateBranch(id, name, startPoint ?? null)),
+
+  // ---- history / commit graph (P5) ----
+  /** First page of the laid-out commit graph (500 rows per batch). */
+  graph: (id: RepoId, filter?: GraphFilter | null) =>
+    wrap(commands.gitGraph(id, filter ?? null)),
+  /** Next graph page; `start === 0` in the response means "replace list". */
+  graphMore: (id: RepoId, filter?: GraphFilter | null) =>
+    wrap(commands.gitGraphMore(id, filter ?? null)),
+  /** Commit metadata + changed files. */
+  commitDetail: (id: RepoId, hash: string) =>
+    wrap(commands.gitCommitDetail(id, hash)),
+  /** Cherry-pick commits onto HEAD, applied in list order (oldest first). */
+  cherryPick: (id: RepoId, hashes: string[]) =>
+    wrap(commands.gitCherryPick(id, hashes)),
+  /** Revert commits (newest first), one inverse commit each. */
+  revert: (id: RepoId, hashes: string[]) =>
+    wrap(commands.gitRevert(id, hashes)),
+  /** Squash the newest consecutive commits into one with `message`. */
+  squash: (id: RepoId, hashes: string[], message: string) =>
+    wrap(commands.gitSquash(id, hashes, message)),
+  /** Restore file(s) from a revision into the worktree (snapshot-backed). */
+  restoreFileVersion: (id: RepoId, rev: string, paths: string[]) =>
+    wrap(commands.gitRestoreFileVersion(id, rev, paths)),
 };
+
+/**
+ * SHA-1 of git's empty tree — parent stand-in for root-commit diffs
+ * (`git diff <empty-tree> <root>` equals the root commit's diff).
+ */
+export const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /**
  * DiscardRecovery (PLAN §4.7 轨道 A): snapshot list / restore / delete.

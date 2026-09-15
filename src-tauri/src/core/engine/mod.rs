@@ -6,6 +6,8 @@ pub mod parse;
 pub mod patch;
 pub mod untracked;
 
+pub use crate::core::graph::{GraphEdge, GraphPage, GraphRow};
+
 // =====================
 // Types (shared)
 // =====================
@@ -45,7 +47,7 @@ pub struct FileStatus {
     pub conflict: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct CommitInfo {
     pub hash: String,
     pub short_hash: String,
@@ -55,6 +57,58 @@ pub struct CommitInfo {
     pub message: String,
     pub refs: Vec<String>,
     pub parents: Vec<String>,
+}
+
+/// Search/filter for the history graph query (PLAN P5 搜索/筛选).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct GraphFilter {
+    /// Message search (`--grep -i`). A pure-hex prefix of ≥ 4 chars is
+    /// treated as a hash jump instead: it resolves via `rev-parse` and the
+    /// graph starts at that commit.
+    pub text: Option<String>,
+    /// Author substring (`--author -i`).
+    pub author: Option<String>,
+    /// `--since` (git date, e.g. `2026-01-01`).
+    pub since: Option<String>,
+    /// `--until`.
+    pub until: Option<String>,
+    /// History touching any of these paths.
+    pub paths: Vec<String>,
+}
+
+impl GraphFilter {
+    /// `true` when nothing is set (the unfiltered graph).
+    pub fn is_empty(&self) -> bool {
+        self.text.is_none()
+            && self.author.is_none()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.paths.is_empty()
+    }
+}
+
+/// One changed file of a commit (P5 提交详情变更列表).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CommitFileStat {
+    /// git name-status letter: `A` added, `M` modified, `D` deleted,
+    /// `T` typechange, `R` renamed, `C` copied, `U` unmerged.
+    pub status: String,
+    /// Rename/copy similarity score (e.g. `93` for `R93`), if any.
+    pub score: Option<u32>,
+    /// Destination path (for renames/copies the new name).
+    pub path: String,
+    /// Source path for renames/copies.
+    pub orig_path: Option<String>,
+}
+
+/// Commit metadata + changed files (P5 提交详情).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct CommitDetail {
+    pub commit: CommitInfo,
+    /// First parent, `None` for a root commit (diff then uses the empty
+    /// tree on the frontend side).
+    pub parent: Option<String>,
+    pub files: Vec<CommitFileStat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -331,6 +385,35 @@ pub trait GitEngine: Send + Sync {
         offset: u32,
         paths: &[String],
     ) -> Result<Vec<CommitInfo>, AppError>;
+
+    /// One page of topo-ordered history for the commit graph (P5
+    /// GraphQuery). `skip`/`limit` paginate within one refs generation;
+    /// layout happens in `core::graph`, caching in `RepoManager`.
+    async fn graph(
+        &self,
+        repo: &str,
+        skip: u32,
+        limit: u32,
+        filter: &GraphFilter,
+    ) -> Result<Vec<CommitInfo>, AppError>;
+
+    /// Commit metadata + changed files (P5 提交详情). Merge commits diff
+    /// against their first parent; root commits against the empty tree.
+    async fn commit_detail(&self, repo: &str, hash: &str) -> Result<CommitDetail, AppError>;
+
+    // History operations (P5)
+    /// Cherry-pick the given commits onto HEAD, applying in list order.
+    async fn cherry_pick(&self, repo: &str, hashes: &[String]) -> Result<(), AppError>;
+    /// Revert the given commits (oldest-effect-first list order).
+    async fn revert(&self, repo: &str, hashes: &[String]) -> Result<(), AppError>;
+    /// Restore file(s) from a revision into the worktree only
+    /// (`git restore --source=<rev> --worktree`); the index is untouched.
+    async fn restore_from(
+        &self,
+        repo: &str,
+        source: &str,
+        paths: &[String],
+    ) -> Result<(), AppError>;
 
     // Branch
     async fn list_branches(&self, repo: &str) -> Result<Vec<BranchInfo>, AppError>;

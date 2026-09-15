@@ -17,6 +17,8 @@ class SettingsStore {
   sidebarWidth = $state(248);
   /** File-list column width inside the workspace view. */
   fileListWidth = $state(320);
+  /** Detail panel width inside the history view (P5). */
+  historyDetailWidth = $state(420);
   /** Session: repositories open at last quit + the active one. */
   openPaths = $state<string[]>([]);
   activePath = $state<string | null>(null);
@@ -40,6 +42,8 @@ class SettingsStore {
         (await this.#store.get<number>("sidebarWidth")) ?? 248;
       this.fileListWidth =
         (await this.#store.get<number>("fileListWidth")) ?? 320;
+      this.historyDetailWidth =
+        (await this.#store.get<number>("historyDetailWidth")) ?? 420;
       this.openPaths = (await this.#store.get<string[]>("openPaths")) ?? [];
       this.activePath = (await this.#store.get<string | null>("activePath")) ?? null;
       this.reposTabOpen = (await this.#store.get<boolean>("reposTabOpen")) ?? false;
@@ -78,6 +82,11 @@ class SettingsStore {
   async setFileListWidth(width: number): Promise<void> {
     this.fileListWidth = width;
     await this.#store?.set("fileListWidth", width);
+  }
+
+  async setHistoryDetailWidth(width: number): Promise<void> {
+    this.historyDetailWidth = width;
+    await this.#store?.set("historyDetailWidth", width);
   }
 
   async setDiffViewMode(mode: "unified" | "split"): Promise<void> {

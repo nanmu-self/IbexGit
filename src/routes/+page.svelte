@@ -7,6 +7,7 @@
   import StatusBar from "$lib/components/layout/StatusBar.svelte";
   import Welcome from "$lib/components/welcome/Welcome.svelte";
   import WorkspaceView from "$lib/components/workspace/WorkspaceView.svelte";
+import HistoryView from "$lib/components/history/HistoryView.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
   import { Button } from "$lib/components/ui/button";
@@ -17,7 +18,6 @@
   import { t } from "$lib/i18n";
   import { showToast } from "$lib/stores/toast";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
-  import History from "@lucide/svelte/icons/history";
   import Tags from "@lucide/svelte/icons/tags";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
 
@@ -111,11 +111,7 @@
             {/snippet}
           </EmptyState>
         {:else if repos.ui.view === "history"}
-          <EmptyState
-            icon={History}
-            title={t("sidebar.history")}
-            hint={t("sidebar.comingSoon", { phase: "P5" })}
-          />
+          <HistoryView />
         {:else if repos.ui.view === "tags"}
           <EmptyState
             icon={Tags}

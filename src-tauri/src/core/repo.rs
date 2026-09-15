@@ -1,5 +1,6 @@
-use crate::core::engine::{DiffModel, FileStatus, GitEngine};
+use crate::core::engine::{DiffModel, FileStatus, GitEngine, GraphFilter, GraphPage};
 use crate::core::error::AppError;
+use crate::core::graph::{GraphRow, LayoutState};
 use crate::core::watcher::EventKinds;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -77,6 +78,9 @@ pub struct StatusSnapshot {
     pub status: Vec<FileStatus>,
 }
 
+/// Per-repository page size of the commit graph (PLAN P5: 分批 500/批).
+pub const GRAPH_BATCH: u32 = 500;
+
 #[derive(Debug, Default)]
 struct Session {
     generation: u64,
@@ -87,6 +91,21 @@ struct Session {
     /// the frontend sends {model_id, path, selections} and Rust builds the
     /// patch from the same model it served. Cleared on every invalidation.
     diffs: HashMap<u32, DiffModel>,
+    /// Commit graph cache (PLAN P5): cache key = refs generation (bumped by
+    /// every watcher invalidation) + serialized filter. v1 semantics: any
+    /// invalidation discards the graph and the next request recomputes from
+    /// scratch; loaded batches accumulate via `state` (lane continuity).
+    graph: Option<CachedGraph>,
+}
+
+#[derive(Debug)]
+struct CachedGraph {
+    generation: u64,
+    filter_key: String,
+    rows: Vec<GraphRow>,
+    state: LayoutState,
+    /// `git log` exhausted (no further batches).
+    complete: bool,
 }
 
 /// A queued operation (serialized per-repo).
@@ -232,6 +251,9 @@ impl RepoManager {
             // DiffModels describe a point-in-time state; after any change
             // they are suspect and must not feed line-level patches.
             s.diffs.clear();
+            // Graph cache key = refs generation → any event rebuilds (v1
+            // 失效即全量重算).
+            s.graph = None;
             s.generation
         };
         tracing::debug!(
@@ -309,6 +331,109 @@ impl RepoManager {
             status: status.clone(),
         });
         Ok(status)
+    }
+
+    /// Commit-graph page (PLAN P5 四层管线的取数+缓存+布局编排).
+    ///
+    /// `more = false`: ensure the graph is fresh, return the first page.
+    /// `more = true`: fetch the next batch and append to the cached lanes;
+    /// if the cache was invalidated meanwhile the graph rebuilds and the
+    /// returned `start` is 0 (the frontend replaces its list).
+    ///
+    /// The sessions lock is held across the git fetch (v1 simplicity): the
+    /// alternative — optimistic append with race re-validation — buys a
+    /// few hundred ms of watcher parallelism at the cost of intricate
+    /// retry logic; graph requests are infrequent (scroll-driven).
+    pub async fn graph_page(
+        &self,
+        id: RepoId,
+        filter: &GraphFilter,
+        more: bool,
+        batch: u32,
+    ) -> Result<GraphPage, AppError> {
+        let path = self
+            .get_path(id)
+            .await
+            .ok_or_else(|| AppError::InvalidRepo {
+                path: id.0.to_string(),
+            })?;
+        let filter_key = serde_json::to_string(filter)?;
+        let mut sessions = self.sessions.lock().await;
+        let s = sessions.entry(id).or_default();
+
+        let rebuild = match s.graph.as_ref() {
+            Some(g) => g.generation != s.generation || g.filter_key != filter_key,
+            None => true,
+        };
+
+        if rebuild {
+            let commits = self
+                .engine
+                .graph(&path.display().to_string(), 0, batch, filter)
+                .await?;
+            let mut state = LayoutState::new();
+            let mut rows = Vec::new();
+            state.layout(&commits, &mut rows);
+            let complete = (commits.len() as u32) < batch;
+            let width = state.width as u32;
+            s.graph = Some(CachedGraph {
+                generation: s.generation,
+                filter_key,
+                rows,
+                state,
+                complete,
+            });
+            let g = s.graph.as_ref().expect("just inserted");
+            return Ok(GraphPage {
+                rows: g.rows.clone(),
+                start: 0,
+                complete,
+                width,
+            });
+        }
+
+        let g = s.graph.as_mut().expect("cached graph");
+        if g.complete {
+            // Nothing more to load; serve an empty delta.
+            return Ok(GraphPage {
+                rows: Vec::new(),
+                start: g.rows.len() as u32,
+                complete: true,
+                width: g.state.width as u32,
+            });
+        }
+        if !more {
+            // First page of a valid cache: serve the loaded rows (≤ batch).
+            let end = g.rows.len().min(batch as usize);
+            return Ok(GraphPage {
+                rows: g.rows[..end].to_vec(),
+                start: 0,
+                complete: g.complete,
+                width: g.state.width as u32,
+            });
+        }
+
+        let skip = g.rows.len() as u32;
+        let commits = self
+            .engine
+            .graph(&path.display().to_string(), skip, batch, filter)
+            .await?;
+        let complete = (commits.len() as u32) < batch;
+        let start = g.rows.len() as u32;
+        let fresh: Vec<GraphRow> = {
+            let mut out = Vec::new();
+            g.state.layout(&commits, &mut out);
+            out
+        };
+        let width = g.state.width as u32;
+        g.rows.extend(fresh.iter().cloned());
+        g.complete = complete;
+        Ok(GraphPage {
+            rows: fresh,
+            start,
+            complete,
+            width,
+        })
     }
 
     pub async fn get_path(&self, id: RepoId) -> Option<PathBuf> {
@@ -449,6 +574,31 @@ mod tests {
             _: &[String],
         ) -> Result<Vec<CommitInfo>, AppError> {
             Err(err("log"))
+        }
+        async fn graph(
+            &self,
+            _: &str,
+            _: u32,
+            _: u32,
+            _: &crate::core::engine::GraphFilter,
+        ) -> Result<Vec<CommitInfo>, AppError> {
+            Err(err("graph"))
+        }
+        async fn commit_detail(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<crate::core::engine::CommitDetail, AppError> {
+            Err(err("commit_detail"))
+        }
+        async fn cherry_pick(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("cherry_pick"))
+        }
+        async fn revert(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("revert"))
+        }
+        async fn restore_from(&self, _: &str, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("restore_from"))
         }
         async fn list_branches(&self, _: &str) -> Result<Vec<BranchInfo>, AppError> {
             Err(err("branches"))

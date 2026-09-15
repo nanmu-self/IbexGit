@@ -40,6 +40,78 @@ export const commands = {
 	gitIgnorePaths: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_ignore_paths", { id, paths }),
 	gitLog: (id: RepoId_Deserialize, limit: number, offset: number, paths: string[] | null) => __TAURI_INVOKE<CommitInfo[]>("git_log", { id, limit, offset, paths }),
 	/**
+	 *  First page of the commit graph (GraphQuery → GraphCache → GraphLayout;
+	 *  the frontend renders SVG). Returns the loaded rows (≤ 500).
+	 */
+	gitGraph: (id: RepoId_Deserialize, filter: {
+	/**
+	 *  Message search (`--grep -i`). A pure-hex prefix of ≥ 4 chars is
+	 *  treated as a hash jump instead: it resolves via `rev-parse` and the
+	 *  graph starts at that commit.
+	 */
+	text: string | null,
+	/**  Author substring (`--author -i`). */
+	author: string | null,
+	/**  `--since` (git date, e.g. `2026-01-01`). */
+	since: string | null,
+	/**  `--until`. */
+	until: string | null,
+	/**  History touching any of these paths. */
+	paths: string[],
+} | null) => __TAURI_INVOKE<GraphPage>("git_graph", { id, filter }),
+	/**
+	 *  Next graph page (`start` = row index of the returned rows in the full
+	 *  graph; `start = 0` means the cache was rebuilt → replace the list).
+	 */
+	gitGraphMore: (id: RepoId_Deserialize, filter: {
+	/**
+	 *  Message search (`--grep -i`). A pure-hex prefix of ≥ 4 chars is
+	 *  treated as a hash jump instead: it resolves via `rev-parse` and the
+	 *  graph starts at that commit.
+	 */
+	text: string | null,
+	/**  Author substring (`--author -i`). */
+	author: string | null,
+	/**  `--since` (git date, e.g. `2026-01-01`). */
+	since: string | null,
+	/**  `--until`. */
+	until: string | null,
+	/**  History touching any of these paths. */
+	paths: string[],
+} | null) => __TAURI_INVOKE<GraphPage>("git_graph_more", { id, filter }),
+	/**
+	 *  Commit metadata + changed files (详情面板)。Merge commits diff against
+	 *  the first parent; root commits against the empty tree.
+	 */
+	gitCommitDetail: (id: RepoId_Deserialize, hash: string) => __TAURI_INVOKE<CommitDetail>("git_commit_detail", { id, hash }),
+	/**
+	 *  Cherry-pick the given commits onto HEAD, in list order (oldest first).
+	 *  Conflicts surface as git errors — the visual conflict flow is P8.
+	 */
+	gitCherryPick: (id: RepoId_Deserialize, hashes: string[]) => __TAURI_INVOKE<null>("git_cherry_pick", { id, hashes }),
+	/**  Revert the given commits (`revert --no-edit`), in list order. */
+	gitRevert: (id: RepoId_Deserialize, hashes: string[]) => __TAURI_INVOKE<null>("git_revert", { id, hashes }),
+	/**
+	 *  Squash the selected commits into one (`reset --soft <base>` + one
+	 *  commit). v1 constraint (validated here): the selection must be exactly
+	 *  the newest K commits of the first-parent chain from HEAD, none of them
+	 *  a merge, and a parent must remain (the whole history cannot vanish).
+	 *  Recovery-wise the move is visible in the reflog; the dedicated backup
+	 *  ref flow arrives with ResetRecovery in P6.
+	 */
+	gitSquash: (id: RepoId_Deserialize, hashes: string[], message: string) => __TAURI_INVOKE<null>("git_squash", { id, hashes, message }),
+	/**
+	 *  Restore file(s) from a revision into the worktree (P5 从历史恢复此文件
+	 *  版本)，after a track-A recovery snapshot so the overwrite is undoable.
+	 *  Returns the snapshot id for the undo toast.
+	 */
+	gitRestoreFileVersion: (id: RepoId_Deserialize, rev: string, paths: string[]) => __TAURI_INVOKE<string | null>("git_restore_file_version", { id, rev, paths }),
+	/**
+	 *  Create a branch (used by the detached-HEAD guidance banner and later
+	 *  the branch panel).
+	 */
+	gitCreateBranch: (id: RepoId_Deserialize, name: string, startPoint: string | null) => __TAURI_INVOKE<null>("git_create_branch", { id, name, startPoint }),
+	/**
 	 *  Parse a diff for the given source/paths into a [`DiffModel`], cache it in
 	 *  the RepoManager session and return it with its cache id.
 	 * 
@@ -135,6 +207,32 @@ export type BranchInfo = {
 	behind: number,
 	current: boolean,
 	detached: boolean,
+};
+
+/**  Commit metadata + changed files (P5 提交详情). */
+export type CommitDetail = {
+	commit: CommitInfo,
+	/**
+	 *  First parent, `None` for a root commit (diff then uses the empty
+	 *  tree on the frontend side).
+	 */
+	parent: string | null,
+	files: CommitFileStat[],
+};
+
+/**  One changed file of a commit (P5 提交详情变更列表). */
+export type CommitFileStat = {
+	/**
+	 *  git name-status letter: `A` added, `M` modified, `D` deleted,
+	 *  `T` typechange, `R` renamed, `C` copied, `U` unmerged.
+	 */
+	status: string,
+	/**  Rename/copy similarity score (e.g. `93` for `R93`), if any. */
+	score: number | null,
+	/**  Destination path (for renames/copies the new name). */
+	path: string,
+	/**  Source path for renames/copies. */
+	orig_path: string | null,
 };
 
 export type CommitInfo = {
@@ -259,6 +357,62 @@ export type FileStatus_Serialize = {
 	/**  skip-worktree (porcelain v2 XY contains `S`). */
 	skipped: boolean,
 	conflict: boolean,
+};
+
+/**  One edge segment drawn within a single commit row. */
+export type GraphEdge = {
+	/**  Lane (column) where the edge starts on this row. */
+	from: number,
+	/**  Lane (column) where the edge ends on this row. */
+	to: number,
+	/**  The edge starts at this row's node (mid-height, lower half). */
+	from_node: boolean,
+	/**  The edge ends at this row's node (mid-height, upper half). */
+	to_node: boolean,
+};
+
+/**  Search/filter for the history graph query (PLAN P5 搜索/筛选). */
+export type GraphFilter = {
+	/**
+	 *  Message search (`--grep -i`). A pure-hex prefix of ≥ 4 chars is
+	 *  treated as a hash jump instead: it resolves via `rev-parse` and the
+	 *  graph starts at that commit.
+	 */
+	text: string | null,
+	/**  Author substring (`--author -i`). */
+	author: string | null,
+	/**  `--since` (git date, e.g. `2026-01-01`). */
+	since: string | null,
+	/**  `--until`. */
+	until: string | null,
+	/**  History touching any of these paths. */
+	paths: string[],
+};
+
+/**
+ *  One page of the commit graph served by the GraphCache (P5). `start` is
+ *  the row index of `rows[0]` within the full graph: `0` means the cache
+ *  was rebuilt and the frontend must replace its list, otherwise the rows
+ *  append after the previously loaded ones.
+ */
+export type GraphPage = {
+	rows: GraphRow[],
+	start: number,
+	/**  `git log` exhausted — no further pages. */
+	complete: boolean,
+	/**  Lanes used so far (SVG column count). */
+	width: number,
+};
+
+/**
+ *  One rendered row of the commit graph: the commit plus its lane and the
+ *  edge segments crossing the row.
+ */
+export type GraphRow = {
+	commit: CommitInfo,
+	/**  Column of this commit's node. */
+	lane: number,
+	edges: GraphEdge[],
 };
 
 /**

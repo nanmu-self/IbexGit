@@ -1,10 +1,13 @@
 use crate::core::compat::GitCapabilities;
 use crate::core::engine::patch::{self, LineOp};
-use crate::core::engine::{DiffOptions, DiffSource, FileContent, LineSelection};
+use crate::core::engine::{
+    CommitDetail, DiffOptions, DiffSource, FileContent, GraphFilter, GraphPage, LineSelection,
+};
 use crate::core::error::AppError;
 use crate::core::recovery::{DiscardScope, DiscardTarget, RecoveryEntry, RecoveryManager};
-use crate::core::repo::{RepoId, RepoManager};
+use crate::core::repo::{RepoId, RepoManager, GRAPH_BATCH};
 use crate::core::watcher::WatcherHub;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
@@ -586,6 +589,223 @@ pub async fn git_ignore_paths(
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos.engine().ignore_paths(&path, &paths).await
+}
+
+// =====================
+// History / commit graph (P5)
+// =====================
+
+/// First page of the commit graph (GraphQuery → GraphCache → GraphLayout;
+/// the frontend renders SVG). Returns the loaded rows (≤ 500).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_graph(
+    id: RepoId,
+    filter: Option<GraphFilter>,
+    repos: State<'_, RepoManager>,
+) -> Result<GraphPage, AppError> {
+    let _permit = repos.read_permit().await?;
+    repos
+        .graph_page(id, &filter.unwrap_or_default(), false, GRAPH_BATCH)
+        .await
+}
+
+/// Next graph page (`start` = row index of the returned rows in the full
+/// graph; `start = 0` means the cache was rebuilt → replace the list).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_graph_more(
+    id: RepoId,
+    filter: Option<GraphFilter>,
+    repos: State<'_, RepoManager>,
+) -> Result<GraphPage, AppError> {
+    let _permit = repos.read_permit().await?;
+    repos
+        .graph_page(id, &filter.unwrap_or_default(), true, GRAPH_BATCH)
+        .await
+}
+
+/// Commit metadata + changed files (详情面板)。Merge commits diff against
+/// the first parent; root commits against the empty tree.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_commit_detail(
+    id: RepoId,
+    hash: String,
+    repos: State<'_, RepoManager>,
+) -> Result<CommitDetail, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().commit_detail(&path, &hash).await
+}
+
+/// Cherry-pick the given commits onto HEAD, in list order (oldest first).
+/// Conflicts surface as git errors — the visual conflict flow is P8.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_cherry_pick(
+    id: RepoId,
+    hashes: Vec<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().cherry_pick(&path, &hashes).await
+}
+
+/// Revert the given commits (`revert --no-edit`), in list order.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_revert(
+    id: RepoId,
+    hashes: Vec<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().revert(&path, &hashes).await
+}
+
+/// Squash the selected commits into one (`reset --soft <base>` + one
+/// commit). v1 constraint (validated here): the selection must be exactly
+/// the newest K commits of the first-parent chain from HEAD, none of them
+/// a merge, and a parent must remain (the whole history cannot vanish).
+/// Recovery-wise the move is visible in the reflog; the dedicated backup
+/// ref flow arrives with ResetRecovery in P6.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_squash(
+    id: RepoId,
+    hashes: Vec<String>,
+    message: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    let engine = repos.engine();
+    let base = validate_squash_selection(&engine, &path, &hashes).await?;
+    engine.reset(&path, "soft", &base).await?;
+    engine.commit(&path, &message, false, false).await?;
+    Ok(())
+}
+
+/// Validate that `hashes` is exactly the newest K commits reachable from
+/// HEAD via first-parent links, no merges among them; returns the base
+/// (parent of the oldest selected commit) for `reset --soft`.
+async fn validate_squash_selection(
+    engine: &Arc<dyn crate::core::engine::GitEngine>,
+    root: &str,
+    hashes: &[String],
+) -> Result<String, AppError> {
+    let k = hashes.len();
+    let log = engine.log(root, k as u32, 0, &[]).await?;
+    if log.len() < k {
+        return Err(AppError::parse(
+            "squash: selection extends past the repository root",
+        ));
+    }
+    let selected: HashSet<&String> = hashes.iter().collect();
+    if selected.len() != k || log[..k].iter().any(|c| !selected.contains(&c.hash)) {
+        return Err(AppError::parse(
+            "squash: selection must be the newest consecutive commits",
+        ));
+    }
+    for pair in log[..k].windows(2) {
+        if pair[0].parents.len() != 1 || pair[0].parents[0] != pair[1].hash {
+            return Err(AppError::parse(
+                "squash: merge commits cannot be squashed (v1)",
+            ));
+        }
+    }
+    // The oldest selected commit must not be a merge either — resetting to
+    // its first parent would fold the second parent's changes in.
+    if log[k - 1].parents.len() != 1 {
+        return Err(AppError::parse(
+            "squash: merge commits cannot be squashed (v1)",
+        ));
+    }
+    Ok(log[k - 1].parents[0].clone())
+}
+
+/// Restore file(s) from a revision into the worktree (P5 从历史恢复此文件
+/// 版本)，after a track-A recovery snapshot so the overwrite is undoable.
+/// Returns the snapshot id for the undo toast.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_restore_file_version(
+    id: RepoId,
+    rev: String,
+    paths: Vec<String>,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<Option<String>, AppError> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    let engine = repos.engine();
+
+    // Snapshot the current worktree content of the paths first (轨道 A).
+    let status = engine.status(&root).await?;
+    let targets: Vec<DiscardTarget> = paths
+        .iter()
+        .map(|p| DiscardTarget {
+            path: p.clone(),
+            untracked: status
+                .iter()
+                .any(|f| &f.path == p && f.untracked && !f.conflict),
+            conflict: false,
+        })
+        .collect();
+    let snap = recovery
+        .snapshot_discard(
+            &*engine,
+            std::path::Path::new(&root),
+            &targets,
+            DiscardScope::Worktree,
+        )
+        .await?;
+    let result = engine.restore_from(&root, &rev, &paths).await;
+    match result {
+        Ok(()) => Ok(Some(snap.id)),
+        Err(e) => {
+            let _ = recovery.delete(std::path::Path::new(&root), &snap.id);
+            Err(e)
+        }
+    }
+}
+
+/// Create a branch (used by the detached-HEAD guidance banner and later
+/// the branch panel).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_create_branch(
+    id: RepoId,
+    name: String,
+    start_point: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .create_branch(&path, &name, start_point.as_deref())
+        .await
 }
 
 async fn resolve(repos: &State<'_, RepoManager>, id: RepoId) -> Result<String, AppError> {
