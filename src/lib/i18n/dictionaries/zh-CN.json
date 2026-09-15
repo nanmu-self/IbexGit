@@ -25,6 +25,11 @@
   "menu.help.shortcuts": "快捷键…",
   "menu.help.about": "关于 IbexGit",
 
+  "win.minimize": "最小化",
+  "win.maximize": "最大化",
+  "win.restore": "还原",
+  "win.close": "关闭",
+
   "toolbar.fetch": "获取",
   "toolbar.pull": "拉取",
   "toolbar.push": "推送",

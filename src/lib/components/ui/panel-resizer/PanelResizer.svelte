@@ -3,9 +3,11 @@
     width = $bindable(248),
     min = 180,
     max = 480,
-  }: { width?: number; min?: number; max?: number } = $props();
-
-  let dragging = $state(false);
+    /** True while pointer-dragging; width consumers use it to drop their
+     *  width transition so the panel tracks the cursor 1:1 (keyboard steps
+     *  keep the transition and glide). */
+    dragging = $bindable(false),
+  }: { width?: number; min?: number; max?: number; dragging?: boolean } = $props();
 
   function onPointerDown(event: PointerEvent): void {
     dragging = true;

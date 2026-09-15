@@ -13,7 +13,7 @@
 
 <div class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-8">
   <div class="w-full max-w-md space-y-8">
-    <div class="space-y-2 text-center">
+    <div class="welcome-enter space-y-2 text-center">
       <div
         class="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary text-lg font-bold text-primary-foreground shadow-md"
       >
@@ -23,7 +23,7 @@
       <p class="text-sm text-muted-foreground">{t("welcome.subtitle")}</p>
     </div>
 
-    <div class="space-y-3">
+    <div class="welcome-enter space-y-3">
       <Button class="h-11 w-full text-sm" onclick={pickRepo}>
         <FolderOpen class="size-4" />
         {t("welcome.open")}
@@ -48,7 +48,7 @@
       </div>
     </div>
 
-    <div>
+    <div class="welcome-enter">
       <div class="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
         {t("welcome.recent")}
       </div>
@@ -92,6 +92,39 @@
       {/if}
     </div>
 
-    <p class="text-center text-[11px] text-muted-foreground/70">{t("welcome.dragHint")}</p>
+    <p class="welcome-enter text-center text-[11px] text-muted-foreground/70">{
+      t("welcome.dragHint")
+    }</p>
   </div>
 </div>
+
+<style>
+  /* First-impression entrance (rare surface): blocks rise 8px and fade in,
+   * 250ms each, staggered 40ms (total < 400ms). Reduced motion → 80ms. */
+  .welcome-enter {
+    transition:
+      opacity 250ms ease-out,
+      transform 250ms ease-out;
+  }
+  .welcome-enter:nth-child(2) {
+    transition-delay: 40ms;
+  }
+  .welcome-enter:nth-child(3) {
+    transition-delay: 80ms;
+  }
+  .welcome-enter:nth-child(4) {
+    transition-delay: 120ms;
+  }
+  @starting-style {
+    .welcome-enter {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .welcome-enter {
+      transition-duration: 80ms;
+      transition-delay: 0ms;
+    }
+  }
+</style>

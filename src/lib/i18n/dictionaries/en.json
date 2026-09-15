@@ -25,6 +25,11 @@
   "menu.help.shortcuts": "Keyboard Shortcuts…",
   "menu.help.about": "About IbexGit",
 
+  "win.minimize": "Minimize",
+  "win.maximize": "Maximize",
+  "win.restore": "Restore",
+  "win.close": "Close",
+
   "toolbar.fetch": "Fetch",
   "toolbar.pull": "Pull",
   "toolbar.push": "Push",

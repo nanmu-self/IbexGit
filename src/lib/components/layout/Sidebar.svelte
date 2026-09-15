@@ -16,6 +16,8 @@
   import Tag from "@lucide/svelte/icons/tag";
   import Archive from "@lucide/svelte/icons/archive";
 
+  let { resizing = false }: { resizing?: boolean } = $props();
+
   const ALL_GROUPS = ["workspace", "branches", "remote", "tags", "stash"];
 
   let activeNodeId = $state<string | null>(null);
@@ -124,7 +126,9 @@
 </script>
 
 <aside
-  class="flex min-h-0 shrink-0 flex-col overflow-hidden border-r bg-muted/30"
+  class="flex min-h-0 shrink-0 flex-col overflow-hidden border-r bg-muted/30 {!resizing
+    ? 'transition-[width] duration-[120ms] ease-out'
+    : ''}"
   style="width: {settings.sidebarWidth}px"
 >
   <div class="min-h-0 flex-1 overflow-y-auto p-1.5">

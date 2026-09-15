@@ -10,9 +10,14 @@
   import { showToast } from "$lib/stores/toast";
   import { pickRepo } from "$lib/repo-picker";
   import { getVersion } from "@tauri-apps/api/app";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import Sun from "@lucide/svelte/icons/sun";
   import Moon from "@lucide/svelte/icons/moon";
   import Monitor from "@lucide/svelte/icons/monitor";
+  import Minus from "@lucide/svelte/icons/minus";
+  import Square from "@lucide/svelte/icons/square";
+  import Copy from "@lucide/svelte/icons/copy";
+  import X from "@lucide/svelte/icons/x";
 
   let aboutOpen = $state(false);
   let shortcutsOpen = $state(false);
@@ -39,18 +44,58 @@
     const next = order[(order.indexOf(settings.theme) + 1) % order.length];
     await settings.setTheme(next);
   }
+
+  // ---- 自绘窗口控制（tauri.conf.json 已关 decorations）----
+  // 纯浏览器 dev 下无 Tauri IPC，所有调用失败都静默降级。
+  const appWindow = getCurrentWindow();
+  let maximized = $state(false);
+
+  async function syncMaximized(): Promise<void> {
+    try {
+      maximized = await appWindow.isMaximized();
+    } catch {
+      /* 非 Tauri 环境 */
+    }
+  }
+
+  // 窗口尺寸变化（拖拽区双击、Win+方向键贴靠）时同步最大化态
+  $effect(() => {
+    void syncMaximized();
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    appWindow
+      .onResized(() => void syncMaximized())
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  });
+
+  function minimizeWindow(): void {
+    void appWindow.minimize().catch(() => {});
+  }
+
+  function toggleMaximizeWindow(): void {
+    void appWindow.toggleMaximize().catch(() => {});
+  }
+
+  function closeWindow(): void {
+    void appWindow.close().catch(() => {});
+  }
 </script>
 
 <header
+  data-tauri-drag-region
   class="flex h-9 shrink-0 items-center gap-0.5 border-b bg-background px-2 text-[13px] select-none"
 >
-  <div class="mr-3 flex items-center gap-1.5 pl-1 font-semibold">
-    <span
-      class="flex size-5 items-center justify-center rounded bg-primary text-[9px] font-bold text-primary-foreground"
-    >
-      IG
-    </span>
-    <span>{t("app.name")}</span>
+  <div data-tauri-drag-region class="mr-3 flex items-center gap-1.5 pl-1 font-semibold">
+    <img data-tauri-drag-region src="/logo.svg" alt="" draggable="false" class="size-8" />
+    <span data-tauri-drag-region>{t("app.name")}</span>
   </div>
 
   <!-- 文件 -->
@@ -168,7 +213,7 @@
     </DropdownMenu.Content>
   </DropdownMenu.Root>
 
-  <div class="ml-auto flex items-center gap-1 pr-1">
+  <div data-tauri-drag-region class="ml-auto flex h-full items-center">
     <Button
       variant="ghost"
       size="icon"
@@ -184,6 +229,44 @@
         <Monitor class="size-4" />
       {/if}
     </Button>
+
+    <!-- 窗口控制：最小化 / 最大化·还原 / 关闭 -->
+    <div class="ml-1 flex h-full items-center">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="h-full w-11 rounded-none"
+        onclick={minimizeWindow}
+        title={t("win.minimize")}
+        aria-label={t("win.minimize")}
+      >
+        <Minus class="size-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="h-full w-11 rounded-none"
+        onclick={toggleMaximizeWindow}
+        title={maximized ? t("win.restore") : t("win.maximize")}
+        aria-label={maximized ? t("win.restore") : t("win.maximize")}
+      >
+        {#if maximized}
+          <Copy class="size-3.5" />
+        {:else}
+          <Square class="size-3.5" />
+        {/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="h-full w-11 rounded-none hover:bg-red-600 hover:text-white"
+        onclick={closeWindow}
+        title={t("win.close")}
+        aria-label={t("win.close")}
+      >
+        <X class="size-4" />
+      </Button>
+    </div>
   </div>
 </header>
 

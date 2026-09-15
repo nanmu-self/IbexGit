@@ -30,6 +30,8 @@
 
   let diffModel = $state<DiffModel | null>(null);
   let diffLoading = $state(false);
+  /** PanelResizer drag state: the file list drops its width transition while true. */
+  let fileListDragging = $state(false);
 
   // (Re)load the diff whenever the selection or repo state changes.
   $effect(() => {
@@ -110,7 +112,12 @@
 
 <div class="flex min-h-0 flex-1">
   <!-- 文件列表 -->
-  <div class="flex min-h-0 flex-col border-r" style="width: {settings.fileListWidth}px">
+  <div
+    class="flex min-h-0 flex-col border-r {!fileListDragging
+      ? 'transition-[width] duration-[120ms] ease-out'
+      : ''}"
+    style="width: {settings.fileListWidth}px"
+  >
     <div class="p-2">
       <Input
         data-filter
@@ -143,7 +150,7 @@
           <div
             role="button"
             tabindex="-1"
-            class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] {selected?.path === file.path && selected?.source === 'staged'
+            class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {selected?.path === file.path && selected?.source === 'staged'
               ? 'bg-accent'
               : 'hover:bg-accent/50'}"
             onclick={() => selectFile(file, "staged")}
@@ -195,7 +202,7 @@
           <div
             role="button"
             tabindex="-1"
-            class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] {selected?.path === file.path && selected?.source === 'worktree'
+            class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {selected?.path === file.path && selected?.source === 'worktree'
               ? 'bg-accent'
               : 'hover:bg-accent/50'}"
             onclick={() => selectFile(file, "worktree")}
@@ -243,7 +250,12 @@
     </div>
   </div>
 
-  <PanelResizer bind:width={settings.fileListWidth} min={220} max={560} />
+  <PanelResizer
+    bind:width={settings.fileListWidth}
+    bind:dragging={fileListDragging}
+    min={220}
+    max={560}
+  />
 
   <!-- 差异 + 提交框（提交在 P3 启用） -->
   <div class="flex min-w-0 flex-1 flex-col">

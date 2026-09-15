@@ -21,6 +21,8 @@
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
 
   let restored = $state(false);
+  /** PanelResizer drag state: Sidebar drops its width transition while true. */
+  let sidebarResizing = $state(false);
 
   // Session restore (P2 acceptance): reopen last repos once settings are in.
   $effect(() => {
@@ -79,8 +81,13 @@
     <RepoTabs />
     <div class="flex min-h-0 flex-1">
       {#if settings.showSidebar}
-        <Sidebar />
-        <PanelResizer bind:width={settings.sidebarWidth} min={200} max={420} />
+        <Sidebar resizing={sidebarResizing} />
+        <PanelResizer
+          bind:width={settings.sidebarWidth}
+          bind:dragging={sidebarResizing}
+          min={200}
+          max={420}
+        />
       {/if}
       <main class="flex min-w-0 flex-1 flex-col">
         {#if !active || active.phase === "loading"}

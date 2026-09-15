@@ -1,3 +1,18 @@
+<script lang="ts" module>
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { browser } from "$app/environment";
+
+  // Subtree expand/collapse bridge: children drop in from the parent row
+  // (4px) and fade, 150ms. Reduced motion → 80ms, opacity-led (y: 0).
+  const reduceMotion =
+    browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const subtreeFly = reduceMotion
+    ? { y: 0, duration: 80, easing: cubicOut }
+    : { y: -4, duration: 150, easing: cubicOut };
+</script>
+
 <script lang="ts">
   import Self from "./Tree.svelte";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -67,14 +82,16 @@
     {/if}
   </button>
   {#if open && node.children?.length}
-    <Self
-      nodes={node.children}
-      {expanded}
-      {activeId}
-      {onToggle}
-      {onActivate}
-      {onActivateSecondary}
-      depth={depth + 1}
-    />
+    <div transition:fly={subtreeFly}>
+      <Self
+        nodes={node.children}
+        {expanded}
+        {activeId}
+        {onToggle}
+        {onActivate}
+        {onActivateSecondary}
+        depth={depth + 1}
+      />
+    </div>
   {/if}
 {/each}
