@@ -93,6 +93,32 @@
   data-tauri-drag-region
   class="flex h-9 shrink-0 items-center gap-0.5 border-b bg-background px-2 text-[13px] select-none"
 >
+  {#if platform === "macos"}
+    <div class="flex items-center gap-1.5 pl-1">
+      <button
+        type="button"
+        class="size-3 rounded-full bg-red-500 p-0 hover:bg-red-600"
+        onclick={closeWindow}
+        title={t("win.close")}
+        aria-label={t("win.close")}
+      ></button>
+      <button
+        type="button"
+        class="size-3 rounded-full bg-yellow-500 p-0 hover:bg-yellow-600"
+        onclick={minimizeWindow}
+        title={t("win.minimize")}
+        aria-label={t("win.minimize")}
+      ></button>
+      <button
+        type="button"
+        class="size-3 rounded-full bg-green-500 p-0 hover:bg-green-600"
+        onclick={toggleMaximizeWindow}
+        title={maximized ? t("win.restore") : t("win.maximize")}
+        aria-label={maximized ? t("win.restore") : t("win.maximize")}
+      ></button>
+    </div>
+  {/if}
+
   <div data-tauri-drag-region class="mr-3 flex items-center gap-1.5 pl-1 font-semibold">
     <img data-tauri-drag-region src="/logo.svg" alt="" draggable="false" class="size-8" />
     <span data-tauri-drag-region>{t("app.name")}</span>
@@ -230,8 +256,9 @@
       {/if}
     </Button>
 
-    <!-- 窗口控制：最小化 / 最大化·还原 / 关闭 -->
-    <div class="ml-1 flex h-full items-center">
+    {#if platform !== "macos"}
+      <!-- 窗口控制：最小化 / 最大化·还原 / 关闭 -->
+      <div class="ml-1 flex h-full items-center">
       <Button
         variant="ghost"
         size="icon"
@@ -267,6 +294,7 @@
         <X class="size-4" />
       </Button>
     </div>
+    {/if}
   </div>
 </header>
 
