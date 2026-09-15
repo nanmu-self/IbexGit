@@ -390,10 +390,19 @@ mod windows_tests {
         assert!(!status.success(), "killed cmd must not exit cleanly");
 
         for p in ping {
-            assert!(
-                !pid_alive(p),
-                "grandchild pid {p} must be dead after TerminateJobObject"
-            );
+            // Termination signaled by TerminateJobObject is asynchronous on
+            // Windows — poll until the pid is reaped (bounded, generous).
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if !pid_alive(p) {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "grandchild pid {p} must be dead after TerminateJobObject"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
     }
 
