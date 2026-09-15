@@ -23,6 +23,7 @@ export type {
   DiffSource,
   FileStatus,
   RecentRepo,
+  RecoveryEntry,
   RepoId,
   RepoUiState,
   SelectedFile,
@@ -95,10 +96,14 @@ export const git = {
   stage: (id: RepoId, paths: string[]) => wrap(commands.gitStage(id, paths)),
   unstage: (id: RepoId, paths: string[]) =>
     wrap(commands.gitUnstage(id, paths)),
-  discard: (id: RepoId, paths: string[]) =>
-    wrap(commands.gitDiscard(id, paths)),
+  /** Discard with a recovery snapshot; resolves to the snapshot id for undo. */
+  discard: (id: RepoId, paths: string[], scope: "worktree" | "all" = "worktree") =>
+    wrap(commands.gitDiscard(id, paths, scope)),
   commit: (id: RepoId, message: string, amend = false, noVerify = false) =>
     wrap(commands.gitCommit(id, message, amend, noVerify)),
+  headMessage: (id: RepoId) => wrap(commands.gitHeadMessage(id)),
+  ignorePaths: (id: RepoId, paths: string[]) =>
+    wrap(commands.gitIgnorePaths(id, paths)),
   log: (id: RepoId, limit = 200, offset = 0, paths?: string[]) =>
     wrap(commands.gitLog(id, limit, offset, paths ?? null)),
   diff: (
@@ -111,6 +116,18 @@ export const git = {
   branches: (id: RepoId) => wrap(commands.gitBranches(id)),
   checkoutBranch: (id: RepoId, name: string) =>
     wrap(commands.gitCheckoutBranch(id, name)),
+};
+
+/**
+ * DiscardRecovery (PLAN §4.7 轨道 A): snapshot list / restore / delete.
+ * Restore triggers the normal watcher→refresh pipeline on completion.
+ */
+export const recovery = {
+  list: (id: RepoId) => wrap(commands.recoveryList(id)),
+  restore: (id: RepoId, snapshotId: string) =>
+    wrap(commands.recoveryRestore(id, snapshotId)),
+  remove: (id: RepoId, snapshotId: string) =>
+    wrap(commands.recoveryDelete(id, snapshotId)),
 };
 
 /**

@@ -44,10 +44,21 @@ export interface UiState {
   filter: string;
   sidebar_collapsed: string[];
   selected_file: { path: string; source: "worktree" | "staged" } | null;
+  /** Workspace list presentation (P3): flat sections or path tree. */
+  view_mode: "list" | "tree";
+  /** Collapsed directory ids in tree mode. */
+  tree_collapsed: string[];
 }
 
 function defaultUi(): UiState {
-  return { view: "changes", filter: "", sidebar_collapsed: [], selected_file: null };
+  return {
+    view: "changes",
+    filter: "",
+    sidebar_collapsed: [],
+    selected_file: null,
+    view_mode: "list",
+    tree_collapsed: [],
+  };
 }
 
 function coerceUi(raw: Partial<RepoUiState> | null | undefined): UiState {
@@ -67,6 +78,10 @@ function coerceUi(raw: Partial<RepoUiState> | null | undefined): UiState {
   ) {
     ui.selected_file = { path: raw.selected_file.path, source: raw.selected_file.source };
   }
+  if (raw.view_mode === "list" || raw.view_mode === "tree") ui.view_mode = raw.view_mode;
+  if (Array.isArray(raw.tree_collapsed)) {
+    ui.tree_collapsed = raw.tree_collapsed.filter((s) => typeof s === "string");
+  }
   return ui;
 }
 
@@ -75,14 +90,19 @@ function samePath(a: string, b: string): boolean {
   return getPlatform() === "windows" ? a.toLowerCase() === b.toLowerCase() : false;
 }
 
-/** Split status items into the two workspace sections (untracked = unstaged). */
+/**
+ * Split status items into the workspace sections (P3: conflicts get their
+ * own section and are excluded from staged/unstaged; untracked = unstaged).
+ */
 export function splitFiles(files: FileStatus[]): {
+  conflicts: FileStatus[];
   staged: FileStatus[];
   unstaged: FileStatus[];
 } {
   return {
-    staged: files.filter((f) => f.staged),
-    unstaged: files.filter((f) => f.unstaged || f.untracked),
+    conflicts: files.filter((f) => f.conflict),
+    staged: files.filter((f) => f.staged && !f.conflict),
+    unstaged: files.filter((f) => !f.conflict && (f.unstaged || f.untracked)),
   };
 }
 
@@ -265,6 +285,8 @@ class ReposStore {
       selected_file: ui.selected_file
         ? { path: ui.selected_file.path, source: ui.selected_file.source }
         : null,
+      view_mode: ui.view_mode,
+      tree_collapsed: ui.tree_collapsed,
     };
   }
 

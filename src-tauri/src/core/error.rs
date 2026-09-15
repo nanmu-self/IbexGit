@@ -70,6 +70,18 @@ impl fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        AppError::io(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        AppError::internal(format!("json: {e}"))
+    }
+}
+
 impl AppError {
     pub fn io(source: impl Into<String>) -> Self {
         Self::Io {

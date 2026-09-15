@@ -34,6 +34,18 @@
         {#if toast.detail}
           <div class="mt-0.5 text-xs break-words text-muted-foreground">{toast.detail}</div>
         {/if}
+        {#if toast.action}
+          <button
+            type="button"
+            class="mt-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs font-medium transition-colors duration-[120ms] hover:bg-accent"
+            onclick={() => {
+              toast.action?.run();
+              removeToast(toast.id);
+            }}
+          >
+            {toast.action.label}
+          </button>
+        {/if}
       </div>
       <button
         type="button"

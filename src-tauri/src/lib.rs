@@ -34,10 +34,15 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_unstage,
             commands::git_discard,
             commands::git_commit,
+            commands::git_head_message,
+            commands::git_ignore_paths,
             commands::git_log,
             commands::git_diff,
             commands::git_branches,
             commands::git_checkout_branch,
+            commands::recovery_list,
+            commands::recovery_restore,
+            commands::recovery_delete,
             commands::workspace::workspace_recents,
             commands::workspace::workspace_touch_recent,
             commands::workspace::workspace_forget_recent,
@@ -95,6 +100,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
@@ -117,6 +123,11 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir).expect("failed to create app data dir");
             app.manage(crate::core::workspace::WorkspaceDir(
                 data_dir.join("workspaces"),
+            ));
+
+            // Recovery snapshots root (PLAN §4.4/§4.7): {appData}/recovery.
+            app.manage(crate::core::recovery::RecoveryManager::new(
+                data_dir.join("recovery"),
             ));
 
             // Detect git version on startup

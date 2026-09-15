@@ -1,6 +1,8 @@
 use crate::core::engine::{self, parse, DiffModel, DiffSource};
 use crate::core::error::AppError;
 use crate::core::runner::{GitProcessRunner, ProcessResult, StdinMode};
+use std::collections::HashSet;
+use std::path::{Component, Path, PathBuf};
 
 pub struct CliEngine {
     runner: GitProcessRunner,
@@ -13,6 +15,52 @@ impl CliEngine {
             runner,
             git_path: git_path.into(),
         }
+    }
+
+    /// Flag worktree-modified entries whose only difference is CRLF/LF
+    /// (PLAN P3: 行尾变更展示)：a path listed by plain `diff --numstat -z`
+    /// but absent from the `--ignore-cr-at-eol` variant is EOL-only.
+    async fn mark_eol_only(
+        &self,
+        repo: &str,
+        status: &mut [engine::FileStatus],
+    ) -> Result<(), AppError> {
+        let candidates: Vec<String> = status
+            .iter()
+            .filter(|f| f.unstaged && !f.untracked && !f.conflict && !f.submodule)
+            .map(|f| f.path.clone())
+            .collect();
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let normal = self.numstat_paths(repo, false).await?;
+        if normal.is_empty() {
+            return Ok(());
+        }
+        let ignore_cr = self.numstat_paths(repo, true).await?;
+        let ignore_set: HashSet<&str> = ignore_cr.iter().map(|s| s.as_str()).collect();
+        let eol_only: HashSet<&str> = normal
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|p| !ignore_set.contains(p))
+            .collect();
+        for f in status.iter_mut() {
+            if eol_only.contains(f.path.as_str()) {
+                f.eol_only = true;
+            }
+        }
+        Ok(())
+    }
+
+    async fn numstat_paths(&self, repo: &str, ignore_cr: bool) -> Result<Vec<String>, AppError> {
+        let args: &[&str] = if ignore_cr {
+            &["-C", repo, "diff", "--numstat", "-z", "--ignore-cr-at-eol"]
+        } else {
+            &["-C", repo, "diff", "--numstat", "-z"]
+        };
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_numstat_paths(&res.stdout))
     }
 
     async fn run(
@@ -54,7 +102,9 @@ impl engine::GitEngine for CliEngine {
         let args = ["-C", repo, "status", "--porcelain=v2", "-z"];
         let res = self.run(args, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)?;
-        Ok(parse::parse_status(&res.stdout))
+        let mut status = parse::parse_status(&res.stdout);
+        self.mark_eol_only(repo, &mut status).await?;
+        Ok(status)
     }
 
     async fn stage(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
@@ -77,13 +127,153 @@ impl engine::GitEngine for CliEngine {
         self.ensure_success(&res)
     }
 
-    async fn discard(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
+    async fn restore_worktree(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
         if paths.is_empty() {
             return Ok(());
         }
         let mut args = vec!["-C", repo, "restore"];
         args.extend(paths.iter().map(|s| s.as_str()));
         let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn restore_to_head(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        // `--source=HEAD -S -W` drops staged + unstaged in one go and also
+        // clears unmerged entries (the documented conflict-reset route).
+        let mut args = vec![
+            "-C",
+            repo,
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+        ];
+        args.extend(paths.iter().map(|s| s.as_str()));
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn delete_untracked(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
+        for path in paths {
+            let target = safe_join(repo, path)?;
+            if target.is_file() {
+                std::fs::remove_file(&target)?;
+            } else if target.is_dir() {
+                std::fs::remove_dir_all(&target)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn head_message(&self, repo: &str) -> Result<Option<String>, AppError> {
+        // Unborn HEAD → no message to amend.
+        let verify = self
+            .run(
+                ["-C", repo, "rev-parse", "--verify", "-q", "HEAD"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        if verify.exit_code != Some(0) {
+            return Ok(None);
+        }
+        let res = self
+            .run(
+                ["-C", repo, "log", "-1", "--format=%B"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        Ok(Some(res.stdout.trim_end().to_string()))
+    }
+
+    async fn ignore_paths(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let gitignore = Path::new(repo).join(".gitignore");
+        let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+        let known: HashSet<String> = existing.lines().map(|l| l.trim().to_string()).collect();
+        let mut out = String::new();
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            out.push('\n');
+        }
+        let mut added = 0;
+        for path in paths {
+            // Anchored pattern: matches only at the repository root, avoiding
+            // accidental matches of same-named files in nested directories.
+            let pattern = format!("/{}", path.replace('\\', "/"));
+            if known.contains(&pattern) || known.contains(path.as_str()) {
+                continue;
+            }
+            out.push_str(&pattern);
+            out.push('\n');
+            added += 1;
+        }
+        if added == 0 {
+            return Ok(());
+        }
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&gitignore)?;
+        file.write_all(out.as_bytes())?;
+        Ok(())
+    }
+
+    async fn ls_index(
+        &self,
+        repo: &str,
+        paths: &[String],
+    ) -> Result<Vec<engine::IndexEntry>, AppError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut args = vec!["-C", repo, "ls-files", "-s", "-z", "--"];
+        args.extend(paths.iter().map(|s| s.as_str()));
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_ls_files(&res.stdout))
+    }
+
+    async fn update_index_info(&self, repo: &str, info: &str) -> Result<(), AppError> {
+        if info.is_empty() {
+            return Ok(());
+        }
+        let args = ["-C", repo, "update-index", "-z", "--index-info"];
+        let res = self
+            .run(args, StdinMode::Feed, Some(info.as_bytes()), None)
+            .await?;
+        self.ensure_success(&res)
+    }
+
+    async fn remove_index_entries(&self, repo: &str, paths: &[String]) -> Result<(), AppError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let args = [
+            "-C",
+            repo,
+            "update-index",
+            "-z",
+            "--force-remove",
+            "--stdin",
+        ];
+        let mut feed = String::new();
+        for p in paths {
+            feed.push_str(p);
+            feed.push('\0');
+        }
+        let res = self
+            .run(args, StdinMode::Feed, Some(feed.as_bytes()), None)
+            .await?;
         self.ensure_success(&res)
     }
 
@@ -490,4 +680,36 @@ fn extract_stash_index(stderr: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Join a status-provided relative path onto the worktree root, rejecting
+/// traversal outside the repository (defense in depth before fs deletes).
+fn safe_join(root: &str, rel: &str) -> Result<PathBuf, AppError> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        return Err(AppError::internal(format!(
+            "absolute path not allowed: {rel}"
+        )));
+    }
+    let mut depth = 0usize;
+    for comp in rel_path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| AppError::internal(format!("path escapes repo: {rel}")))?;
+            }
+            Component::Normal(_) => depth += 1,
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(AppError::internal(format!(
+                    "absolute path not allowed: {rel}"
+                )));
+            }
+        }
+    }
+    if depth == 0 {
+        return Err(AppError::internal(format!("path escapes repo: {rel}")));
+    }
+    Ok(PathBuf::from(root).join(rel_path))
 }

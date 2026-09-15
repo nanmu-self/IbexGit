@@ -8,6 +8,19 @@ pub mod parse;
 // Types (shared)
 // =====================
 
+/// One path in the git index (from `git ls-files -s`), used by the
+/// recovery snapshot to record the exact staged state (mode/sha/stage).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct IndexEntry {
+    pub path: String,
+    /// e.g. "100644", "100755", "160000", "120000"
+    pub mode: String,
+    /// 40-hex object id (blob, guaranteed present in the object DB).
+    pub sha: String,
+    /// 0 = merged, 1..3 = unmerged stages (base/ours/theirs).
+    pub stage: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct FileStatus {
     pub path: String,
@@ -15,9 +28,17 @@ pub struct FileStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub orig_path: Option<String>,
     pub submodule: bool,
+    /// Submodule with modified content (porcelain v2 `sub = S`).
+    pub submodule_dirty: bool,
+    /// Submodule whose checked-in commit differs from the index (`sub = M`).
+    pub submodule_commit_changed: bool,
+    /// The worktree change consists only of line-ending differences
+    /// (CRLF/LF); detected via the `--ignore-cr-at-eol` numstat diff.
+    pub eol_only: bool,
     pub staged: bool,
     pub unstaged: bool,
     pub untracked: bool,
+    /// skip-worktree (porcelain v2 XY contains `S`).
     pub skipped: bool,
     pub conflict: bool,
 }
@@ -182,8 +203,35 @@ pub trait GitEngine: Send + Sync {
     async fn stage(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
     async fn unstage(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
 
-    // Discard (worktree)
-    async fn discard(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
+    // Discard (worktree). Split into explicit primitives so the caller can
+    // snapshot beforehand and orchestrate recovery (PLAN §4.7 轨道 A):
+    // - restore_worktree: drop unstaged changes only (`git restore`)
+    // - restore_to_head:  drop staged + unstaged (`git restore --source=HEAD
+    //   --staged --worktree`); also the way to clear unmerged entries
+    // - delete_untracked: physically remove untracked files (git does not
+    //   know them; recovery snapshots must copy them beforehand)
+    async fn restore_worktree(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
+    async fn restore_to_head(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
+    async fn delete_untracked(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
+
+    /// Commit subject+body of HEAD (`git log -1 --format=%B`), or `None`
+    /// when HEAD is unborn (fresh repository). Used by Amend.
+    async fn head_message(&self, repo: &str) -> Result<Option<String>, AppError>;
+
+    /// Append paths to `.gitignore` (anchored patterns, de-duplicated).
+    async fn ignore_paths(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
+
+    /// Index state for the given paths (`git ls-files -s -z`), including
+    /// unmerged stages — the recovery snapshot's source of truth for
+    /// restoring the exact staged state.
+    async fn ls_index(&self, repo: &str, paths: &[String]) -> Result<Vec<IndexEntry>, AppError>;
+
+    /// Write raw `--index-info` records (`<mode> <sha> <stage>\t<path>`,
+    /// NUL-terminated) — restores snapshot index state, unmerged included.
+    async fn update_index_info(&self, repo: &str, info: &str) -> Result<(), AppError>;
+
+    /// Remove paths from the index (`git update-index --force-remove --stdin`).
+    async fn remove_index_entries(&self, repo: &str, paths: &[String]) -> Result<(), AppError>;
 
     // Commit
     async fn commit(

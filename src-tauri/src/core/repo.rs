@@ -313,8 +313,8 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::core::engine::{
-        BranchInfo, CommitInfo, CommitResult, DiffModel, DiffSource, PullResult, RebaseState,
-        ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        BranchInfo, CommitInfo, CommitResult, DiffModel, DiffSource, IndexEntry, PullResult,
+        RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -336,6 +336,9 @@ mod tests {
                 status: ".M".into(),
                 orig_path: None,
                 submodule: false,
+                submodule_dirty: false,
+                submodule_commit_changed: false,
+                eol_only: false,
                 staged: false,
                 unstaged: true,
                 untracked: false,
@@ -349,8 +352,29 @@ mod tests {
         async fn unstage(&self, _: &str, _: &[String]) -> Result<(), AppError> {
             Err(err("unstage"))
         }
-        async fn discard(&self, _: &str, _: &[String]) -> Result<(), AppError> {
-            Err(err("discard"))
+        async fn restore_worktree(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("restore_worktree"))
+        }
+        async fn restore_to_head(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("restore_to_head"))
+        }
+        async fn delete_untracked(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("delete_untracked"))
+        }
+        async fn head_message(&self, _: &str) -> Result<Option<String>, AppError> {
+            Err(err("head_message"))
+        }
+        async fn ignore_paths(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("ignore_paths"))
+        }
+        async fn ls_index(&self, _: &str, _: &[String]) -> Result<Vec<IndexEntry>, AppError> {
+            Err(err("ls_index"))
+        }
+        async fn update_index_info(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("update_index_info"))
+        }
+        async fn remove_index_entries(&self, _: &str, _: &[String]) -> Result<(), AppError> {
+            Err(err("remove_index_entries"))
         }
         async fn commit(
             &self,

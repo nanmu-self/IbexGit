@@ -15,12 +15,36 @@ export const commands = {
 	gitStatus: (id: RepoId_Deserialize) => __TAURI_INVOKE<FileStatus_Serialize[]>("git_status", { id }),
 	gitStage: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_stage", { id, paths }),
 	gitUnstage: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_unstage", { id, paths }),
-	gitDiscard: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_discard", { id, paths }),
+	/**
+	 *  Discard changes for the given paths, with a recovery snapshot taken
+	 *  beforehand (PLAN §4.7 轨道 A) so the operation is undoable.
+	 * 
+	 *  Scope semantics per path (classification from a fresh status under the
+	 *  write gate):
+	 *  - untracked → physically deleted (snapshot holds a copy);
+	 *  - unmerged (conflict) → full reset to HEAD (`restore --source=HEAD -S -W`);
+	 *  - tracked, scope=worktree → `git restore` (staged state kept);
+	 *  - tracked, scope=all → `git restore --source=HEAD -S -W` (staged dropped).
+	 * 
+	 *  Returns the snapshot id for the undo entry, or `None` when nothing was
+	 *  discardable. On failure the snapshot is rolled back.
+	 */
+	gitDiscard: (id: RepoId_Deserialize, paths: string[], scope: string) => __TAURI_INVOKE<string | null>("git_discard", { id, paths, scope }),
 	gitCommit: (id: RepoId_Deserialize, message: string, amend: boolean, noVerify: boolean) => __TAURI_INVOKE<CommitResult>("git_commit", { id, message, amend, noVerify }),
+	/**
+	 *  HEAD commit message (subject + body) for the Amend flow; `None` when
+	 *  HEAD is unborn.
+	 */
+	gitHeadMessage: (id: RepoId_Deserialize) => __TAURI_INVOKE<string | null>("git_head_message", { id }),
+	/**  Append paths to `.gitignore` (right-click "ignore" action). */
+	gitIgnorePaths: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_ignore_paths", { id, paths }),
 	gitLog: (id: RepoId_Deserialize, limit: number, offset: number, paths: string[] | null) => __TAURI_INVOKE<CommitInfo[]>("git_log", { id, limit, offset, paths }),
 	gitDiff: (id: RepoId_Deserialize, source: string, oldRev: string | null, newRev: string | null, paths: string[] | null) => __TAURI_INVOKE<DiffModel>("git_diff", { id, source, oldRev, newRev, paths }),
 	gitBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_branches", { id }),
 	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
+	recoveryList: (id: RepoId_Deserialize) => __TAURI_INVOKE<RecoveryEntry[]>("recovery_list", { id }),
+	recoveryRestore: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_restore", { id, snapshotId }),
+	recoveryDelete: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_delete", { id, snapshotId }),
 	workspaceRecents: () => __TAURI_INVOKE<RecentRepo[]>("workspace_recents"),
 	workspaceTouchRecent: (path: string, name: string) => __TAURI_INVOKE<null>("workspace_touch_recent", { path, name }),
 	workspaceForgetRecent: (path: string) => __TAURI_INVOKE<null>("workspace_forget_recent", { path }),
@@ -29,6 +53,10 @@ export const commands = {
 	filter?: string,
 	sidebar_collapsed?: string[],
 	selected_file?: SelectedFile | null,
+	/**  Workspace list mode: `list` (flat sections) or `tree` (path tree). */
+	view_mode?: string | null,
+	/**  Collapsed directory ids in tree mode. */
+	tree_collapsed?: string[],
 } | null>("workspace_load_state", { repoPath }),
 	workspaceSaveState: (repoPath: string, state: RepoUiState_Deserialize) => __TAURI_INVOKE<null>("workspace_save_state", { repoPath, state }),
 };
@@ -120,9 +148,19 @@ export type FileStatus_Deserialize = {
 	status: string,
 	orig_path: string | null,
 	submodule: boolean,
+	/**  Submodule with modified content (porcelain v2 `sub = S`). */
+	submodule_dirty: boolean,
+	/**  Submodule whose checked-in commit differs from the index (`sub = M`). */
+	submodule_commit_changed: boolean,
+	/**
+	 *  The worktree change consists only of line-ending differences
+	 *  (CRLF/LF); detected via the `--ignore-cr-at-eol` numstat diff.
+	 */
+	eol_only: boolean,
 	staged: boolean,
 	unstaged: boolean,
 	untracked: boolean,
+	/**  skip-worktree (porcelain v2 XY contains `S`). */
 	skipped: boolean,
 	conflict: boolean,
 };
@@ -132,9 +170,19 @@ export type FileStatus_Serialize = {
 	status: string,
 	orig_path?: string | null,
 	submodule: boolean,
+	/**  Submodule with modified content (porcelain v2 `sub = S`). */
+	submodule_dirty: boolean,
+	/**  Submodule whose checked-in commit differs from the index (`sub = M`). */
+	submodule_commit_changed: boolean,
+	/**
+	 *  The worktree change consists only of line-ending differences
+	 *  (CRLF/LF); detected via the `--ignore-cr-at-eol` numstat diff.
+	 */
+	eol_only: boolean,
 	staged: boolean,
 	unstaged: boolean,
 	untracked: boolean,
+	/**  skip-worktree (porcelain v2 XY contains `S`). */
 	skipped: boolean,
 	conflict: boolean,
 };
@@ -144,6 +192,21 @@ export type RecentRepo = {
 	name: string,
 	/**  Unix timestamp (seconds) of the last open. f64 for JS-safe export. */
 	last_opened: number | null,
+};
+
+/**
+ *  Frontend-facing summary of one snapshot (specta type).
+ *  Timestamps/counts use f64 on the wire: u64 is JS-precision-unsafe and
+ *  specta forbids it; all values stay below 2^53.
+ */
+export type RecoveryEntry = {
+	id: string,
+	created_at_ms: number | null,
+	kind: string,
+	scope: string,
+	file_count: number,
+	size_bytes: number | null,
+	warnings: string[],
 };
 
 /**
@@ -207,6 +270,10 @@ export type RepoUiState_Deserialize = {
 	filter?: string,
 	sidebar_collapsed?: string[],
 	selected_file?: SelectedFile | null,
+	/**  Workspace list mode: `list` (flat sections) or `tree` (path tree). */
+	view_mode?: string | null,
+	/**  Collapsed directory ids in tree mode. */
+	tree_collapsed?: string[],
 };
 
 /**
@@ -219,6 +286,10 @@ export type RepoUiState_Serialize = {
 	filter?: string,
 	sidebar_collapsed?: string[],
 	selected_file?: SelectedFile | null,
+	/**  Workspace list mode: `list` (flat sections) or `tree` (path tree). */
+	view_mode?: string | null,
+	/**  Collapsed directory ids in tree mode. */
+	tree_collapsed?: string[],
 };
 
 /**  Selected diff target in the workspace view (frontend-owned UI state). */

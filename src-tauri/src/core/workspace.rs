@@ -89,6 +89,12 @@ pub struct RepoUiState {
     pub sidebar_collapsed: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_file: Option<SelectedFile>,
+    /// Workspace list mode: `list` (flat sections) or `tree` (path tree).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_mode: Option<String>,
+    /// Collapsed directory ids in tree mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tree_collapsed: Vec<String>,
 }
 
 /// Recent repositories, newest first.

@@ -1,6 +1,7 @@
 use crate::core::compat::GitCapabilities;
 use crate::core::engine::DiffSource;
 use crate::core::error::AppError;
+use crate::core::recovery::{DiscardScope, DiscardTarget, RecoveryEntry, RecoveryManager};
 use crate::core::repo::{RepoId, RepoManager};
 use crate::core::watcher::WatcherHub;
 use std::path::PathBuf;
@@ -118,18 +119,110 @@ pub async fn git_unstage(
     repos.engine().unstage(&path, &paths).await
 }
 
+/// Discard changes for the given paths, with a recovery snapshot taken
+/// beforehand (PLAN §4.7 轨道 A) so the operation is undoable.
+///
+/// Scope semantics per path (classification from a fresh status under the
+/// write gate):
+/// - untracked → physically deleted (snapshot holds a copy);
+/// - unmerged (conflict) → full reset to HEAD (`restore --source=HEAD -S -W`);
+/// - tracked, scope=worktree → `git restore` (staged state kept);
+/// - tracked, scope=all → `git restore --source=HEAD -S -W` (staged dropped).
+///
+/// Returns the snapshot id for the undo entry, or `None` when nothing was
+/// discardable. On failure the snapshot is rolled back.
 #[tauri::command]
 #[specta::specta]
 
 pub async fn git_discard(
     id: RepoId,
     paths: Vec<String>,
+    scope: String,
     repos: State<'_, RepoManager>,
-) -> Result<(), AppError> {
+    recovery: State<'_, RecoveryManager>,
+) -> Result<Option<String>, AppError> {
+    let scope = match scope.as_str() {
+        "all" => DiscardScope::All,
+        _ => DiscardScope::Worktree,
+    };
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
-    let path = resolve(&repos, id).await?;
-    repos.engine().discard(&path, &paths).await
+    let root = resolve(&repos, id).await?;
+    let engine = repos.engine();
+
+    // Fresh classification (bypass the display cache): the snapshot must
+    // reflect the state being destroyed, not a possibly-stale view.
+    let status = engine.status(&root).await?;
+    let mut targets: Vec<DiscardTarget> = Vec::new();
+    for p in &paths {
+        let Some(f) = status.iter().find(|f| &f.path == p) else {
+            continue;
+        };
+        targets.push(DiscardTarget {
+            path: p.clone(),
+            untracked: f.untracked,
+            conflict: f.conflict,
+        });
+        // A staged rename is a delete+add pair in the index: discarding it
+        // must also restore the original path (restore_to_head on the new
+        // name alone would leave the old name staged-deleted).
+        if f.staged && !f.untracked {
+            if let Some(orig) = &f.orig_path {
+                if orig != &f.path && !targets.iter().any(|t| &t.path == orig) {
+                    targets.push(DiscardTarget {
+                        path: orig.clone(),
+                        untracked: false,
+                        conflict: false,
+                    });
+                }
+            }
+        }
+    }
+    if targets.is_empty() {
+        return Ok(None);
+    }
+
+    // Snapshot → execute → on failure roll the snapshot back.
+    let snap = recovery
+        .snapshot_discard(&*engine, PathBuf::from(&root).as_path(), &targets, scope)
+        .await?;
+    let result = execute_discard(&engine, &root, &targets, scope).await;
+    match result {
+        Ok(()) => {
+            // Lazy retention cleanup piggybacks on real activity.
+            recovery.prune_expired(std::path::Path::new(&root));
+            Ok(Some(snap.id))
+        }
+        Err(e) => {
+            let _ = recovery.delete(std::path::Path::new(&root), &snap.id);
+            Err(e)
+        }
+    }
+}
+
+async fn execute_discard(
+    engine: &Arc<dyn crate::core::engine::GitEngine>,
+    root: &str,
+    targets: &[DiscardTarget],
+    scope: DiscardScope,
+) -> Result<(), AppError> {
+    let mut tracked_wt: Vec<String> = Vec::new(); // scope=worktree restores
+    let mut tracked_head: Vec<String> = Vec::new(); // scope=all / conflicts
+    let mut untracked: Vec<String> = Vec::new();
+    for t in targets {
+        if t.untracked {
+            untracked.push(t.path.clone());
+        } else if t.conflict || scope == DiscardScope::All {
+            // Conflicted paths have no meaningful "worktree-only" discard;
+            // reset to HEAD regardless of scope (P8 owns conflict flows).
+            tracked_head.push(t.path.clone());
+        } else {
+            tracked_wt.push(t.path.clone());
+        }
+    }
+    engine.restore_worktree(root, &tracked_wt).await?;
+    engine.restore_to_head(root, &tracked_head).await?;
+    engine.delete_untracked(root, &untracked).await
 }
 
 #[tauri::command]
@@ -231,6 +324,85 @@ pub async fn git_checkout_branch(
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
     repos.engine().checkout_branch(&path, &name).await
+}
+
+// =====================
+// Recovery (PLAN §4.7 轨道 A)
+// =====================
+
+#[tauri::command]
+#[specta::specta]
+
+pub async fn recovery_list(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<Vec<RecoveryEntry>, AppError> {
+    let root = resolve(&repos, id).await?;
+    Ok(recovery.list(std::path::Path::new(&root)))
+}
+
+#[tauri::command]
+#[specta::specta]
+
+pub async fn recovery_restore(
+    id: RepoId,
+    snapshot_id: String,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    recovery
+        .restore_discard(&*repos.engine(), std::path::Path::new(&root), &snapshot_id)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+
+pub async fn recovery_delete(
+    id: RepoId,
+    snapshot_id: String,
+    repos: State<'_, RepoManager>,
+    recovery: State<'_, RecoveryManager>,
+) -> Result<(), AppError> {
+    let root = resolve(&repos, id).await?;
+    recovery.delete(std::path::Path::new(&root), &snapshot_id)
+}
+
+// =====================
+// Amend / ignore
+// =====================
+
+/// HEAD commit message (subject + body) for the Amend flow; `None` when
+/// HEAD is unborn.
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_head_message(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Option<String>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().head_message(&path).await
+}
+
+/// Append paths to `.gitignore` (right-click "ignore" action).
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_ignore_paths(
+    id: RepoId,
+    paths: Vec<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().ignore_paths(&path, &paths).await
 }
 
 async fn resolve(repos: &State<'_, RepoManager>, id: RepoId) -> Result<String, AppError> {

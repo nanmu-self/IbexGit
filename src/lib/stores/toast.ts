@@ -13,6 +13,8 @@ export interface Toast {
   message: string;
   detail?: string;
   duration?: number;
+  /** Optional single action button (e.g. "撤销丢弃"). */
+  action?: { label: string; run: () => void };
 }
 
 const toasts: Writable<Toast[]> = writable([]);
@@ -25,8 +27,9 @@ export function showToast(
   message: string,
   detail?: string,
   duration = 3500,
+  action?: Toast["action"],
 ): void {
-  const toast: Toast = { id: nextId++, type, message, detail, duration };
+  const toast: Toast = { id: nextId++, type, message, detail, duration, action };
   toasts.update((list) => [...list, toast]);
   if (toast.duration && toast.duration > 0) {
     setTimeout(() => removeToast(toast.id), toast.duration);

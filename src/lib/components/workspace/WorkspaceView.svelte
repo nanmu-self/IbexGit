@@ -1,43 +1,126 @@
 <script lang="ts">
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
-  import { Checkbox } from "$lib/components/ui/checkbox";
-  import { VirtualList } from "$lib/components/ui/virtual-list";
-  import { EmptyState } from "$lib/components/ui/empty-state";
+  import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
   import DiffViewer from "$lib/components/diff/DiffViewer.svelte";
+  import StatusSections from "./StatusSections.svelte";
+  import StatusTree from "./StatusTree.svelte";
+  import CommitBox from "./CommitBox.svelte";
+  import RecoveryDialog from "./RecoveryDialog.svelte";
+  import FileContextMenu from "./FileContextMenu.svelte";
+  import type { ContextTarget } from "./FileContextMenu.svelte";
   import { t } from "$lib/i18n";
   import { repos, splitFiles } from "$lib/stores/repos.svelte";
   import { settings } from "$lib/stores/settings.svelte";
-  import { git, normalizeError, type FileStatus, type DiffModel } from "$lib/git";
+  import {
+    git,
+    recovery,
+    normalizeError,
+    type FileStatus,
+    type DiffModel,
+    type RecoveryEntry,
+  } from "$lib/git";
+  import { showToast } from "$lib/stores/toast";
   import { onAction } from "$lib/keyboard";
-  import CirclePlus from "@lucide/svelte/icons/circle-plus";
-  import CircleMinus from "@lucide/svelte/icons/circle-minus";
-  import Trash2 from "@lucide/svelte/icons/trash-2";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import List from "@lucide/svelte/icons/list";
+  import FolderTree from "@lucide/svelte/icons/folder-tree";
+  import History from "@lucide/svelte/icons/history";
 
-  const ROW = 26;
+  type Source = "worktree" | "staged";
 
   const filter = $derived(repos.ui.filter.trim().toLowerCase());
   const active = $derived(repos.active);
-  const selected = $derived(repos.ui.selected_file);
-
-  const staged = $derived(
-    splitFiles(active?.files ?? []).staged.filter((f) => f.path.toLowerCase().includes(filter))
-  );
-  const unstaged = $derived(
-    splitFiles(active?.files ?? []).unstaged.filter((f) => f.path.toLowerCase().includes(filter))
+  const activeKey = $derived(
+    repos.ui.selected_file
+      ? `${repos.ui.selected_file.source}:${repos.ui.selected_file.path}`
+      : null
   );
 
+  // ---- sections (filtered) ----
+  const matches = (f: FileStatus): boolean =>
+    f.path.toLowerCase().includes(filter);
+  const sections = $derived.by(() => {
+    const all = splitFiles(active?.files ?? []);
+    if (!filter) return all;
+    return {
+      conflicts: all.conflicts.filter(matches),
+      staged: all.staged.filter(matches),
+      unstaged: all.unstaged.filter(matches),
+    };
+  });
+  const filteredActive = $derived(filter.length > 0);
+
+  /** Ordered lookup for shift-range selection. */
+  const order = $derived.by(() => {
+    const map = new Map<Source, string[]>();
+    map.set(
+      "staged",
+      sections.staged.map((f) => f.path)
+    );
+    map.set(
+      "worktree",
+      [...sections.conflicts, ...sections.unstaged].map((f) => f.path)
+    );
+    return map;
+  });
+
+  // ---- selection (batch ops) ----
+  const selection = $state(new Set<string>());
+  let anchor = $state<string | null>(null);
+
+  function keyOf(source: Source, path: string): string {
+    return `${source}:${path}`;
+  }
+
+  function onRowClick(file: FileStatus, source: Source, e: MouseEvent): void {
+    const key = keyOf(source, file.path);
+    if (e.shiftKey && anchor) {
+      const list = order.get(source) ?? [];
+      const a = list.indexOf(anchor.split(":").slice(1).join(":"));
+      const b = list.indexOf(file.path);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        for (let i = lo; i <= hi; i++) selection.add(keyOf(source, list[i]));
+        return;
+      }
+    }
+    if (e.ctrlKey || e.metaKey) {
+      if (selection.has(key)) selection.delete(key);
+      else selection.add(key);
+      anchor = key;
+      return;
+    }
+    // Plain click: single selection + diff target.
+    selection.clear();
+    selection.add(key);
+    anchor = key;
+    repos.updateUi({ selected_file: { path: file.path, source } });
+  }
+
+  function onRowContext(file: FileStatus, source: Source, e: MouseEvent): void {
+    e.preventDefault();
+    const root = active?.path ?? "";
+    ctxTarget = {
+      path: file.path,
+      untracked: file.untracked,
+      absPath: `${root.replace(/[\\/]+$/, "")}/${file.path}`,
+      x: e.clientX,
+      y: e.clientY,
+    };
+  }
+
+  // ---- diff loading (re-fetch after watcher refresh) ----
   let diffModel = $state<DiffModel | null>(null);
   let diffLoading = $state(false);
-  /** PanelResizer drag state: the file list drops its width transition while true. */
   let fileListDragging = $state(false);
 
-  // (Re)load the diff whenever the selection or repo state changes.
   $effect(() => {
     const sel = repos.ui.selected_file;
     const tab = repos.active;
-    const refreshMark = tab?.lastRefreshMs; // re-fetch after watcher refresh
+    const refreshMark = tab?.lastRefreshMs;
     if (!sel || !tab) {
       diffModel = null;
       diffLoading = false;
@@ -60,18 +143,17 @@
     void refreshMark;
   });
 
-  // Ctrl+Shift+F jumps to the filter box.
   $effect(() => {
     return onAction("workspace.focusFilter", () => {
       document.querySelector<HTMLInputElement>("input[data-filter]")?.focus();
     });
   });
 
-  function selectFile(file: FileStatus, source: "worktree" | "staged"): void {
-    repos.updateUi({ selected_file: { path: file.path, source } });
-  }
+  // ---- batch actions ----
+  const stagedCount = $derived(sections.staged.length);
+  const selectionCount = $derived(selection.size);
 
-  async function stage(paths: string[]): Promise<void> {
+  async function doStage(paths: string[]): Promise<void> {
     const id = repos.activeId;
     if (id === null || paths.length === 0) return;
     try {
@@ -82,7 +164,7 @@
     }
   }
 
-  async function unstage(paths: string[]): Promise<void> {
+  async function doUnstage(paths: string[]): Promise<void> {
     const id = repos.activeId;
     if (id === null || paths.length === 0) return;
     try {
@@ -93,20 +175,180 @@
     }
   }
 
-  function splitPath(path: string): { dir: string; name: string } {
-    const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-    return idx === -1 ? { dir: "", name: path } : { dir: path.slice(0, idx + 1), name: path.slice(idx + 1) };
+  // Discard: confirm dialog → snapshot-backed backend discard → undo toast.
+  let discardPaths = $state<string[]>([]);
+  let discardScope = $state<"worktree" | "all">("worktree");
+  let discardOpen = $state(false);
+  const discardHasUntracked = $derived(
+    discardPaths.some((p) => (active?.files ?? []).some((f) => f.path === p && f.untracked))
+  );
+
+  function askDiscard(paths: string[], scope: "worktree" | "all"): void {
+    if (paths.length === 0) return;
+    discardPaths = paths;
+    discardScope = scope;
+    discardOpen = true;
   }
 
-  function statusChip(file: FileStatus): { letter: string; cls: string } {
-    if (file.conflict) return { letter: "!", cls: "bg-red-600 text-white" };
-    const s = file.status;
-    if (file.untracked || s.startsWith("?")) return { letter: "U", cls: "bg-green-600/90 text-white" };
-    if (s.includes("D")) return { letter: "D", cls: "bg-red-500/90 text-white" };
-    if (s.includes("R") || s.includes("C")) return { letter: "R", cls: "bg-blue-500/90 text-white" };
-    if (s.includes("A")) return { letter: "A", cls: "bg-green-500/90 text-white" };
-    if (s.includes("M")) return { letter: "M", cls: "bg-amber-500/90 text-white" };
-    return { letter: "M", cls: "bg-muted-foreground/70 text-white" };
+  async function confirmDiscard(): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    try {
+      const snapshotId = await git.discard(id, discardPaths, discardScope);
+      selection.clear();
+      await repos.refresh(id);
+      if (snapshotId) {
+        showToast(
+          "success",
+          t("workspace.discardDone", { n: discardPaths.length }),
+          t("workspace.discardUndoHint"),
+          8000,
+          {
+            label: t("workspace.undo"),
+            run: () => void undoDiscard(id, snapshotId),
+          },
+        );
+      }
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  async function undoDiscard(id: string, snapshotId: string): Promise<void> {
+    try {
+      await recovery.restore(id, snapshotId);
+      await repos.refresh(id);
+      showToast("success", t("workspace.restored"));
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  // ---- context menu ----
+  let ctxTarget = $state<ContextTarget | null>(null);
+  let ignorePaths = $state<string[]>([]);
+  let ignoreOpen = $state(false);
+
+  function showPlaceholder(feature: string): void {
+    showToast("info", t("common.comingSoonPhase", { feature, phase: "P9" }));
+  }
+
+  async function reveal(target: ContextTarget): Promise<void> {
+    try {
+      await revealItemInDir(target.absPath);
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  async function copyPath(target: ContextTarget): Promise<void> {
+    try {
+      await writeText(target.absPath);
+      showToast("info", t("workspace.ctx.copied"));
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  function askIgnore(target: ContextTarget): void {
+    ignorePaths = [target.path];
+    ignoreOpen = true;
+  }
+
+  async function confirmIgnore(): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    try {
+      await git.ignorePaths(id, ignorePaths);
+      showToast("success", t("workspace.ignoreDone", { n: ignorePaths.length }));
+      await repos.refresh(id);
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  // ---- commit ----
+  let commitBusy = $state(false);
+
+  async function loadHeadMessage(): Promise<string | null> {
+    const id = repos.activeId;
+    if (id === null) return null;
+    try {
+      return await git.headMessage(id);
+    } catch (e) {
+      normalizeError(e);
+      return null;
+    }
+  }
+
+  async function handleCommit(
+    message: string,
+    amend: boolean,
+    noVerify: boolean,
+    andPush: boolean
+  ): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    commitBusy = true;
+    try {
+      const res = await git.commit(id, message, amend, noVerify);
+      showToast("success", t("commit.done", { hash: res.short_hash }));
+      if (andPush) {
+        // 占位推送（P6 接入真实 push + P7 凭据）。
+        showToast("info", t("commit.pushSoon"));
+      }
+      await repos.refresh(id);
+    } catch (e) {
+      normalizeError(e);
+    } finally {
+      commitBusy = false;
+    }
+  }
+
+  // ---- recovery dialog ----
+  let recoveryOpen = $state(false);
+  let recoveryEntries = $state<RecoveryEntry[]>([]);
+  let recoveryBusyId = $state<string | null>(null);
+
+  async function openRecovery(): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    try {
+      recoveryEntries = await recovery.list(id);
+      recoveryOpen = true;
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  async function restoreSnapshot(snapshotId: string): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    recoveryBusyId = snapshotId;
+    try {
+      await recovery.restore(id, snapshotId);
+      await repos.refresh(id);
+      recoveryOpen = false;
+      showToast("success", t("workspace.restored"));
+    } catch (e) {
+      normalizeError(e);
+    } finally {
+      recoveryBusyId = null;
+    }
+  }
+
+  async function deleteSnapshot(snapshotId: string): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    recoveryBusyId = snapshotId;
+    try {
+      await recovery.remove(id, snapshotId);
+      recoveryEntries = recoveryEntries.filter((e) => e.id !== snapshotId);
+    } catch (e) {
+      normalizeError(e);
+    } finally {
+      recoveryBusyId = null;
+    }
   }
 </script>
 
@@ -118,136 +360,75 @@
       : ''}"
     style="width: {settings.fileListWidth}px"
   >
-    <div class="p-2">
+    <div class="flex items-center gap-2 p-2">
       <Input
         data-filter
         placeholder={t("workspace.filter")}
         bind:value={repos.ui.filter}
         class="h-8 bg-background text-[13px]"
       />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title={repos.ui.view_mode === "list" ? t("workspace.treeView") : t("workspace.listView")}
+        onclick={() => repos.updateUi({ view_mode: repos.ui.view_mode === "list" ? "tree" : "list" })}
+      >
+        {#if repos.ui.view_mode === "list"}
+          <FolderTree class="size-4" />
+        {:else}
+          <List class="size-4" />
+        {/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title={t("recovery.title")}
+        onclick={openRecovery}
+      >
+        <History class="size-4" />
+      </Button>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto pb-2">
-      <!-- 已暂存 -->
-      <div class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-        <span>{t("workspace.staged")}</span>
-        <span class="rounded-full bg-muted px-1.5 text-[11px] leading-4">{staged.length}</span>
-        {#if staged.length > 0}
+    {#if !active}
+      <div class="flex-1"></div>
+    {:else if repos.ui.view_mode === "tree"}
+      <StatusTree
+        conflicts={sections.conflicts}
+        staged={sections.staged}
+        unstaged={sections.unstaged}
+        activeKey={activeKey}
+        collapsed={repos.ui.tree_collapsed}
+        onleafclick={(file, source) =>
+          repos.updateUi({ selected_file: { path: file.path, source } })}
+      />
+    {:else}
+      <StatusSections
+        conflicts={sections.conflicts}
+        staged={sections.staged}
+        unstaged={sections.unstaged}
+        {activeKey}
+        filtered={filteredActive}
+        {selection}
+        onrowclick={onRowClick}
+        onrowcontext={onRowContext}
+        onstage={doStage}
+        onunstage={doUnstage}
+        ondiscard={askDiscard}
+      />
+      {#if selectionCount > 1}
+        <div class="flex items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
+          <span>{t("workspace.selected", { n: selectionCount })}</span>
           <Button
             variant="ghost"
-            size="sm"
-            class="ml-auto h-6 px-2 text-[11px] text-muted-foreground"
-            onclick={() => unstage(staged.map((f) => f.path))}
+            size="xs"
+            class="ml-auto"
+            onclick={() => selection.clear()}
           >
-            {t("workspace.unstageAll")}
+            {t("workspace.clearSelection")}
           </Button>
-        {/if}
-      </div>
-      {#if staged.length > 0}
-        {#snippet stagedRow(file: FileStatus, index: number)}
-          {@const chip = statusChip(file)}
-          {@const { dir, name } = splitPath(file.path)}
-          <div
-            role="button"
-            tabindex="-1"
-            class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {selected?.path === file.path && selected?.source === 'staged'
-              ? 'bg-accent'
-              : 'hover:bg-accent/50'}"
-            onclick={() => selectFile(file, "staged")}
-            onkeydown={(e) => {
-              if (e.key === "Enter") selectFile(file, "staged");
-            }}
-          >
-            <span class="flex size-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold {chip.cls}">
-              {chip.letter}
-            </span>
-            <span class="min-w-0 flex-1 truncate" title={file.orig_path ? `${file.orig_path} → ${file.path}` : file.path}>
-              <span class="text-muted-foreground/60">{dir}</span>{name}
-            </span>
-            <button
-              type="button"
-              class="invisible rounded p-0.5 hover:bg-muted group-hover:visible"
-              title={t("workspace.unstage")}
-              onclick={(e) => {
-                e.stopPropagation();
-                void unstage([file.path]);
-              }}
-            >
-              <CircleMinus class="size-3.5" />
-            </button>
-          </div>
-        {/snippet}
-        <VirtualList items={staged} itemHeight={ROW} row={stagedRow} getKey={(f) => `s:${f.path}`} />
+        </div>
       {/if}
-
-      <!-- 未暂存 -->
-      <div class="mt-1 flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-        <span>{t("workspace.unstaged")}</span>
-        <span class="rounded-full bg-muted px-1.5 text-[11px] leading-4">{unstaged.length}</span>
-        {#if unstaged.length > 0}
-          <Button
-            variant="ghost"
-            size="sm"
-            class="ml-auto h-6 px-2 text-[11px] text-muted-foreground"
-            onclick={() => stage(unstaged.map((f) => f.path))}
-          >
-            {t("workspace.stageAll")}
-          </Button>
-        {/if}
-      </div>
-      {#if unstaged.length > 0}
-        {#snippet unstagedRow(file: FileStatus, index: number)}
-          {@const chip = statusChip(file)}
-          {@const { dir, name } = splitPath(file.path)}
-          <div
-            role="button"
-            tabindex="-1"
-            class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {selected?.path === file.path && selected?.source === 'worktree'
-              ? 'bg-accent'
-              : 'hover:bg-accent/50'}"
-            onclick={() => selectFile(file, "worktree")}
-            onkeydown={(e) => {
-              if (e.key === "Enter") selectFile(file, "worktree");
-            }}
-          >
-            <span class="flex size-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold {chip.cls}">
-              {chip.letter}
-            </span>
-            <span class="min-w-0 flex-1 truncate" title={file.orig_path ? `${file.orig_path} → ${file.path}` : file.path}>
-              <span class="text-muted-foreground/60">{dir}</span>{name}
-            </span>
-            <button
-              type="button"
-              class="invisible rounded p-0.5 text-muted-foreground/50 hover:bg-muted hover:text-foreground group-hover:visible"
-              title={t("workspace.discard")}
-              disabled
-            >
-              <Trash2 class="size-3.5" />
-            </button>
-            <button
-              type="button"
-              class="invisible rounded p-0.5 hover:bg-muted group-hover:visible"
-              title={t("workspace.stage")}
-              onclick={(e) => {
-                e.stopPropagation();
-                void stage([file.path]);
-              }}
-            >
-              <CirclePlus class="size-3.5" />
-            </button>
-          </div>
-        {/snippet}
-        <VirtualList items={unstaged} itemHeight={ROW} row={unstagedRow} getKey={(f) => `u:${f.path}`} />
-      {/if}
-
-      {#if staged.length === 0 && unstaged.length === 0 && active}
-        <EmptyState
-          title={filter ? t("workspace.noMatch") : t("workspace.empty")}
-          hint={filter ? "" : t("workspace.emptyHint")}
-          compact
-        />
-      {/if}
-    </div>
+    {/if}
   </div>
 
   <PanelResizer
@@ -257,37 +438,73 @@
     max={560}
   />
 
-  <!-- 差异 + 提交框（提交在 P3 启用） -->
+  <!-- 差异 + 提交框 -->
   <div class="flex min-w-0 flex-1 flex-col">
     <div class="min-h-0 flex-1">
       <DiffViewer model={diffModel} loading={diffLoading} />
     </div>
 
-    <div class="space-y-2 border-t bg-background p-2.5">
-      <Input placeholder={t("commit.subject")} disabled class="h-8 text-[13px]" />
-      <textarea
-        rows={2}
-        placeholder={t("commit.description")}
-        disabled
-        class="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-[13px] opacity-60 placeholder:text-muted-foreground"
-      ></textarea>
-      <div class="flex items-center gap-4 text-xs text-muted-foreground">
-        <label class="flex items-center gap-1.5 opacity-60">
-          <Checkbox disabled />
-          {t("commit.amend")}
-        </label>
-        <label class="flex items-center gap-1.5 opacity-60">
-          <Checkbox disabled />
-          {t("commit.noVerify")}
-        </label>
-        <label class="flex items-center gap-1.5 opacity-60">
-          <Checkbox disabled />
-          {t("commit.andPush")}
-        </label>
-        <Button disabled class="ml-auto h-8 min-w-36 text-xs" title={t("commit.soon")}>
-          {t("commit.needsMessage")}
-        </Button>
-      </div>
-    </div>
+    <CommitBox
+      {stagedCount}
+      repoReady={active !== null}
+      busy={commitBusy}
+      oncommit={handleCommit}
+      onamend={loadHeadMessage}
+    />
   </div>
 </div>
+
+<!-- 丢弃确认（快照兜底，可撤销） -->
+<ConfirmDialog
+  bind:open={discardOpen}
+  title={t("workspace.discardConfirmTitle")}
+  description={t("workspace.discardConfirmDesc", { n: discardPaths.length })}
+  confirmLabel={t("workspace.discard")}
+  destructive
+  onconfirm={confirmDiscard}
+>
+  <div class="space-y-2 text-sm">
+    <div class="max-h-32 overflow-y-auto rounded-md border p-2 font-mono text-xs text-muted-foreground">
+      {#each discardPaths as p}
+        <div class="truncate">{p}</div>
+      {/each}
+    </div>
+    {#if discardHasUntracked}
+      <div class="text-xs text-amber-600 dark:text-amber-500">{t("workspace.discardUntrackedWarn")}</div>
+    {/if}
+  </div>
+</ConfirmDialog>
+
+<!-- 忽略文件确认 -->
+<ConfirmDialog
+  bind:open={ignoreOpen}
+  title={t("workspace.ignoreConfirmTitle")}
+  description={t("workspace.ignoreConfirmDesc")}
+  confirmLabel={t("workspace.ctx.ignore")}
+  onconfirm={confirmIgnore}
+>
+  <div class="rounded-md border p-2 font-mono text-xs text-muted-foreground">
+    {#each ignorePaths as p}
+      <div class="truncate">{p}</div>
+    {/each}
+  </div>
+</ConfirmDialog>
+
+<!-- 恢复列表 -->
+<RecoveryDialog
+  bind:open={recoveryOpen}
+  entries={recoveryEntries}
+  busyId={recoveryBusyId}
+  onrestore={restoreSnapshot}
+  ondelete={deleteSnapshot}
+/>
+
+<FileContextMenu
+  target={ctxTarget}
+  onclose={() => (ctxTarget = null)}
+  onhistory={(tgt) => showPlaceholder(t("workspace.ctx.history"))}
+  onblame={(tgt) => showPlaceholder(t("workspace.ctx.blame"))}
+  onreveal={reveal}
+  oncopypath={copyPath}
+  onignore={askIgnore}
+/>

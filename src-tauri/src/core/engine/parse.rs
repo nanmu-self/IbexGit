@@ -5,7 +5,7 @@
 
 use super::{
     BranchInfo, CommitInfo, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffSource,
-    FileStatus, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+    FileStatus, IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
 };
 use crate::core::error::AppError;
 
@@ -61,6 +61,9 @@ pub fn parse_status(raw: &str) -> Vec<FileStatus> {
                         status: "?".into(),
                         orig_path: None,
                         submodule: false,
+                        submodule_dirty: false,
+                        submodule_commit_changed: false,
+                        eol_only: false,
                         staged: false,
                         unstaged: false,
                         untracked: true,
@@ -134,17 +137,100 @@ fn build_file_status(
 ) -> FileStatus {
     let x = xy.as_bytes().first().copied().unwrap_or(b'.') as char;
     let y = xy.as_bytes().get(1).copied().unwrap_or(b'.') as char;
+    // Porcelain v2 `<sub>` field (git ≥2.40, verified on 2.54):
+    // "N..." = not a submodule; "SC.." = submodule with a different
+    // checked-in commit; "S..U"/"S.M." = submodule with untracked/modified
+    // content. First char N/S decides, C/M/U flags carry the details.
+    let sub_first = sub.as_bytes().first().copied().unwrap_or(b'N') as char;
+    let submodule = sub_first == 'S';
     FileStatus {
         path,
         status: xy.to_string(),
         orig_path,
-        submodule: sub.starts_with('S'),
+        submodule,
+        submodule_dirty: submodule && (sub.contains('M') || sub.contains('U')),
+        submodule_commit_changed: submodule && sub.contains('C'),
+        eol_only: false,
         staged: conflict || (x != '.' && x != '?'),
         unstaged: conflict || (y != '.' && y != '?'),
         untracked: false,
         skipped: x == 'S' || y == 'S',
         conflict,
     }
+}
+
+// =====================
+// ls-files -s -z
+// =====================
+
+/// Parse `git ls-files -s -z` output: `<mode> <sha> <stage>\t<path>` NUL-
+/// separated records. Unmerged paths appear once per stage (1..3).
+pub fn parse_ls_files(raw: &str) -> Vec<IndexEntry> {
+    let mut out = Vec::new();
+    for rec in raw.split('\0') {
+        if rec.is_empty() {
+            continue;
+        }
+        // mode SP sha SP stage TAB path
+        let (meta, path) = match rec.split_once('\t') {
+            Some(pair) => pair,
+            None => continue,
+        };
+        let mut it = meta.split_whitespace();
+        let (Some(mode), Some(sha), Some(stage)) = (it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        let Ok(stage) = stage.parse::<u32>() else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        out.push(IndexEntry {
+            path: path.to_string(),
+            mode: mode.to_string(),
+            sha: sha.to_string(),
+            stage,
+        });
+    }
+    out
+}
+
+// =====================
+// diff --numstat -z (path extraction)
+// =====================
+
+/// Extract the changed paths from `git diff --numstat -z` output.
+///
+/// Record layout (verified on git 2.54):
+/// - ordinary: `<added>\t<removed>\t<path>\0` (TAB-separated, NUL-terminated)
+/// - binary: counts are `-`
+/// - rename/copy: `<added>\t<removed>\t\0<origPath>\0<path>\0` — the path
+///   slot is empty and the two names follow as separate NUL fields.
+pub fn parse_numstat_paths(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let parts: Vec<&str> = raw.split('\0').collect();
+    let mut i = 0;
+    while i < parts.len() {
+        let fields: Vec<&str> = parts[i].split('\t').collect();
+        if fields.len() < 2 {
+            i += 1;
+            continue;
+        }
+        if fields.len() >= 3 && !fields[2].is_empty() {
+            out.push(fields[2].to_string());
+            i += 1;
+        } else {
+            // Rename layout: `<a>\t<r>\t` + `\0<origPath>\0<path>\0`.
+            if let Some(path) = parts.get(i + 2) {
+                if !path.is_empty() {
+                    out.push(path.to_string());
+                }
+            }
+            i += 3;
+        }
+    }
+    out
 }
 
 // =====================
@@ -720,6 +806,69 @@ mod tests {
         let raw = "1 .S N... 100644 100644 100644 a b skip.txt\0";
         let out = parse_status(raw);
         assert!(out[0].skipped);
+    }
+
+    #[test]
+    fn status_v2_submodule_states() {
+        // sub field (real git output): N... = plain, S..U = untracked content
+        // inside the submodule (dirty), SC.. = different checked-in commit.
+        let raw = "1 .M S..U 160000 160000 160000 a b sub1\0\
+                   1 .M N... 100644 100644 100644 a b file\0\
+                   1 .M SC.. 160000 160000 160000 a b sub2\0";
+        let out = parse_status(raw);
+        assert_eq!(out.len(), 3);
+        assert!(out[0].submodule && out[0].submodule_dirty);
+        assert!(!out[0].submodule_commit_changed);
+        assert!(!out[1].submodule && !out[1].submodule_dirty);
+        assert!(out[2].submodule && out[2].submodule_commit_changed);
+        assert!(!out[2].submodule_dirty);
+    }
+
+    // ---------- ls-files -s ----------
+
+    #[test]
+    fn ls_files_basic_and_unmerged() {
+        let raw = "100644 1111111111111111111111111111111111111111 0\ta.txt\0\
+                   100755 2222222222222222222222222222222222222222 0\tsh\0\
+                   100644 3333333333333333333333333333333333333333 1\tc.txt\0\
+                   100644 4444444444444444444444444444444444444444 2\tc.txt\0\
+                   100644 5555555555555555555555555555555555555555 3\tc.txt\0";
+        let out = parse_ls_files(raw);
+        assert_eq!(out.len(), 5);
+        assert_eq!(out[0].path, "a.txt");
+        assert_eq!(out[0].mode, "100644");
+        assert_eq!(out[0].stage, 0);
+        assert_eq!(out[1].mode, "100755");
+        let stages: Vec<u32> = out[2..]
+            .iter()
+            .filter(|e| e.path == "c.txt")
+            .map(|e| e.stage)
+            .collect();
+        assert_eq!(stages, vec![1, 2, 3]);
+    }
+
+    // ---------- numstat -z ----------
+
+    #[test]
+    fn numstat_paths_basic_and_binary() {
+        let raw = "1\t2\ta.txt\0-\t-\timg.png\x005\t0\tb.md\0";
+        let out = parse_numstat_paths(raw);
+        assert_eq!(out, vec!["a.txt", "img.png", "b.md"]);
+    }
+
+    #[test]
+    fn numstat_paths_rename_empty_path_slot() {
+        // rename layout: `1\t0\t\0orig\0new\0` (path slot empty)
+        let raw = "1\t0\t\0old.txt\0new.txt\x003\t1\tok.txt\0";
+        let out = parse_numstat_paths(raw);
+        assert_eq!(out, vec!["new.txt", "ok.txt"]);
+    }
+
+    #[test]
+    fn numstat_paths_chinese_filename_raw_utf8() {
+        let raw = "1\t1\t中文.txt\0";
+        let out = parse_numstat_paths(raw);
+        assert_eq!(out, vec!["中文.txt"]);
     }
 
     // ---------- diff ----------
