@@ -94,29 +94,8 @@
   class="flex h-9 shrink-0 items-center gap-0.5 border-b bg-background px-2 text-[13px] select-none"
 >
   {#if platform === "macos"}
-    <div class="flex items-center gap-1.5 pl-1">
-      <button
-        type="button"
-        class="size-3 rounded-full bg-red-500 p-0 hover:bg-red-600"
-        onclick={closeWindow}
-        title={t("win.close")}
-        aria-label={t("win.close")}
-      ></button>
-      <button
-        type="button"
-        class="size-3 rounded-full bg-yellow-500 p-0 hover:bg-yellow-600"
-        onclick={minimizeWindow}
-        title={t("win.minimize")}
-        aria-label={t("win.minimize")}
-      ></button>
-      <button
-        type="button"
-        class="size-3 rounded-full bg-green-500 p-0 hover:bg-green-600"
-        onclick={toggleMaximizeWindow}
-        title={maximized ? t("win.restore") : t("win.maximize")}
-        aria-label={maximized ? t("win.restore") : t("win.maximize")}
-      ></button>
-    </div>
+    <!-- 原生红绿灯由系统绘制（tauri.macos.conf.json: decorations + Overlay），此处仅占位避免与菜单重叠 -->
+    <div class="w-[70px] shrink-0" aria-hidden="true"></div>
   {/if}
 
   <div data-tauri-drag-region class="mr-3 flex items-center gap-1.5 pl-1 font-semibold">
