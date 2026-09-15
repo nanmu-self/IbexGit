@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn status_v2_untracked_and_ignored() {
-        let raw = "? new.txt\0! ignored.log\01 .M N... 100644 100644 100644 a b tracked\0";
+        let raw = "? new.txt\0! ignored.log\x001 .M N... 100644 100644 100644 a b tracked\0";
         let out = parse_status(raw);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].path, "new.txt");
@@ -988,7 +988,7 @@ mod tests {
     #[test]
     fn tags_parse() {
         let raw =
-            "refs/tags/v1.0\0v1.0\0abc1234full\0Alice\02024-01-01 10:00:00 +0800\0release one\n\
+            "refs/tags/v1.0\0v1.0\0abc1234full\0Alice\x002024-01-01 10:00:00 +0800\0release one\n\
                    refs/tags/light\0light\0def5678full\0\0\0\n";
         let out = parse_tags(raw);
         assert_eq!(out.len(), 2);
@@ -1006,7 +1006,7 @@ mod tests {
 
     #[test]
     fn stash_parse_wip_and_on() {
-        let raw = "h1\0stash@{0}\0WIP on main: abc123 some commit\02 hours ago\n\
+        let raw = "h1\0stash@{0}\0WIP on main: abc123 some commit\x002 hours ago\n\
                    h2\0stash@{1}\0On feature: manual message\0yesterday\n";
         let out = parse_stash(raw);
         assert_eq!(out.len(), 2);
@@ -1043,8 +1043,8 @@ mod tests {
 
     #[test]
     fn reflog_parse() {
-        let raw = "h1\0s1\0HEAD@{0}\0commit: fix bug\02024-01-01 10:00:00 +0800\n\
-                   h2\0s2\0HEAD@{1}\0checkout: moving from main to dev\02024-01-01 09:00:00 +0800\n";
+        let raw = "h1\0s1\0HEAD@{0}\0commit: fix bug\x002024-01-01 10:00:00 +0800\n\
+                   h2\0s2\0HEAD@{1}\0checkout: moving from main to dev\x002024-01-01 09:00:00 +0800\n";
         let out = parse_reflog(raw);
         assert_eq!(out.len(), 2);
         let r0 = &out[0];
