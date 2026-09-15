@@ -1,7 +1,7 @@
 import { commands, type RepoId } from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
-import type { RepoUiState } from "./bindings";
+import type { RepoMeta, RepoUiState } from "./bindings";
 
 // =====================
 // Types — generated from Rust by tauri-specta (ADR-009). `cargo test`
@@ -22,9 +22,12 @@ export type {
   DiffModel,
   DiffSource,
   FileStatus,
+  GroupsFile,
   RecentRepo,
   RecoveryEntry,
+  RepoGroup,
   RepoId,
+  RepoMeta,
   RepoUiState,
   SelectedFile,
 } from "./bindings";
@@ -132,7 +135,8 @@ export const recovery = {
 
 /**
  * Workspace persistence (PLAN §4.4): recent repositories + per-repo UI
- * state under `{appData}/workspaces/`.
+ * state under `{appData}/workspaces/`. Groups/stars (P3.5) live in the
+ * same directory (`groups.json`) as the long-lived organizational layer.
  */
 export const workspace = {
   recents: () => wrap(commands.workspaceRecents()),
@@ -142,4 +146,10 @@ export const workspace = {
   loadState: (repoPath: string) => wrap(commands.workspaceLoadState(repoPath)),
   saveState: (repoPath: string, state: RepoUiState) =>
     wrap(commands.workspaceSaveState(repoPath, state)),
+  groups: () => wrap(commands.workspaceGroups()),
+  upsertGroup: (id: string | null, name: string) =>
+    wrap(commands.workspaceUpsertGroup(id, name)),
+  deleteGroup: (id: string) => wrap(commands.workspaceDeleteGroup(id)),
+  updateRepo: (path: string, meta: RepoMeta) =>
+    wrap(commands.workspaceUpdateRepo(path, meta)),
 };

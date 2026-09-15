@@ -20,6 +20,8 @@ class SettingsStore {
   /** Session: repositories open at last quit + the active one. */
   openPaths = $state<string[]>([]);
   activePath = $state<string | null>(null);
+  /** Whether the repositories overview tab ("+" tab, P3.5) was open. */
+  reposTabOpen = $state(false);
 
   #store: Store | null = null;
 
@@ -36,6 +38,7 @@ class SettingsStore {
         (await this.#store.get<number>("fileListWidth")) ?? 320;
       this.openPaths = (await this.#store.get<string[]>("openPaths")) ?? [];
       this.activePath = (await this.#store.get<string | null>("activePath")) ?? null;
+      this.reposTabOpen = (await this.#store.get<boolean>("reposTabOpen")) ?? false;
     } finally {
       setLocale(this.locale);
       this.ready = true;
@@ -68,11 +71,17 @@ class SettingsStore {
     await this.#store?.set("fileListWidth", width);
   }
 
-  async setSession(openPaths: string[], activePath: string | null): Promise<void> {
+  async setSession(
+    openPaths: string[],
+    activePath: string | null,
+    reposTabOpen = false,
+  ): Promise<void> {
     this.openPaths = [...openPaths];
     this.activePath = activePath;
+    this.reposTabOpen = reposTabOpen;
     await this.#store?.set("openPaths", this.openPaths);
     await this.#store?.set("activePath", activePath);
+    await this.#store?.set("reposTabOpen", reposTabOpen);
   }
 }
 

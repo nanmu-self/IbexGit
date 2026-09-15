@@ -2,6 +2,7 @@
   import TitleBar from "$lib/components/layout/TitleBar.svelte";
   import Toolbar from "$lib/components/layout/Toolbar.svelte";
   import RepoTabs from "$lib/components/layout/RepoTabs.svelte";
+  import ReposTab from "$lib/components/layout/ReposTab.svelte";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import StatusBar from "$lib/components/layout/StatusBar.svelte";
   import Welcome from "$lib/components/welcome/Welcome.svelte";
@@ -77,8 +78,8 @@
 {:else}
   <div class="flex h-screen flex-col overflow-hidden">
     <TitleBar />
-    <Toolbar />
     <RepoTabs />
+    <Toolbar />
     <div class="flex min-h-0 flex-1">
       {#if settings.showSidebar}
         <Sidebar resizing={sidebarResizing} />
@@ -90,7 +91,9 @@
         />
       {/if}
       <main class="flex min-w-0 flex-1 flex-col">
-        {#if !active || active.phase === "loading"}
+        {#if repos.reposTabActive}
+          <ReposTab />
+        {:else if !active || active.phase === "loading"}
           <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
             <LoaderCircle class="size-4 animate-spin" />
             {t("common.loading")}

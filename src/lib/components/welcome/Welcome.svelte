@@ -14,11 +14,8 @@
 <div class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-8">
   <div class="w-full max-w-md space-y-8">
     <div class="welcome-enter space-y-2 text-center">
-      <div
-        class="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary text-lg font-bold text-primary-foreground shadow-md"
-      >
-        IG
-      </div>
+      <div class="flex  place-items-center justify-center"> <img data-tauri-drag-region src="/logo.svg" alt="" draggable="false" class="size-20" /></div>
+
       <h1 class="text-xl font-semibold">{t("welcome.title")}</h1>
       <p class="text-sm text-muted-foreground">{t("welcome.subtitle")}</p>
     </div>
@@ -71,7 +68,17 @@
               >
                 <Folder class="size-4 shrink-0 text-muted-foreground" />
                 <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm">{r.name}</div>
+                  <div class="flex items-center gap-1.5">
+                    <span class="truncate text-sm">{r.name}</span>
+                    {#if repos.groupName(repos.groupOf(r.path))}
+                      <span
+                        class="shrink-0 rounded border px-1 py-px text-[10px] leading-none text-muted-foreground"
+                        title={repos.groupName(repos.groupOf(r.path)) ?? ""}
+                      >
+                        {repos.groupName(repos.groupOf(r.path))}
+                      </span>
+                    {/if}
+                  </div>
                   <div class="truncate text-[11px] text-muted-foreground">{r.path}</div>
                 </div>
                 <button

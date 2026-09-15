@@ -48,6 +48,10 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::workspace::workspace_forget_recent,
             commands::workspace::workspace_load_state,
             commands::workspace::workspace_save_state,
+            commands::workspace::workspace_groups,
+            commands::workspace::workspace_upsert_group,
+            commands::workspace::workspace_delete_group,
+            commands::workspace::workspace_update_repo,
         ])
         .events(tauri_specta::collect_events![
             core::watcher::RepoChanged,

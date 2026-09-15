@@ -59,6 +59,17 @@ export const commands = {
 	tree_collapsed?: string[],
 } | null>("workspace_load_state", { repoPath }),
 	workspaceSaveState: (repoPath: string, state: RepoUiState_Deserialize) => __TAURI_INVOKE<null>("workspace_save_state", { repoPath, state }),
+	/**  Load the full groups file (groups + per-repo metadata). */
+	workspaceGroups: () => __TAURI_INVOKE<GroupsFile_Serialize>("workspace_groups"),
+	/**  Create a group (`id: None`) or rename an existing one (`id: Some`). */
+	workspaceUpsertGroup: (id: string | null, name: string) => __TAURI_INVOKE<RepoGroup>("workspace_upsert_group", { id, name }),
+	/**  Delete a group; member repos fall back to ungrouped (stars are kept). */
+	workspaceDeleteGroup: (id: string) => __TAURI_INVOKE<null>("workspace_delete_group", { id }),
+	/**
+	 *  Set the organizational metadata of one repo (group membership and/or
+	 *  star; full replace).
+	 */
+	workspaceUpdateRepo: (path: string, meta: RepoMeta_Deserialize) => __TAURI_INVOKE<null>("workspace_update_repo", { path, meta }),
 };
 
 /** Events */
@@ -187,6 +198,46 @@ export type FileStatus_Serialize = {
 	conflict: boolean,
 };
 
+/**
+ *  `workspaces/groups.json` — the long-lived organizational layer over the
+ *  repo collection. Unlike `recents.json` (bounded recently-opened list),
+ *  group membership and stars must survive recents truncation, hence a
+ *  separate file (PLAN P3.5).
+ */
+export type GroupsFile = GroupsFile_Serialize | GroupsFile_Deserialize;
+
+/**
+ *  `workspaces/groups.json` — the long-lived organizational layer over the
+ *  repo collection. Unlike `recents.json` (bounded recently-opened list),
+ *  group membership and stars must survive recents truncation, hence a
+ *  separate file (PLAN P3.5).
+ */
+export type GroupsFile_Deserialize = {
+	version?: number,
+	groups?: RepoGroup[],
+	/**
+	 *  Resolved repo path → metadata. Keys use the resolved worktree root
+	 *  (same normalization as `RepoId`) to avoid Windows case ambiguity.
+	 */
+	repos?: { [key in string]: RepoMeta_Deserialize },
+};
+
+/**
+ *  `workspaces/groups.json` — the long-lived organizational layer over the
+ *  repo collection. Unlike `recents.json` (bounded recently-opened list),
+ *  group membership and stars must survive recents truncation, hence a
+ *  separate file (PLAN P3.5).
+ */
+export type GroupsFile_Serialize = {
+	version: number,
+	groups: RepoGroup[],
+	/**
+	 *  Resolved repo path → metadata. Keys use the resolved worktree root
+	 *  (same normalization as `RepoId`) to avoid Windows case ambiguity.
+	 */
+	repos: { [key in string]: RepoMeta_Serialize },
+};
+
 export type RecentRepo = {
 	path: string,
 	name: string,
@@ -235,6 +286,15 @@ export type RepoChanged_Serialize = {
 	generation: number,
 };
 
+/**  A named repository group (flat, v1 — no nesting; PLAN P3.5). */
+export type RepoGroup = {
+	/**  Stable id (generated at creation, survives renames). */
+	id: string,
+	name: string,
+	/**  Display order (creation order); the UI sorts groups by this. */
+	order: number,
+};
+
 /**
  *  RepoId: FNV-1a hash of the worktree path. Serialized as a string on the
  *  wire — u64 exceeds JS `Number.MAX_SAFE_INTEGER` and would truncate.
@@ -252,6 +312,40 @@ export type RepoId_Deserialize = string;
  *  wire — u64 exceeds JS `Number.MAX_SAFE_INTEGER` and would truncate.
  */
 export type RepoId_Serialize = string;
+
+/**
+ *  Per-repo organizational metadata (PLAN P3.5). Entries exist only while
+ *  meaningful: [`update_repo`] drops an entry when it becomes the default.
+ */
+export type RepoMeta = RepoMeta_Serialize | RepoMeta_Deserialize;
+
+/**
+ *  Per-repo organizational metadata (PLAN P3.5). Entries exist only while
+ *  meaningful: [`update_repo`] drops an entry when it becomes the default.
+ */
+export type RepoMeta_Deserialize = {
+	/**  Group the repo belongs to (`None` = ungrouped). */
+	group_id?: string | null,
+	/**
+	 *  Colorful bookmark (palette id, e.g. `red`/`blue`); `None` = unmarked.
+	 *  The palette itself is a frontend display concern.
+	 */
+	bookmark?: string | null,
+};
+
+/**
+ *  Per-repo organizational metadata (PLAN P3.5). Entries exist only while
+ *  meaningful: [`update_repo`] drops an entry when it becomes the default.
+ */
+export type RepoMeta_Serialize = {
+	/**  Group the repo belongs to (`None` = ungrouped). */
+	group_id?: string | null,
+	/**
+	 *  Colorful bookmark (palette id, e.g. `red`/`blue`); `None` = unmarked.
+	 *  The palette itself is a frontend display concern.
+	 */
+	bookmark?: string | null,
+};
 
 /**
  *  Per-repo UI state (PLAN §4.4). The frontend owns the contents; this is a

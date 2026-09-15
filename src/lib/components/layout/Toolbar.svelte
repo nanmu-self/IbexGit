@@ -93,7 +93,7 @@
             {...props}
             variant="ghost"
             size="icon"
-            class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
+            class="flex h-11 w-auto min-w-12 flex-col gap-0.5 px-2 text-[10px] font-normal"
             disabled
           >
             <Terminal class="size-4" />
@@ -111,7 +111,7 @@
             {...props}
             variant="ghost"
             size="icon"
-            class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
+            class="flex h-11 w-auto min-w-12 flex-col gap-0.5 px-2 text-[10px] font-normal"
             disabled={!repos.active}
             onclick={reveal}
           >
