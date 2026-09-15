@@ -175,16 +175,26 @@ impl RepoManager {
     }
 
     pub async fn open(&self, path: PathBuf) -> Result<RepoId, AppError> {
-        // Validate: must be a git worktree (.git dir/file present).
-        let dot_git = path.join(".git");
-        if !dot_git.exists() {
-            return Err(AppError::InvalidRepo {
-                path: path.display().to_string(),
-            });
+        // Validate: must be a git worktree. Accept any path *inside* a
+        // worktree (dropped files / subfolders) by walking up to the nearest
+        // `.git`; the canonical worktree root is what gets opened.
+        let mut cur = path.clone();
+        loop {
+            if cur.join(".git").exists() {
+                break;
+            }
+            match cur.parent() {
+                Some(parent) if parent != cur => cur = parent.to_path_buf(),
+                _ => {
+                    return Err(AppError::InvalidRepo {
+                        path: path.display().to_string(),
+                    })
+                }
+            }
         }
-        let id = RepoId::new(&path);
+        let id = RepoId::new(&cur);
         let mut repos = self.repos.lock().await;
-        repos.insert(id, path);
+        repos.insert(id, cur);
         Ok(id)
     }
 

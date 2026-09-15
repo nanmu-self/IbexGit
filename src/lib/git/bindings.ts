@@ -21,16 +21,35 @@ export const commands = {
 	gitDiff: (id: RepoId_Deserialize, source: string, oldRev: string | null, newRev: string | null, paths: string[] | null) => __TAURI_INVOKE<DiffModel>("git_diff", { id, source, oldRev, newRev, paths }),
 	gitBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_branches", { id }),
 	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
+	workspaceRecents: () => __TAURI_INVOKE<RecentRepo[]>("workspace_recents"),
+	workspaceTouchRecent: (path: string, name: string) => __TAURI_INVOKE<null>("workspace_touch_recent", { path, name }),
+	workspaceForgetRecent: (path: string) => __TAURI_INVOKE<null>("workspace_forget_recent", { path }),
+	workspaceLoadState: (repoPath: string) => __TAURI_INVOKE<{
+	view?: string | null,
+	filter?: string,
+	sidebar_collapsed?: string[],
+	selected_file?: SelectedFile | null,
+} | null>("workspace_load_state", { repoPath }),
+	workspaceSaveState: (repoPath: string, state: RepoUiState_Deserialize) => __TAURI_INVOKE<null>("workspace_save_state", { repoPath, state }),
 };
 
 /** Events */
 export const events = {
+	appOpenPaths: makeEvent<AppOpenPaths>("app-open-paths"),
 	repoChanged: makeEvent<RepoChanged_Deserialize>("repo-changed"),
 };
 
 /* Types */
 /**  Application-wide error type. */
 export type AppError = { code: "io"; source: string; detail: string | null } | { code: "git_command"; command: string; stderr: string; stdout: string; detail: string | null } | { code: "git_version_too_old"; found: string; required: string } | { code: "invalid_repo"; path: string } | { code: "operation_cancelled" } | { code: "credential_cancelled" } | { code: "parse"; message: string } | { code: "internal"; message: string } | { code: "not_implemented"; feature: string };
+
+/**
+ *  Emitted to the frontend when a second app instance was launched with
+ *  repository paths on its command line (single-instance plugin, P2).
+ */
+export type AppOpenPaths = {
+	paths: string[],
+};
 
 export type BranchInfo = {
 	name: string,
@@ -120,6 +139,13 @@ export type FileStatus_Serialize = {
 	conflict: boolean,
 };
 
+export type RecentRepo = {
+	path: string,
+	name: string,
+	/**  Unix timestamp (seconds) of the last open. f64 for JS-safe export. */
+	last_opened: number | null,
+};
+
 /**
  *  Typed event delivered to the frontend after an invalidation cycle
  *  completed and caches were re-read (tauri-specta generated bindings).
@@ -163,6 +189,44 @@ export type RepoId_Deserialize = string;
  *  wire — u64 exceeds JS `Number.MAX_SAFE_INTEGER` and would truncate.
  */
 export type RepoId_Serialize = string;
+
+/**
+ *  Per-repo UI state (PLAN §4.4). The frontend owns the contents; this is a
+ *  typed contract so the wire format stays stable. Extend with new
+ *  `#[serde(default)]` fields only — never remove/rename existing ones.
+ */
+export type RepoUiState = RepoUiState_Serialize | RepoUiState_Deserialize;
+
+/**
+ *  Per-repo UI state (PLAN §4.4). The frontend owns the contents; this is a
+ *  typed contract so the wire format stays stable. Extend with new
+ *  `#[serde(default)]` fields only — never remove/rename existing ones.
+ */
+export type RepoUiState_Deserialize = {
+	view?: string | null,
+	filter?: string,
+	sidebar_collapsed?: string[],
+	selected_file?: SelectedFile | null,
+};
+
+/**
+ *  Per-repo UI state (PLAN §4.4). The frontend owns the contents; this is a
+ *  typed contract so the wire format stays stable. Extend with new
+ *  `#[serde(default)]` fields only — never remove/rename existing ones.
+ */
+export type RepoUiState_Serialize = {
+	view?: string | null,
+	filter?: string,
+	sidebar_collapsed?: string[],
+	selected_file?: SelectedFile | null,
+};
+
+/**  Selected diff target in the workspace view (frontend-owned UI state). */
+export type SelectedFile = {
+	path: string,
+	/**  `worktree` or `staged` — which diff to show for the file. */
+	source: string,
+};
 
 /* Tauri Specta runtime */
 type EventEmit<T> = [T] extends [null] ? () => Promise<void> : (payload: T) => Promise<void>;

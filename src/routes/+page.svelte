@@ -1,136 +1,122 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { commands, normalizeError } from "$lib/git";
-  import { toasts, removeToast } from "$lib/stores/toast";
+  import TitleBar from "$lib/components/layout/TitleBar.svelte";
+  import Toolbar from "$lib/components/layout/Toolbar.svelte";
+  import RepoTabs from "$lib/components/layout/RepoTabs.svelte";
+  import Sidebar from "$lib/components/layout/Sidebar.svelte";
+  import StatusBar from "$lib/components/layout/StatusBar.svelte";
+  import Welcome from "$lib/components/welcome/Welcome.svelte";
+  import WorkspaceView from "$lib/components/workspace/WorkspaceView.svelte";
+  import { EmptyState } from "$lib/components/ui/empty-state";
+  import { PanelResizer } from "$lib/components/ui/panel-resizer";
+  import { Button } from "$lib/components/ui/button";
+  import { settings } from "$lib/stores/settings.svelte";
+  import { repos } from "$lib/stores/repos.svelte";
+  import { onAction } from "$lib/keyboard";
+  import { pickRepo } from "$lib/repo-picker";
+  import { t } from "$lib/i18n";
+  import { showToast } from "$lib/stores/toast";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import History from "@lucide/svelte/icons/history";
+  import Tags from "@lucide/svelte/icons/tags";
+  import CircleAlert from "@lucide/svelte/icons/circle-alert";
 
-  let gitCapabilities = $state<string>("Loading...");
-  let errorMessage = $state<string>("");
-  let isDark = $state(false);
+  let restored = $state(false);
 
-  onMount(async () => {
-    try {
-      const caps = await commands.gitVersion();
-      gitCapabilities = caps;
-    } catch (e) {
-      errorMessage = e instanceof Error ? e.message : String(e);
+  // Session restore (P2 acceptance): reopen last repos once settings are in.
+  $effect(() => {
+    if (settings.ready && !restored) {
+      restored = true;
+      void repos.restoreSession();
     }
   });
 
-  function toggleTheme() {
-    isDark = !isDark;
-    document.documentElement.classList.toggle("dark", isDark);
+  function stepTab(delta: number): void {
+    const list = repos.tabs;
+    if (list.length === 0) return;
+    const idx = list.findIndex((t) => t.id === repos.activeId);
+    const next = list[(idx + delta + list.length) % list.length];
+    repos.activate(next.id);
   }
+
+  $effect(() => {
+    const offs = [
+      onAction("repo.open", () => void pickRepo()),
+      onAction("repo.refresh", () => {
+        const id = repos.activeId;
+        if (id !== null) void repos.refresh(id);
+      }),
+      onAction("view.toggleSidebar", () => void settings.setShowSidebar(!settings.showSidebar)),
+      onAction("view.toggleTheme", () => {
+        const order = ["light", "dark", "system"] as const;
+        const next = order[(order.indexOf(settings.theme) + 1) % order.length];
+        void settings.setTheme(next);
+      }),
+      onAction("repo.nextTab", () => stepTab(1)),
+      onAction("repo.prevTab", () => stepTab(-1)),
+      onAction("app.tasks", () => showToast("info", t("common.comingSoon", { phase: "P3" }))),
+    ];
+    return () => offs.forEach((off) => off());
+  });
+
+  const active = $derived(repos.active);
 </script>
 
-<main class="flex flex-col h-screen">
-  <!-- Top Bar -->
-  <header class="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-    <div class="flex items-center gap-2">
-      <div class="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white font-bold">I</div>
-      <span class="font-semibold text-gray-900 dark:text-gray-100">IbexGit</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <button
-        class="px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
-        onclick={toggleTheme}
-      >
-        {isDark ? "Light" : "Dark"}
-      </button>
-    </div>
-  </header>
-
-  <!-- Content -->
-  <div class="flex-1 flex items-center justify-center p-8 bg-gray-50 dark:bg-gray-950">
-    <div class="max-w-2xl w-full space-y-6">
-      <div class="text-center space-y-2">
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100">IbexGit</h1>
-        <p class="text-gray-600 dark:text-gray-400">Local-first Git client · P0 空壳验证</p>
-      </div>
-
-      <!-- Git Version Card -->
-      <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4 shadow-sm">
-        <h2 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-          Git Capabilities
-        </h2>
-        {#if errorMessage}
-          <div class="text-red-600 dark:text-red-400 text-sm">
-            Failed to load: {errorMessage}
-          </div>
-        {:else}
-          <pre class="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{gitCapabilities}</pre>
-        {/if}
-      </div>
-
-      <!-- Actions -->
-      <div class="flex flex-wrap gap-3">
-        <button
-          class="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          onclick={async () => {
-            try {
-              await commands.greet("P0");
-            } catch (e) {
-              // surfaced as toast
-              normalizeError(e);
-            }
-          }}
-        >
-          Test Greet
-        </button>
-        <button
-          class="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700"
-          onclick={async () => {
-            try {
-              await commands.gitStatus("not-a-repo-id");
-            } catch (e) {
-              // surfaced as toast
-              normalizeError(e);
-            }
-          }}
-        >
-          Test Error Toast
-        </button>
-      </div>
-    </div>
+{#if !settings.ready}
+  <div class="flex h-screen items-center justify-center gap-2 text-sm text-muted-foreground">
+    <LoaderCircle class="size-4 animate-spin" />
+    {t("app.loading")}
   </div>
-
-  <!-- Status Bar -->
-  <footer class="flex items-center justify-between px-4 py-1.5 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400">
-    <span>P0 · Architecture bootstrap</span>
-    <span>No repository open</span>
-  </footer>
-</main>
-
-<!-- Toast Container -->
-<div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
-  {#each $toasts as toast (toast.id)}
-    <div
-      class="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3 shadow-lg min-w-[300px] max-w-md"
-      role="alert"
-    >
-      <div class="flex-1">
-        <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
-          {toast.type === "error" ? "Error" : toast.type === "success" ? "Success" : toast.type}
-        </div>
-        {#if toast.detail}
-          <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{toast.detail}</div>
+{:else if repos.tabs.length === 0}
+  <div class="flex h-screen flex-col overflow-hidden">
+    <TitleBar />
+    <Welcome />
+    <StatusBar />
+  </div>
+{:else}
+  <div class="flex h-screen flex-col overflow-hidden">
+    <TitleBar />
+    <Toolbar />
+    <RepoTabs />
+    <div class="flex min-h-0 flex-1">
+      {#if settings.showSidebar}
+        <Sidebar />
+        <PanelResizer bind:width={settings.sidebarWidth} min={200} max={420} />
+      {/if}
+      <main class="flex min-w-0 flex-1 flex-col">
+        {#if !active || active.phase === "loading"}
+          <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircle class="size-4 animate-spin" />
+            {t("common.loading")}
+          </div>
+        {:else if active.phase === "error"}
+          <EmptyState
+            icon={CircleAlert}
+            title={t("common.openRepoFailed")}
+            hint={active.error ?? ""}
+          >
+            {#snippet action()}
+              <Button variant="outline" size="sm" onclick={() => void repos.refresh(active.id)}>
+                {t("statusbar.refresh")}
+              </Button>
+            {/snippet}
+          </EmptyState>
+        {:else if repos.ui.view === "history"}
+          <EmptyState
+            icon={History}
+            title={t("sidebar.history")}
+            hint={t("sidebar.comingSoon", { phase: "P5" })}
+          />
+        {:else if repos.ui.view === "tags"}
+          <EmptyState
+            icon={Tags}
+            title={t("sidebar.tagsView")}
+            hint={t("sidebar.comingSoon", { phase: "P6" })}
+          />
+        {:else}
+          <WorkspaceView />
         {/if}
-      </div>
-      <button
-        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-        onclick={() => removeToast(toast.id)}
-      >
-        ×
-      </button>
+      </main>
     </div>
-  {/each}
-</div>
-
-<style>
-  /* Dark mode is toggled via class on <html> */
-  :global(html.dark) {
-    color-scheme: dark;
-  }
-  :global(html:not(.dark)) {
-    color-scheme: light;
-  }
-</style>
+    <StatusBar />
+  </div>
+{/if}

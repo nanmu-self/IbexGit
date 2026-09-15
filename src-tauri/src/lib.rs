@@ -13,6 +13,7 @@ pub mod core {
     pub mod runner;
     pub mod task;
     pub mod watcher;
+    pub mod workspace;
 }
 
 /// Single source of truth for the command/event surface exposed to the
@@ -37,8 +38,16 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_diff,
             commands::git_branches,
             commands::git_checkout_branch,
+            commands::workspace::workspace_recents,
+            commands::workspace::workspace_touch_recent,
+            commands::workspace::workspace_forget_recent,
+            commands::workspace::workspace_load_state,
+            commands::workspace::workspace_save_state,
         ])
-        .events(tauri_specta::collect_events![core::watcher::RepoChanged])
+        .events(tauri_specta::collect_events![
+            core::watcher::RepoChanged,
+            commands::workspace::AppOpenPaths,
+        ])
 }
 
 pub fn run() {
@@ -59,6 +68,34 @@ pub fn run() {
     let builder = specta_builder::<tauri::Wry>();
 
     tauri::Builder::default()
+        // Single instance must be registered FIRST (tauri-plugin docs):
+        // the callback runs on the primary instance when a second launch
+        // arrives — focus the window and open any repo paths from argv.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            tracing::info!("second instance launched, argv={:?}", argv);
+            let paths: Vec<String> = argv
+                .iter()
+                .skip(1)
+                .filter(|a| !a.starts_with('-'))
+                .filter(|a| std::path::Path::new(a).is_dir())
+                .cloned()
+                .collect();
+            if !paths.is_empty() {
+                use tauri_specta::Event as _;
+                let event = commands::workspace::AppOpenPaths { paths };
+                if let Err(e) = event.emit(app) {
+                    tracing::warn!("failed to emit AppOpenPaths: {}", e);
+                }
+            }
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
@@ -71,6 +108,17 @@ pub fn run() {
                 )
                 .expect("failed to export typescript bindings");
             builder.mount_events(app);
+
+            // Workspace persistence root (PLAN §4.4): {appData}/workspaces.
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data dir");
+            std::fs::create_dir_all(&data_dir).expect("failed to create app data dir");
+            app.manage(crate::core::workspace::WorkspaceDir(
+                data_dir.join("workspaces"),
+            ));
+
             // Detect git version on startup
             let git_caps = match crate::core::compat::GitCapabilities::detect() {
                 Ok(caps) => {
@@ -96,8 +144,7 @@ pub fn run() {
             // State invalidation system (PLAN §4.3):
             // fs event → classify → debounce(300ms, cap 1s) → invalidate caches
             // → re-read status → emit repo://changed to the frontend.
-            let hub = std::sync::Arc::new(crate::core::watcher::WatcherHub::new());
-            app.manage(hub.clone());
+            let hub = crate::core::watcher::WatcherHub::new();
             if let Some(mut events) = hub.take_receiver() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -121,6 +168,9 @@ pub fn run() {
                     }
                 });
             }
+            // Managed as plain WatcherHub (not Arc) — tauri State lookups are
+            // type-exact, and commands declare `State<WatcherHub>`.
+            app.manage(hub);
 
             #[cfg(debug_assertions)]
             {

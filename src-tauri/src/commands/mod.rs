@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
+pub mod workspace;
+
 /// Return the detected git capabilities as JSON.
 #[tauri::command]
 #[specta::specta]
@@ -35,13 +37,18 @@ pub async fn repo_open(
     repos: State<'_, RepoManager>,
     hub: State<'_, WatcherHub>,
 ) -> Result<(RepoId, String), AppError> {
-    let pb = PathBuf::from(&path);
-    let id = repos.open(pb.clone()).await?;
+    let id = repos.open(PathBuf::from(&path)).await?;
+    // RepoManager::open resolves to the worktree root (accepts any path
+    // inside a worktree); watcher and frontend both use the resolved root.
+    let root = repos
+        .get_path(id)
+        .await
+        .ok_or_else(|| AppError::InvalidRepo { path: path.clone() })?;
     // Start external-change watching (state invalidation system, PLAN §4.3).
-    if let Some(git_dir) = crate::core::watcher::resolve_git_dir(&pb) {
-        hub.add_repo(id, git_dir, pb).await?;
+    if let Some(git_dir) = crate::core::watcher::resolve_git_dir(&root) {
+        hub.add_repo(id, git_dir, root.clone()).await?;
     }
-    Ok((id, path))
+    Ok((id, root.display().to_string()))
 }
 
 #[tauri::command]

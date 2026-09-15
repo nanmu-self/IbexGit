@@ -1,6 +1,7 @@
 import { commands, type RepoId } from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
+import type { RepoUiState } from "./bindings";
 
 // =====================
 // Types — generated from Rust by tauri-specta (ADR-009). `cargo test`
@@ -21,7 +22,10 @@ export type {
   DiffModel,
   DiffSource,
   FileStatus,
+  RecentRepo,
   RepoId,
+  RepoUiState,
+  SelectedFile,
 } from "./bindings";
 
 /**
@@ -107,4 +111,18 @@ export const git = {
   branches: (id: RepoId) => wrap(commands.gitBranches(id)),
   checkoutBranch: (id: RepoId, name: string) =>
     wrap(commands.gitCheckoutBranch(id, name)),
+};
+
+/**
+ * Workspace persistence (PLAN §4.4): recent repositories + per-repo UI
+ * state under `{appData}/workspaces/`.
+ */
+export const workspace = {
+  recents: () => wrap(commands.workspaceRecents()),
+  touchRecent: (path: string, name: string) =>
+    wrap(commands.workspaceTouchRecent(path, name)),
+  forgetRecent: (path: string) => wrap(commands.workspaceForgetRecent(path)),
+  loadState: (repoPath: string) => wrap(commands.workspaceLoadState(repoPath)),
+  saveState: (repoPath: string, state: RepoUiState) =>
+    wrap(commands.workspaceSaveState(repoPath, state)),
 };
