@@ -74,6 +74,7 @@
     switch (a.kind) {
       case "newBranch":
         newBranchValue = "";
+        newBranchStart = a.start ?? "";
         newBranchOpen = true;
         break;
       case "renameBranch":
@@ -90,6 +91,7 @@
         await askDeleteBranch(a.name);
         break;
       case "reset":
+        resetInitialTarget = a.initialTarget ?? "";
         resetOpen = true;
         break;
       case "clean":
@@ -148,13 +150,15 @@
   // ===================== branch =====================
   let newBranchOpen = $state(false);
   let newBranchValue = $state("");
+  /** Optional start point (branch/tag/commit the new branch should point at). */
+  let newBranchStart = $state("");
   let branchBusy = $state(false);
 
   async function submitNewBranch(name: string): Promise<void> {
     if (repoId === null) return;
     branchBusy = true;
     try {
-      await git.createBranch(repoId, name);
+      await git.createBranch(repoId, name, newBranchStart || undefined);
       newBranchOpen = false;
       showToast("success", t("refs.branchCreated", { name }));
       await refreshAll();
@@ -245,6 +249,8 @@
 
   // ===================== reset / clean / backups =====================
   let resetOpen = $state(false);
+  /** Prefilled target (e.g. opened as 撤销提交 from the history context menu). */
+  let resetInitialTarget = $state("");
   let resetBusy = $state(false);
   /** Undo anchors of the most recent reset (one-click undo). */
   let lastReset = $state<{ backupRef: string; mode: string; snapshotId: string | null } | null>(
@@ -570,6 +576,9 @@
   bind:open={newBranchOpen}
   bind:value={newBranchValue}
   title={t("refs.newBranch.title")}
+  description={newBranchStart
+    ? t("refs.newBranch.startDesc", { start: newBranchStart })
+    : ""}
   label={t("history.branchName")}
   placeholder="feature/…"
   busy={branchBusy}
@@ -610,6 +619,7 @@
 <!-- reset / clean / backups -->
 <ResetDialog
   bind:open={resetOpen}
+  initialTarget={resetInitialTarget}
   branches={active?.branches ?? []}
   busy={resetBusy}
   onexecute={executeReset}

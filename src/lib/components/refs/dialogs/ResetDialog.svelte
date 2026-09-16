@@ -10,11 +10,14 @@
   let {
     open = $bindable(false),
     branches = [],
+    initialTarget = "",
     busy = false,
     onexecute,
   }: {
     open?: boolean;
     branches?: BranchInfo[];
+    /** Prefilled target rev (e.g. a commit hash from the history context menu). */
+    initialTarget?: string;
     busy?: boolean;
     /** Returns a promise; the dialog closes only on success. */
     onexecute: (mode: string, target: string) => Promise<void>;
@@ -27,7 +30,7 @@
   $effect(() => {
     if (open) {
       mode = "mixed";
-      target = "";
+      target = initialTarget;
       error = null;
     }
   });

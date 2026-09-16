@@ -9,7 +9,7 @@ export type RefAction =
   | { kind: "renameBranch"; name: string }
   | { kind: "setUpstream"; branch: string; upstream?: string | null }
   | { kind: "deleteBranch"; name: string }
-  | { kind: "reset" }
+  | { kind: "reset"; initialTarget?: string }
   | { kind: "clean" }
   | { kind: "backups" }
   | { kind: "newTag"; target?: string }

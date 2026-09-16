@@ -12,6 +12,9 @@
   import GraphLane from "./GraphLane.svelte";
   import RefBadges from "./RefBadges.svelte";
   import CommitDetailPanel from "./CommitDetailPanel.svelte";
+  import CommitContextMenu, {
+    type CommitContextTarget,
+  } from "./CommitContextMenu.svelte";
   import { t } from "$lib/i18n";
   import {
     git,
@@ -20,6 +23,8 @@
     type GraphRow,
   } from "$lib/git";
   import { repos } from "$lib/stores/repos.svelte";
+  import { loadRefsData } from "$lib/stores/refsdata.svelte";
+  import { requestRefAction } from "$lib/stores/refbus";
   import { settings } from "$lib/stores/settings.svelte";
   import { showToast } from "$lib/stores/toast";
   import Search from "@lucide/svelte/icons/search";
@@ -46,6 +51,21 @@
   // ---- detail ----
   let detailOpen = $state(false);
   let detailResizing = $state(false);
+  /** List+detail row width (measured) → dynamic detail-panel cap below. */
+  let listDetailRowWidth = $state(0);
+  /** Detail panel may take the row minus a ~240px list floor, hard-capped
+   *  at 1080 so ultrawide windows stay sane. */
+  const detailMax = $derived(
+    Math.max(280, Math.min(1080, listDetailRowWidth - 244)),
+  );
+  // Keep the stored width within the current cap (also re-clamps after a
+  // window shrink; persistence happens on the next drag via onCommit).
+  $effect(() => {
+    if (detailMax < 280) return;
+    if (settings.historyDetailWidth > detailMax) {
+      settings.historyDetailWidth = detailMax;
+    }
+  });
 
   // ---- filters ----
   let searchText = $state("");
@@ -180,15 +200,24 @@
   });
 
   let dialogMode = $state<"cherry-pick" | "revert" | "squash" | null>(null);
+  /** Commits the open dialog operates on (selection or a context-menu target). */
+  let dialogHashes = $state<string[]>([]);
+  /** Whether the dialog was opened from the multi-select action bar. */
+  let dialogFromMulti = $state(false);
   let squashMessage = $state("");
   let opBusy = $state(false);
 
-  function openDialog(mode: "cherry-pick" | "revert" | "squash"): void {
+  function openDialog(
+    mode: "cherry-pick" | "revert" | "squash",
+    hashes?: string[],
+  ): void {
     if (mode === "squash" && !squashEligible) return;
     dialogMode = mode;
+    dialogFromMulti = hashes === undefined;
+    dialogHashes = hashes ?? multi;
     if (mode === "squash") {
       // Default message: newest subject, remaining subjects as the body.
-      const [head, ...rest] = [...multi].reverse().map(
+      const [head, ...rest] = [...dialogHashes].reverse().map(
         (h) => rows.find((r) => r.commit.hash === h)?.commit.message ?? h,
       );
       squashMessage = rest.length > 0 ? `${head}\n\n${rest.join("\n")}` : head;
@@ -205,17 +234,19 @@
     opBusy = true;
     try {
       if (dialogMode === "cherry-pick") {
-        await git.cherryPick(id, [...multi].reverse()); // oldest first
-        showToast("success", t("history.cherryPickDone", { n: multi.length }));
+        await git.cherryPick(id, [...dialogHashes].reverse()); // oldest first
+        showToast("success", t("history.cherryPickDone", { n: dialogHashes.length }));
       } else if (dialogMode === "revert") {
-        await git.revert(id, [...multi]); // newest first
-        showToast("success", t("history.revertDone", { n: multi.length }));
+        await git.revert(id, [...dialogHashes]); // newest first
+        showToast("success", t("history.revertDone", { n: dialogHashes.length }));
       } else {
-        await git.squash(id, [...multi], squashMessage);
-        showToast("success", t("history.squashDone", { n: multi.length }));
+        await git.squash(id, [...dialogHashes], squashMessage);
+        showToast("success", t("history.squashDone", { n: dialogHashes.length }));
       }
       dialogMode = null;
-      multi = [];
+      // Context-menu operations run on their own commit list and must not
+      // clobber an unrelated multi-selection.
+      if (dialogFromMulti) multi = [];
       await repos.refresh(id);
     } catch (e) {
       normalizeError(e);
@@ -226,17 +257,17 @@
 
   const dialogCommits = $derived.by<GraphRow[]>(() => {
     if (!dialogMode) return [];
-    return multi
+    return dialogHashes
       .map((h) => rows.find((r) => r.commit.hash === h))
       .filter((r): r is GraphRow => r !== undefined);
   });
 
   const dialogTitle = $derived(
     dialogMode === "cherry-pick"
-      ? t("history.cherryPickTitle", { n: multi.length })
+      ? t("history.cherryPickTitle", { n: dialogHashes.length })
       : dialogMode === "revert"
-        ? t("history.revertTitle", { n: multi.length })
-        : t("history.squashTitle", { n: multi.length }),
+        ? t("history.revertTitle", { n: dialogHashes.length })
+        : t("history.squashTitle", { n: dialogHashes.length }),
   );
 
   // ---- detached HEAD guidance ----
@@ -261,6 +292,50 @@
     } finally {
       branchBusy = false;
     }
+  }
+
+  // ---- commit context menu (single-commit operations, P5 增补) ----
+  let ctxTarget = $state<CommitContextTarget | null>(null);
+
+  function openCtx(row: GraphRow, e: MouseEvent): void {
+    e.preventDefault();
+    ctxTarget = { row, x: e.clientX, y: e.clientY };
+  }
+
+  async function ctxCheckout(row: GraphRow): Promise<void> {
+    const id = repos.activeId;
+    if (!id) return;
+    try {
+      // Engine checkout_branch passes the target straight to `git checkout`,
+      // so a hash yields the detached-HEAD checkout (same as reflog jump).
+      await git.checkoutBranch(id, row.commit.hash);
+      showToast("success", t("sidebar.checkoutDone", { name: row.commit.short_hash }));
+      await repos.refresh(id);
+      await loadRefsData(id);
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  function ctxRevert(row: GraphRow): void {
+    openDialog("revert", [row.commit.hash]);
+  }
+
+  /** 撤销提交 = reset current branch to this commit (P6 ResetDialog prefilled). */
+  function ctxUndo(row: GraphRow): void {
+    requestRefAction({ kind: "reset", initialTarget: row.commit.hash });
+  }
+
+  function ctxBranch(row: GraphRow): void {
+    requestRefAction({ kind: "newBranch", start: row.commit.hash });
+  }
+
+  function ctxTag(row: GraphRow): void {
+    requestRefAction({ kind: "newTag", target: row.commit.hash });
+  }
+
+  function ctxCherry(row: GraphRow): void {
+    openDialog("cherry-pick", [row.commit.hash]);
   }
 
   // ---- misc ----
@@ -362,7 +437,7 @@
     {/if}
 
     <!-- list + detail -->
-    <div class="flex min-h-0 flex-1">
+    <div class="flex min-h-0 flex-1" bind:clientWidth={listDetailRowWidth}>
       <!-- flex-col so VirtualList's min-h-0 flex-1 actually constrains its height -->
       <div class="flex min-h-0 min-w-0 flex-1 flex-col">
         {#if rows.length === 0 && !loading}
@@ -388,6 +463,7 @@
                 role="button"
                 tabindex="0"
                 onkeydown={(e) => e.key === "Enter" && plainClick(row)}
+                oncontextmenu={(e) => openCtx(row, e)}
               >
                 <GraphLane
                   row={row}
@@ -421,8 +497,8 @@
         <PanelResizer
           bind:width={settings.historyDetailWidth}
           side="right"
-          min={280}
-          max={720}
+          min={200}
+          max={detailMax}
           bind:dragging={detailResizing}
           onCommit={(w) => void settings.setHistoryDetailWidth(w)}
         />
@@ -517,4 +593,16 @@
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
+
+  <!-- commit context menu -->
+  <CommitContextMenu
+    target={ctxTarget}
+    onclose={() => (ctxTarget = null)}
+    oncheckout={(row) => void ctxCheckout(row)}
+    onrevert={ctxRevert}
+    onundo={ctxUndo}
+    onbranch={ctxBranch}
+    ontag={ctxTag}
+    oncherrypick={ctxCherry}
+  />
 {/if}
