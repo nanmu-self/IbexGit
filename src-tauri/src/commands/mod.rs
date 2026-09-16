@@ -1,8 +1,9 @@
 use crate::core::compat::GitCapabilities;
+use crate::core::engine::conflict::{ConflictModel, ConflictSummary};
 use crate::core::engine::patch::{self, LineOp};
 use crate::core::engine::{
     BackupRef, CommitDetail, CommitInfo, DiffOptions, DiffSource, FileContent, GraphFilter,
-    GraphPage, LineSelection, ResetUndo,
+    GraphPage, LineSelection, OperationState, ResetUndo,
 };
 use crate::core::error::AppError;
 use crate::core::recovery::{DiscardScope, DiscardTarget, RecoveryEntry, RecoveryManager};
@@ -1432,6 +1433,154 @@ pub async fn git_backup_delete(
     let root = resolve(&repos, id).await?;
     recovery
         .delete_backups(&*repos.engine(), std::path::Path::new(&root), &names)
+        .await
+}
+
+// =====================
+// P8: conflicts & operation state
+// =====================
+
+/// All conflicted paths with lightweight classification (conflict file list).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_conflict_list(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<ConflictSummary>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().conflict_list(&path).await
+}
+
+/// Full model for one conflicted path (editor input).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_conflict_model(
+    id: RepoId,
+    path: String,
+    repos: State<'_, RepoManager>,
+) -> Result<ConflictModel, AppError> {
+    let _permit = repos.read_permit().await?;
+    let root = resolve(&repos, id).await?;
+    repos.engine().conflict_model(&root, &path).await
+}
+
+/// Write the resolved document back and stage the path. Rejects text that
+/// still contains conflict markers (Rust is the single marker authority).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_resolve_conflict_text(
+    id: RepoId,
+    path: String,
+    text: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    if text.len() > 32 * 1024 * 1024 {
+        return Err(AppError::parse("resolved document too large to write back"));
+    }
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .resolve_conflict_text(&root, &path, &text)
+        .await
+}
+
+/// Resolve one conflict by side: `ours` / `theirs` (stage blob back into
+/// the worktree + `git add`) or `delete` (`git rm -f`).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_resolve_conflict_side(
+    id: RepoId,
+    path: String,
+    action: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    match action.as_str() {
+        "ours" | "theirs" => {
+            repos
+                .engine()
+                .resolve_conflict_keep(&root, &path, &action)
+                .await
+        }
+        "delete" => repos.engine().resolve_conflict_delete(&root, &path).await,
+        other => Err(AppError::parse(format!(
+            "unknown conflict resolution {other:?}"
+        ))),
+    }
+}
+
+/// Detect the in-progress operation (merge/rebase/cherry-pick/…), if any.
+/// The frontend polls it alongside status for the guidance banner.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_operation_state(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Option<OperationState>, AppError> {
+    let path = resolve(&repos, id).await?;
+    repos.engine().operation_state(&path).await
+}
+
+/// Abort the in-progress operation (merge --abort / rebase --abort / …).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_operation_abort(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().operation_abort(&path).await
+}
+
+/// Continue the in-progress operation after resolutions are staged.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_operation_continue(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().operation_continue(&path).await
+}
+
+/// Skip the current commit of a rebase/cherry-pick/revert sequence.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_operation_skip(id: RepoId, repos: State<'_, RepoManager>) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos.engine().operation_skip(&path).await
+}
+
+/// Open an external merge tool for one path. `tool` = git's built-in name
+/// (meld/kdiff3/…); `cmd` = custom command template (uses $MERGED etc.) —
+/// both configured via `-c` only, nothing persisted. The tool's exit code
+/// is trusted and the run may take minutes (GUI wait).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_mergetool(
+    id: RepoId,
+    path: String,
+    tool: Option<String>,
+    cmd: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .mergetool(&root, &path, tool.as_deref(), cmd.as_deref())
         .await
 }
 

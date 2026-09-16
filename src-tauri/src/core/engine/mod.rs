@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+pub mod conflict;
 pub mod parse;
 pub mod patch;
 pub mod untracked;
@@ -330,6 +331,46 @@ pub struct CloneProgress {
     pub message: String,
 }
 
+/// In-progress repository operation (P8 仓库状态头: merge/rebase/…).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationKind {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    /// `git am` residue (rebase-apply without rebase files).
+    Apply,
+    Bisect,
+}
+
+impl OperationKind {
+    /// `continue`/`abort` subcommand family; `None` = no such verb.
+    pub fn verb(self) -> Option<&'static str> {
+        match self {
+            OperationKind::Merge => Some("merge"),
+            OperationKind::Rebase => Some("rebase"),
+            OperationKind::CherryPick => Some("cherry-pick"),
+            OperationKind::Revert => Some("revert"),
+            OperationKind::Apply => Some("am"),
+            OperationKind::Bisect => Some("bisect"),
+        }
+    }
+}
+
+/// What the frontend needs for the operation guidance banner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct OperationState {
+    pub kind: OperationKind,
+    /// Head being merged/rebased onto (full sha; frontend truncates).
+    pub onto: Option<String>,
+    /// 1-based step within the sequence (rebase/cherry-pick sequences).
+    pub step: Option<u32>,
+    pub total: Option<u32>,
+    /// `MERGE_MSG` (merge/cherry-pick/revert) for the commit prefill.
+    pub message: Option<String>,
+}
+
 // =====================
 // GitEngine trait
 // =====================
@@ -606,6 +647,55 @@ pub trait GitEngine: Send + Sync {
 
     // Blame (P9)
     async fn blame(&self, repo: &str, path: &str) -> Result<Vec<ReflogEntry>, AppError>;
+
+    // =====================
+    // Conflicts & operation state (P8)
+    // =====================
+    /// All conflicted paths with lightweight classification (conflict file
+    /// list: unmerged status, block counts, type badges).
+    async fn conflict_list(&self, repo: &str) -> Result<Vec<conflict::ConflictSummary>, AppError>;
+    /// Full model for one conflicted path (editor input).
+    async fn conflict_model(
+        &self,
+        repo: &str,
+        path: &str,
+    ) -> Result<conflict::ConflictModel, AppError>;
+    /// Write the resolved document back and stage the path (`git add`).
+    /// Rejects text that still contains conflict markers.
+    async fn resolve_conflict_text(
+        &self,
+        repo: &str,
+        path: &str,
+        text: &str,
+    ) -> Result<(), AppError>;
+    /// Keep one side of a conflict in the worktree and stage it
+    /// (`side`: `ours` = stage 2, `theirs` = stage 3; sha-based blob write).
+    async fn resolve_conflict_keep(
+        &self,
+        repo: &str,
+        path: &str,
+        side: &str,
+    ) -> Result<(), AppError>;
+    /// Drop the conflicted path (`git rm -f`); for DirectoryFile conflicts
+    /// only the index entry is removed (`--cached`, the directory stays).
+    async fn resolve_conflict_delete(&self, repo: &str, path: &str) -> Result<(), AppError>;
+    /// Detect the in-progress operation (MERGE_HEAD / rebase-merge / …).
+    async fn operation_state(&self, repo: &str) -> Result<Option<OperationState>, AppError>;
+    /// Abort the in-progress operation (`merge --abort`, `rebase --abort`, …).
+    async fn operation_abort(&self, repo: &str) -> Result<(), AppError>;
+    /// Continue the in-progress operation after resolutions are staged.
+    async fn operation_continue(&self, repo: &str) -> Result<(), AppError>;
+    /// Skip the current commit of a rebase/cherry-pick/revert sequence.
+    async fn operation_skip(&self, repo: &str) -> Result<(), AppError>;
+    /// Open an external merge tool for one path (`git mergetool` with the
+    /// tool configured via `-c`, prompts disabled, exit code trusted).
+    async fn mergetool(
+        &self,
+        repo: &str,
+        path: &str,
+        tool: Option<&str>,
+        cmd: Option<&str>,
+    ) -> Result<(), AppError>;
 }
 
 pub mod cli;

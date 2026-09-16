@@ -178,6 +178,47 @@ export const commands = {
 	gitBackupList: (id: RepoId_Deserialize) => __TAURI_INVOKE<BackupRef[]>("git_backup_list", { id }),
 	gitBackupDelete: (id: RepoId_Deserialize, names: string[]) => __TAURI_INVOKE<null>("git_backup_delete", { id, names }),
 	/**
+	 *  Open an external merge tool for one path. `tool` = git's built-in name
+	 *  (meld/kdiff3/…); `cmd` = custom command template (uses $MERGED etc.) —
+	 *  both configured via `-c` only, nothing persisted. The tool's exit code
+	 *  is trusted and the run may take minutes (GUI wait).
+	 */
+	gitMergetool: (id: RepoId_Deserialize, path: string, tool: string | null, cmd: string | null) => __TAURI_INVOKE<null>("git_mergetool", { id, path, tool, cmd }),
+	/**  All conflicted paths with lightweight classification (conflict file list). */
+	gitConflictList: (id: RepoId_Deserialize) => __TAURI_INVOKE<ConflictSummary[]>("git_conflict_list", { id }),
+	/**  Full model for one conflicted path (editor input). */
+	gitConflictModel: (id: RepoId_Deserialize, path: string) => __TAURI_INVOKE<ConflictModel>("git_conflict_model", { id, path }),
+	/**
+	 *  Write the resolved document back and stage the path. Rejects text that
+	 *  still contains conflict markers (Rust is the single marker authority).
+	 */
+	gitResolveConflictText: (id: RepoId_Deserialize, path: string, text: string) => __TAURI_INVOKE<null>("git_resolve_conflict_text", { id, path, text }),
+	/**
+	 *  Resolve one conflict by side: `ours` / `theirs` (stage blob back into
+	 *  the worktree + `git add`) or `delete` (`git rm -f`).
+	 */
+	gitResolveConflictSide: (id: RepoId_Deserialize, path: string, action: string) => __TAURI_INVOKE<null>("git_resolve_conflict_side", { id, path, action }),
+	/**
+	 *  Detect the in-progress operation (merge/rebase/cherry-pick/…), if any.
+	 *  The frontend polls it alongside status for the guidance banner.
+	 */
+	gitOperationState: (id: RepoId_Deserialize) => __TAURI_INVOKE<{
+	kind: OperationKind,
+	/**  Head being merged/rebased onto (full sha; frontend truncates). */
+	onto: string | null,
+	/**  1-based step within the sequence (rebase/cherry-pick sequences). */
+	step: number | null,
+	total: number | null,
+	/**  `MERGE_MSG` (merge/cherry-pick/revert) for the commit prefill. */
+	message: string | null,
+} | null>("git_operation_state", { id }),
+	/**  Abort the in-progress operation (merge --abort / rebase --abort / …). */
+	gitOperationAbort: (id: RepoId_Deserialize) => __TAURI_INVOKE<null>("git_operation_abort", { id }),
+	/**  Continue the in-progress operation after resolutions are staged. */
+	gitOperationContinue: (id: RepoId_Deserialize) => __TAURI_INVOKE<null>("git_operation_continue", { id }),
+	/**  Skip the current commit of a rebase/cherry-pick/revert sequence. */
+	gitOperationSkip: (id: RepoId_Deserialize) => __TAURI_INVOKE<null>("git_operation_skip", { id }),
+	/**
 	 *  Parse a diff for the given source/paths into a [`DiffModel`], cache it in
 	 *  the RepoManager session and return it with its cache id.
 	 * 
@@ -372,6 +413,109 @@ export type CommitResult = {
 	short_hash: string,
 	message: string,
 };
+
+/**
+ *  One conflict region of the worktree text. All fields are 0-based line
+ *  indexes; `*_end` is exclusive.
+ */
+export type ConflictBlock = {
+	/**  Line of the `<<<<<<<` marker. */
+	start: number,
+	/**  First content line of the current (ours) side. */
+	current_start: number,
+	/**  One past the last content line of the current side. */
+	current_end: number,
+	/**  Lines of the diff3 base section (`|||||||`), when present. */
+	base_start: number | null,
+	base_end: number | null,
+	/**  First content line of the incoming (theirs) side. */
+	incoming_start: number,
+	/**  One past the last incoming line (equals `end`). */
+	incoming_end: number,
+	/**  Line of the `>>>>>>>` marker. */
+	end: number,
+};
+
+/**  Full model for one conflicted path (editor input). */
+export type ConflictModel = {
+	path: string,
+	code: string,
+	conflict_type: ConflictType,
+	block_count: number,
+	binary: boolean,
+	oversized: boolean,
+	directory: boolean,
+	submodule: boolean,
+	editable: boolean,
+	/**  Stage availability (base = stage 1, current = stage 2, incoming = 3). */
+	has_base: boolean,
+	has_current: boolean,
+	has_incoming: boolean,
+	/**
+	 *  Worktree document the editor opens — git's marker text as-is.
+	 *  `None` when unreadable / not UTF-8 / oversized.
+	 */
+	worktree_text: string | null,
+	/**
+	 *  The worktree file uses CRLF line endings; the editor must convert
+	 *  (CodeMirror normalizes to LF) and the resolved text is converted
+	 *  back before writing.
+	 */
+	crlf: boolean,
+	base_text: string | null,
+	current_text: string | null,
+	incoming_text: string | null,
+	blocks: ConflictBlock[],
+};
+
+/**  Lightweight per-path conflict info for the conflict file list. */
+export type ConflictSummary = {
+	path: string,
+	/**  XY unmerged code from the stage set (UU/AA/AU/UA/DU/UD). */
+	code: string,
+	conflict_type: ConflictType,
+	/**  Number of parsed conflict blocks in the worktree text. */
+	block_count: number,
+	binary: boolean,
+	/**  Any side/worktree exceeds [`MAX_SIDE_BYTES`]. */
+	oversized: boolean,
+	/**  Worktree path is a directory (DirectoryFile conflict). */
+	directory: boolean,
+	/**  Stage mode is 160000 (submodule pointer conflict). */
+	submodule: boolean,
+	/**  Whether the inline editor can open (text, sized, not binary/dir/sub). */
+	editable: boolean,
+};
+
+/**  Model-level conflict classification (PLAN P8: UI 据此路由). */
+export type ConflictType = 
+/**  Both sides modified a text file — the inline conflict editor. */
+"content" | 
+/**
+ *  Deleted on one side, modified on the other (v1 also covers
+ *  rename/delete: the resolution actions are equivalent).
+ */
+"delete_modify" | 
+/**  Both sides added the file (no base or one-sided add). */
+"add_add" | 
+/**
+ *  rename/rename(1to2): both sides renamed the same base path to
+ *  different names (the two resulting paths are detected as a pair).
+ *  v1 resolution is per-path keep/delete (选边).
+ */
+"rename" | 
+/**
+ *  Kept for wire stability; v1 folds rename/delete into
+ *  [`ConflictType::DeleteModify`] since keep/delete resolves both.
+ */
+"rename_delete" | 
+/**  NUL byte on a relevant side — no editing, choose a side. */
+"binary" | 
+/**
+ *  The path is a file in one side's history and a directory in the
+ *  worktree — choose-side only.
+ */
+"directory_file";
 
 /**  凭据管理页条目（凭据索引，不含机密）。 */
 export type CredentialEntry = CredentialEntry_Serialize | CredentialEntry_Deserialize;
@@ -648,6 +792,23 @@ export type NetConfig = {
 	proxy_mode: string,
 	proxy_url: string | null,
 	ssh_key_path: string | null,
+};
+
+/**  In-progress repository operation (P8 仓库状态头: merge/rebase/…). */
+export type OperationKind = "merge" | "rebase" | "cherry_pick" | "revert" | 
+/**  `git am` residue (rebase-apply without rebase files). */
+"apply" | "bisect";
+
+/**  What the frontend needs for the operation guidance banner. */
+export type OperationState = {
+	kind: OperationKind,
+	/**  Head being merged/rebased onto (full sha; frontend truncates). */
+	onto: string | null,
+	/**  1-based step within the sequence (rebase/cherry-pick sequences). */
+	step: number | null,
+	total: number | null,
+	/**  `MERGE_MSG` (merge/cherry-pick/revert) for the commit prefill. */
+	message: string | null,
 };
 
 export type PullResult = {

@@ -1,5 +1,5 @@
 use crate::core::engine::{
-    self, parse, CloneOptions, DiffModel, DiffOptions, DiffSource, FileContent,
+    self, conflict, parse, CloneOptions, DiffModel, DiffOptions, DiffSource, FileContent,
 };
 use crate::core::error::AppError;
 use crate::core::runner::{CancelToken, GitProcessRunner, ProcessResult, StdinMode};
@@ -121,6 +121,183 @@ impl CliEngine {
             )),
             None => Err(AppError::internal("git process terminated by signal")),
         }
+    }
+
+    // =====================
+    // P8 internals: unmerged index + stage blobs + worktree reads
+    // =====================
+
+    /// All unmerged index records (`git ls-files -u -z`), first-seen order.
+    async fn unmerged_records(&self, repo: &str) -> Result<Vec<engine::IndexEntry>, AppError> {
+        let res = self
+            .run(
+                ["-C", repo, "ls-files", "-u", "-z"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_ls_files(&res.stdout))
+    }
+
+    /// Group unmerged records by path (insertion order preserved).
+    fn group_unmerged(
+        records: &[engine::IndexEntry],
+    ) -> Vec<(String, Vec<(u32, engine::IndexEntry)>)> {
+        let mut groups: Vec<(String, Vec<(u32, engine::IndexEntry)>)> = Vec::new();
+        for rec in records {
+            match groups.iter_mut().find(|(p, _)| *p == rec.path) {
+                Some((_, stages)) => stages.push((rec.stage, rec.clone())),
+                None => groups.push((rec.path.clone(), vec![(rec.stage, rec.clone())])),
+            }
+        }
+        groups
+    }
+
+    /// Blob contents for many shas in one spawn (`cat-file --batch`):
+    /// missing/non-blob objects and oversized blobs come back as `None`.
+    async fn batch_blobs(
+        &self,
+        repo: &str,
+        shas: &[&str],
+    ) -> Result<Vec<Option<Vec<u8>>>, AppError> {
+        if shas.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut input = String::new();
+        for s in shas {
+            input.push_str(s);
+            input.push('\n');
+        }
+        let res = self
+            .runner
+            .run_raw(
+                &self.git_path,
+                &["-C", repo, "cat-file", "--batch"],
+                StdinMode::Feed,
+                Some(input.as_bytes()),
+                Some(60),
+                None,
+            )
+            .await?;
+        if res.exit_code != Some(0) {
+            return Err(AppError::git_command(
+                "git cat-file --batch",
+                res.stderr,
+                String::new(),
+            ));
+        }
+        // Parse the batch stream: "<sha> blob <size>\n<bytes>\n" per object;
+        // absent objects produce "<sha> missing\n".
+        let mut out = Vec::with_capacity(shas.len());
+        let mut pos = 0usize;
+        let buf = &res.stdout;
+        for _ in 0..shas.len() {
+            let Some(nl) = buf[pos..].iter().position(|&b| b == b'\n') else {
+                break;
+            };
+            let header = String::from_utf8_lossy(&buf[pos..pos + nl]).to_string();
+            pos += nl + 1;
+            let mut it = header.split_whitespace();
+            let sha = it.next().unwrap_or("");
+            let ty = it.next().unwrap_or("");
+            let size: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            if ty != "blob" || size == 0 {
+                out.push((sha.to_string(), None));
+                continue;
+            }
+            if pos + size > buf.len() {
+                break; // truncated stream: stop, remaining = None
+            }
+            let data = buf[pos..pos + size].to_vec();
+            pos += size + 1; // trailing LF after the payload
+            out.push((
+                sha.to_string(),
+                (data.len() as u64 <= conflict::MAX_SIDE_BYTES).then_some(data),
+            ));
+        }
+        // Realign with the requested order (batch echoes input order, but
+        // be defensive about short streams).
+        Ok(shas
+            .iter()
+            .map(|s| {
+                out.iter()
+                    .find(|(echo, _)| echo == *s)
+                    .and_then(|(_, b)| b.clone())
+            })
+            .collect())
+    }
+
+    /// `true` when the plain path under a git `~<label>` conflict suffix is
+    /// a directory in the worktree (file/directory conflicts).
+    fn has_dir_at_base_path(root: &str, path: &str) -> bool {
+        let Some(pos) = path.rfind('~') else {
+            return false;
+        };
+        let base = &path[..pos];
+        if base.is_empty() {
+            return false;
+        }
+        safe_join(root, base).map(|p| p.is_dir()).unwrap_or(false)
+    }
+
+    /// Worktree state of one path + capped bytes (`None` unless Ok).
+    fn worktree_read(root: &str, path: &str) -> (conflict::WorktreeState, Option<Vec<u8>>) {
+        let Ok(abs) = safe_join(root, path) else {
+            return (conflict::WorktreeState::Missing, None);
+        };
+        match std::fs::metadata(&abs) {
+            Ok(m) if m.is_dir() => (conflict::WorktreeState::Directory, None),
+            Ok(m) => {
+                if m.len() > conflict::MAX_SIDE_BYTES {
+                    return (conflict::WorktreeState::Oversized, None);
+                }
+                match std::fs::read(&abs) {
+                    Ok(b) => (conflict::WorktreeState::Ok, Some(b)),
+                    Err(_) => (conflict::WorktreeState::Missing, None),
+                }
+            }
+            Err(_) => (conflict::WorktreeState::Missing, None),
+        }
+    }
+
+    /// Classification for every unmerged path (shared by list + model).
+    async fn all_conflict_models(
+        &self,
+        repo: &str,
+    ) -> Result<Vec<conflict::ConflictModel>, AppError> {
+        let records = self.unmerged_records(repo).await?;
+        let groups = Self::group_unmerged(&records);
+        if groups.is_empty() {
+            return Ok(Vec::new());
+        }
+        // One batch read for every referenced stage blob.
+        let shas: Vec<&str> = groups
+            .iter()
+            .flat_map(|(_, stages)| stages.iter().map(|(_, e)| e.sha.as_str()))
+            .collect();
+        let blobs = self.batch_blobs(repo, &shas).await?;
+        let mut it = blobs.into_iter();
+        let mut out = Vec::with_capacity(groups.len());
+        for (path, stages) in &groups {
+            let sides: Vec<(u32, Option<Vec<u8>>)> = stages
+                .iter()
+                .map(|(s, _)| (*s, it.next().flatten()))
+                .collect();
+            let (state, worktree_bytes) = Self::worktree_read(repo, path);
+            let sibling_directory = Self::has_dir_at_base_path(repo, path);
+            out.push(conflict::build_model(
+                path,
+                &records,
+                stages,
+                state,
+                worktree_bytes.as_deref(),
+                sibling_directory,
+                &sides,
+            ));
+        }
+        Ok(out)
     }
 }
 
@@ -319,6 +496,9 @@ impl engine::GitEngine for CliEngine {
         if no_verify {
             args.push("--no-verify");
         }
+        // Match git's interactive cleanup: comment lines (e.g. the
+        // "# Conflicts:" block pre-filled from MERGE_MSG, P8) are stripped.
+        args.push("--cleanup=strip");
         args.push("-m");
         args.push(message);
 
@@ -1215,9 +1395,246 @@ impl engine::GitEngine for CliEngine {
     }
 
     async fn blame(&self, repo: &str, _path: &str) -> Result<Vec<engine::ReflogEntry>, AppError> {
-        // Blame lands in P4 (own BlameLine type); placeholder until then.
+        // Blame lands in P9 (own BlameLine type); placeholder until then.
         let _ = repo;
         Err(AppError::not_implemented("blame"))
+    }
+
+    // =====================
+    // P8: conflicts & operation state
+    // =====================
+
+    async fn conflict_list(&self, repo: &str) -> Result<Vec<conflict::ConflictSummary>, AppError> {
+        let models = self.all_conflict_models(repo).await?;
+        Ok(models
+            .iter()
+            .map(|m| conflict::ConflictSummary {
+                path: m.path.clone(),
+                code: m.code.clone(),
+                conflict_type: m.conflict_type,
+                block_count: m.block_count,
+                binary: m.binary,
+                oversized: m.oversized,
+                directory: m.directory,
+                submodule: m.submodule,
+                editable: m.editable,
+            })
+            .collect())
+    }
+
+    async fn conflict_model(
+        &self,
+        repo: &str,
+        path: &str,
+    ) -> Result<conflict::ConflictModel, AppError> {
+        let all = self.all_conflict_models(repo).await?;
+        all.into_iter()
+            .find(|m| m.path == path)
+            .ok_or_else(|| AppError::parse(format!("path {path:?} has no unmerged index entry")))
+    }
+
+    async fn resolve_conflict_text(
+        &self,
+        repo: &str,
+        path: &str,
+        text: &str,
+    ) -> Result<(), AppError> {
+        conflict::validate_resolved(text)?;
+        let abs = safe_join(repo, path)?;
+        if abs.is_dir() {
+            return Err(AppError::parse(format!(
+                "cannot write {path:?}: the worktree path is a directory"
+            )));
+        }
+        clear_readonly(&abs);
+        std::fs::write(&abs, text.as_bytes())?;
+        self.stage(repo, &[path.to_string()]).await
+    }
+
+    async fn resolve_conflict_keep(
+        &self,
+        repo: &str,
+        path: &str,
+        side: &str,
+    ) -> Result<(), AppError> {
+        let stage_no = match side {
+            "ours" => 2u32,
+            "theirs" => 3,
+            other => return Err(AppError::parse(format!("unknown conflict side {other:?}"))),
+        };
+        let records = self.unmerged_records(repo).await?;
+        let stages = Self::group_unmerged(&records)
+            .into_iter()
+            .find(|(p, _)| p == path)
+            .map(|(_, s)| s)
+            .ok_or_else(|| AppError::parse(format!("path {path:?} has no unmerged index entry")))?;
+        let entry = stages.iter().find(|(s, _)| *s == stage_no).ok_or_else(|| {
+            AppError::parse(format!(
+                "path {path:?} has no {side} (stage {stage_no}) entry"
+            ))
+        })?;
+        let bytes = self
+            .batch_blobs(repo, &[entry.1.sha.as_str()])
+            .await?
+            .into_iter()
+            .next()
+            .flatten()
+            .ok_or_else(|| AppError::parse(format!("{side} side of {path:?} is unavailable")))?;
+
+        // DirectoryFile: the directory occupying the path must go before a
+        // file can be written back (frontend confirms the deletion).
+        let abs = safe_join(repo, path)?;
+        if abs.is_dir() {
+            std::fs::remove_dir_all(&abs)?;
+        }
+        clear_readonly(&abs);
+        std::fs::write(&abs, bytes)?;
+        self.stage(repo, &[path.to_string()]).await
+    }
+
+    async fn resolve_conflict_delete(&self, repo: &str, path: &str) -> Result<(), AppError> {
+        let abs = safe_join(repo, path)?;
+        // DirectoryFile: the worktree holds a directory; only the index
+        // entry can go (the directory belongs to the other side). A path
+        // absent from the worktree (rename origin, DD) is index-only too.
+        let cached = abs.is_dir() || !abs.exists();
+        let mut args: Vec<String> = vec!["-C".into(), repo.into(), "rm".into(), "-f".into()];
+        if cached {
+            args.push("--cached".into());
+        }
+        args.push("--".into());
+        args.push(path.into());
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(refs, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
+    async fn operation_state(
+        &self,
+        repo: &str,
+    ) -> Result<Option<engine::OperationState>, AppError> {
+        let git_dir = crate::core::watcher::resolve_git_dir(Path::new(repo)).ok_or_else(|| {
+            AppError::InvalidRepo {
+                path: repo.to_string(),
+            }
+        })?;
+        Ok(detect_operation_state(&git_dir))
+    }
+
+    async fn operation_abort(&self, repo: &str) -> Result<(), AppError> {
+        let state = self
+            .operation_state(repo)
+            .await?
+            .ok_or_else(|| AppError::parse("no operation in progress"))?;
+        let verb = match state.kind {
+            engine::OperationKind::Merge => "merge",
+            engine::OperationKind::Rebase => "rebase",
+            engine::OperationKind::CherryPick => "cherry-pick",
+            engine::OperationKind::Revert => "revert",
+            engine::OperationKind::Apply => "am",
+            engine::OperationKind::Bisect => "bisect",
+        };
+        let action = if state.kind == engine::OperationKind::Bisect {
+            "reset"
+        } else {
+            "--abort"
+        };
+        let res = self
+            .run(["-C", repo, verb, action], StdinMode::Null, None, None)
+            .await?;
+        self.ensure_success(&res)
+    }
+
+    async fn operation_continue(&self, repo: &str) -> Result<(), AppError> {
+        let state = self
+            .operation_state(repo)
+            .await?
+            .ok_or_else(|| AppError::parse("no operation in progress"))?;
+        let (verb, action) = match state.kind {
+            engine::OperationKind::Merge => ("merge", "--continue"),
+            engine::OperationKind::Rebase => ("rebase", "--continue"),
+            engine::OperationKind::CherryPick => ("cherry-pick", "--continue"),
+            engine::OperationKind::Revert => ("revert", "--continue"),
+            engine::OperationKind::Apply => ("am", "--continue"),
+            // Bisect stepping is a dedicated UI, not a conflict flow.
+            engine::OperationKind::Bisect => {
+                return Err(AppError::parse("continue is not available while bisecting"))
+            }
+        };
+        let res = self
+            .run(["-C", repo, verb, action], StdinMode::Null, None, None)
+            .await?;
+        self.ensure_success(&res)
+    }
+
+    async fn operation_skip(&self, repo: &str) -> Result<(), AppError> {
+        let state = self
+            .operation_state(repo)
+            .await?
+            .ok_or_else(|| AppError::parse("no operation in progress"))?;
+        let (verb, action) = match state.kind {
+            engine::OperationKind::Rebase => ("rebase", "--skip"),
+            engine::OperationKind::CherryPick => ("cherry-pick", "--skip"),
+            engine::OperationKind::Revert => ("revert", "--skip"),
+            engine::OperationKind::Apply => ("am", "--skip"),
+            engine::OperationKind::Merge | engine::OperationKind::Bisect => {
+                return Err(AppError::parse("skip is not available for this operation"))
+            }
+        };
+        let res = self
+            .run(["-C", repo, verb, action], StdinMode::Null, None, None)
+            .await?;
+        self.ensure_success(&res)
+    }
+
+    async fn mergetool(
+        &self,
+        repo: &str,
+        path: &str,
+        tool: Option<&str>,
+        cmd: Option<&str>,
+    ) -> Result<(), AppError> {
+        // GUI tools stay open for minutes; prompts are disabled and the
+        // tool's exit code is trusted (both via -c, nothing persisted).
+        const MERGETOOL_TIMEOUT_SECS: u64 = 60 * 60;
+        let tool_name = match (tool, cmd) {
+            (Some(t), _) => {
+                if t.is_empty()
+                    || !t
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
+                    return Err(AppError::parse(format!("invalid merge tool name {t:?}")));
+                }
+                t.to_string()
+            }
+            (None, Some(_)) => "ibexgit-custom".to_string(),
+            (None, None) => return Err(AppError::parse("mergetool: no tool configured")),
+        };
+        let mut args: Vec<String> = vec![
+            "-C".into(),
+            repo.into(),
+            "-c".into(),
+            format!("merge.tool={tool_name}"),
+            "-c".into(),
+            "mergetool.prompt=false".into(),
+            "-c".into(),
+            format!("mergetool.{tool_name}.trustExitCode=true"),
+            "-c".into(),
+            "mergetool.keepBackup=false".into(),
+        ];
+        if let Some(c) = cmd {
+            args.push("-c".into());
+            args.push(format!("mergetool.{tool_name}.cmd={c}"));
+        }
+        args.push("mergetool".into());
+        args.push("--".into());
+        args.push(path.into());
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self
+            .run(refs, StdinMode::Null, None, Some(MERGETOOL_TIMEOUT_SECS))
+            .await?;
+        self.ensure_success(&res)
     }
 
     async fn clone_repo(
@@ -1344,4 +1761,210 @@ fn safe_join(root: &str, rel: &str) -> Result<PathBuf, AppError> {
         return Err(AppError::internal(format!("path escapes repo: {rel}")));
     }
     Ok(PathBuf::from(root).join(rel_path))
+}
+
+/// Clear a read-only worktree file so an engine write can proceed
+/// (git-checked-out files are read-only when the index says so).
+#[allow(clippy::permissions_set_readonly_false)] // Windows: the intended API
+fn clear_readonly(path: &Path) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        let perms = meta.permissions();
+        if perms.readonly() {
+            #[cfg(windows)]
+            {
+                let mut p = perms;
+                p.set_readonly(false);
+                let _ = std::fs::set_permissions(path, p);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(path, perms.set_mode(0o644));
+            }
+        }
+    }
+}
+
+fn read_trimmed(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn read_num(path: &Path) -> Option<u32> {
+    read_trimmed(path).and_then(|s| s.parse().ok())
+}
+
+/// Detect the in-progress operation from `.git` state files (P8 仓库状态
+/// 头). Pure fs inspection — unit-tested against synthetic git dirs.
+///
+/// Priority matters: a rebase conflict also writes CHERRY_PICK_HEAD, and
+/// merge/cherry-pick/revert all write MERGE_MSG, so the sequence
+/// directories are checked before the single-head markers.
+pub(crate) fn detect_operation_state(git_dir: &Path) -> Option<engine::OperationState> {
+    use engine::OperationKind;
+
+    let rebase_merge = git_dir.join("rebase-merge");
+    if rebase_merge.is_dir() {
+        return Some(engine::OperationState {
+            kind: OperationKind::Rebase,
+            onto: read_trimmed(&rebase_merge.join("onto"))
+                .or_else(|| read_trimmed(&git_dir.join("REBASE_HEAD"))),
+            step: read_num(&rebase_merge.join("msgnum")),
+            total: read_num(&rebase_merge.join("end")),
+            message: None,
+        });
+    }
+
+    let rebase_apply = git_dir.join("rebase-apply");
+    if rebase_apply.is_dir() {
+        // `applying` present → a `git am` in flight; otherwise rebase --apply.
+        let kind = if rebase_apply.join("applying").exists() {
+            OperationKind::Apply
+        } else {
+            OperationKind::Rebase
+        };
+        return Some(engine::OperationState {
+            kind,
+            onto: read_trimmed(&rebase_apply.join("onto"))
+                .or_else(|| read_trimmed(&git_dir.join("REBASE_HEAD"))),
+            step: read_num(&rebase_apply.join("msgnum"))
+                .or_else(|| read_num(&rebase_apply.join("next"))),
+            total: read_num(&rebase_apply.join("last"))
+                .or_else(|| read_num(&rebase_apply.join("end"))),
+            message: None,
+        });
+    }
+
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Some(engine::OperationState {
+            kind: OperationKind::Merge,
+            onto: read_trimmed(&git_dir.join("MERGE_HEAD")),
+            step: None,
+            total: None,
+            message: read_trimmed(&git_dir.join("MERGE_MSG")),
+        });
+    }
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Some(engine::OperationState {
+            kind: OperationKind::CherryPick,
+            onto: read_trimmed(&git_dir.join("CHERRY_PICK_HEAD")),
+            step: None,
+            total: None,
+            message: read_trimmed(&git_dir.join("MERGE_MSG")),
+        });
+    }
+    if git_dir.join("REVERT_HEAD").exists() {
+        return Some(engine::OperationState {
+            kind: OperationKind::Revert,
+            onto: read_trimmed(&git_dir.join("REVERT_HEAD")),
+            step: None,
+            total: None,
+            message: read_trimmed(&git_dir.join("MERGE_MSG")),
+        });
+    }
+    if git_dir.join("BISECT_LOG").exists() {
+        return Some(engine::OperationState {
+            kind: OperationKind::Bisect,
+            onto: None,
+            step: None,
+            total: None,
+            message: None,
+        });
+    }
+    None
+}
+
+#[cfg(test)]
+mod op_state_tests {
+    use super::*;
+
+    fn tempdir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ibexgit-opstate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn none_when_clean() {
+        let dir = tempdir();
+        assert!(detect_operation_state(&dir).is_none());
+    }
+
+    #[test]
+    fn merge_state_with_message() {
+        let dir = tempdir();
+        std::fs::write(dir.join("MERGE_HEAD"), "abc123\n").unwrap();
+        std::fs::write(
+            dir.join("MERGE_MSG"),
+            "Merge branch 'feat'\n\n# Conflicts:\n#\tf.txt\n",
+        )
+        .unwrap();
+        let st = detect_operation_state(&dir).unwrap();
+        assert_eq!(st.kind, engine::OperationKind::Merge);
+        assert_eq!(st.onto.as_deref(), Some("abc123"));
+        assert_eq!(
+            st.message.as_deref(),
+            Some("Merge branch 'feat'\n\n# Conflicts:\n#\tf.txt")
+        );
+    }
+
+    #[test]
+    fn rebase_merge_steps() {
+        let dir = tempdir();
+        let rm = dir.join("rebase-merge");
+        std::fs::create_dir_all(&rm).unwrap();
+        std::fs::write(rm.join("msgnum"), "2\n").unwrap();
+        std::fs::write(rm.join("end"), "5\n").unwrap();
+        std::fs::write(rm.join("onto"), "deadbeef\n").unwrap();
+        // a rebase conflict also leaves CHERRY_PICK_HEAD behind — rebase wins
+        std::fs::write(dir.join("CHERRY_PICK_HEAD"), "xyz\n").unwrap();
+        let st = detect_operation_state(&dir).unwrap();
+        assert_eq!(st.kind, engine::OperationKind::Rebase);
+        assert_eq!(st.step, Some(2));
+        assert_eq!(st.total, Some(5));
+        assert_eq!(st.onto.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn cherry_pick_and_revert() {
+        let dir = tempdir();
+        std::fs::write(dir.join("CHERRY_PICK_HEAD"), "cp1\n").unwrap();
+        assert_eq!(
+            detect_operation_state(&dir).unwrap().kind,
+            engine::OperationKind::CherryPick
+        );
+        std::fs::remove_file(dir.join("CHERRY_PICK_HEAD")).unwrap();
+        std::fs::write(dir.join("REVERT_HEAD"), "rv1\n").unwrap();
+        assert_eq!(
+            detect_operation_state(&dir).unwrap().kind,
+            engine::OperationKind::Revert
+        );
+    }
+
+    #[test]
+    fn rebase_apply_is_rebase_but_am_is_apply() {
+        let dir = tempdir();
+        let ra = dir.join("rebase-apply");
+        std::fs::create_dir_all(&ra).unwrap();
+        std::fs::write(ra.join("next"), "1\n").unwrap();
+        std::fs::write(ra.join("last"), "3\n").unwrap();
+        assert_eq!(
+            detect_operation_state(&dir).unwrap().kind,
+            engine::OperationKind::Rebase
+        );
+        std::fs::write(ra.join("applying"), "").unwrap();
+        assert_eq!(
+            detect_operation_state(&dir).unwrap().kind,
+            engine::OperationKind::Apply
+        );
+    }
 }

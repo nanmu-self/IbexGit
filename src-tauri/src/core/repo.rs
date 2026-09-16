@@ -761,6 +761,56 @@ mod tests {
         async fn blame(&self, _: &str, _: &str) -> Result<Vec<ReflogEntry>, AppError> {
             Err(err("blame"))
         }
+
+        // =====================
+        // P8 (MockEngine never serves conflict flows)
+        // =====================
+        async fn conflict_list(
+            &self,
+            _: &str,
+        ) -> Result<Vec<crate::core::engine::conflict::ConflictSummary>, AppError> {
+            Err(err("conflict_list"))
+        }
+        async fn conflict_model(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<crate::core::engine::conflict::ConflictModel, AppError> {
+            Err(err("conflict_model"))
+        }
+        async fn resolve_conflict_text(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("resolve_conflict_text"))
+        }
+        async fn resolve_conflict_keep(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("resolve_conflict_keep"))
+        }
+        async fn resolve_conflict_delete(&self, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("resolve_conflict_delete"))
+        }
+        async fn operation_state(
+            &self,
+            _: &str,
+        ) -> Result<Option<crate::core::engine::OperationState>, AppError> {
+            Err(err("operation_state"))
+        }
+        async fn operation_abort(&self, _: &str) -> Result<(), AppError> {
+            Err(err("operation_abort"))
+        }
+        async fn operation_continue(&self, _: &str) -> Result<(), AppError> {
+            Err(err("operation_continue"))
+        }
+        async fn operation_skip(&self, _: &str) -> Result<(), AppError> {
+            Err(err("operation_skip"))
+        }
+        async fn mergetool(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+        ) -> Result<(), AppError> {
+            Err(err("mergetool"))
+        }
     }
 
     fn temp_repo() -> PathBuf {
