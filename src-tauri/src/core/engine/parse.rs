@@ -1473,3 +1473,157 @@ mod tests {
         assert_eq!(out[1].subject, "");
     }
 }
+
+// =====================
+// clone --progress (P7)
+// =====================
+
+/// One parsed progress line of `git clone --progress`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloneProgress {
+    /// Phase name (localized-independent English label from git itself):
+    /// `receiving` | `resolving` | `updating` | `counting` | `compressing` |
+    /// `enumerating` | other lowercased phase prefix.
+    pub phase: String,
+    /// 0..=100 (None when the line carries no percentage).
+    pub percent: Option<u32>,
+    /// `(current/total)` pair when present.
+    pub current: Option<u64>,
+    pub total: Option<u64>,
+}
+
+/// Parse one stderr progress line of `git clone --progress`:
+/// `Receiving objects:  45% (123/273), 1.20 MiB | 2.31 MiB/s`.
+/// Lines without a `<Phase>:` prefix (e.g. `Cloning into 'x'...`,
+/// plain `remote:` footers) map to phase `other` with no numbers.
+pub fn parse_clone_progress(line: &str) -> CloneProgress {
+    let line = line.trim();
+    // git 的 phase 名含空格（“Receiving objects”），不能用“无空格”判定；
+    // 只要求冒号前非空且不含括号。
+    let Some((head, rest)) = line.split_once(':') else {
+        return CloneProgress {
+            phase: "other".to_string(),
+            percent: None,
+            current: None,
+            total: None,
+        };
+    };
+    let head = head.trim();
+    if head.is_empty() || head.contains('(') {
+        return CloneProgress {
+            phase: "other".to_string(),
+            percent: None,
+            current: None,
+            total: None,
+        };
+    }
+    if head.eq_ignore_ascii_case("remote") {
+        // `remote: Counting objects: 100% (12/12), done.` → 解嵌套 phase。
+        return match rest.trim().split_once(':') {
+            Some((p, r)) if !p.trim().is_empty() => parse_progress_body(phase_word(p), r),
+            _ => CloneProgress {
+                phase: "other".to_string(),
+                percent: None,
+                current: None,
+                total: None,
+            },
+        };
+    }
+    parse_progress_body(phase_word(head), rest)
+}
+
+/// Phase 名取首词小写：“Receiving objects” → “receiving”。
+fn phase_word(p: &str) -> String {
+    p.split_whitespace()
+        .next()
+        .unwrap_or("other")
+        .to_lowercase()
+}
+
+fn parse_progress_body(phase: String, rest: &str) -> CloneProgress {
+    let rest = rest.trim();
+    let mut out = CloneProgress {
+        phase,
+        percent: None,
+        current: None,
+        total: None,
+    };
+    if let Some(pct) = rest.split_whitespace().next() {
+        if let Some(num) = pct.strip_suffix('%') {
+            if let Ok(v) = num.parse::<u32>() {
+                out.percent = Some(v.min(100));
+            }
+        }
+    }
+    // (cur/total) pair — first parenthesis group with a slash.
+    if let Some(open) = rest.find('(') {
+        if let Some(close) = rest[open..].find(')') {
+            let pair = &rest[open + 1..open + close];
+            if let Some((c, t)) = pair.split_once('/') {
+                if let (Ok(c), Ok(t)) = (c.trim().parse::<u64>(), t.trim().parse::<u64>()) {
+                    out.current = Some(c);
+                    out.total = Some(t);
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod clone_progress_tests {
+    use super::*;
+
+    fn parse(line: &str) -> CloneProgress {
+        parse_clone_progress(line)
+    }
+
+    #[test]
+    fn receiving_objects_percent_and_pair() {
+        let p = parse("Receiving objects:  45% (123/273), 1.20 MiB | 2.31 MiB/s");
+        assert_eq!(p.phase, "receiving");
+        assert_eq!(p.percent, Some(45));
+        assert_eq!(p.current, Some(123));
+        assert_eq!(p.total, Some(273));
+    }
+
+    #[test]
+    fn resolving_and_updating() {
+        let p = parse("Resolving deltas: 100% (45/45), done.");
+        assert_eq!(p.phase, "resolving");
+        assert_eq!(p.percent, Some(100));
+        assert_eq!(p.total, Some(45));
+
+        let p = parse("Updating files:  33% (4/12)");
+        assert_eq!(p.phase, "updating");
+        assert_eq!(p.percent, Some(33));
+    }
+
+    #[test]
+    fn remote_prefix_is_unwrapped() {
+        let p = parse("remote: Counting objects: 100% (12/12), done.");
+        assert_eq!(p.phase, "counting");
+        assert_eq!(p.percent, Some(100));
+
+        let p = parse("remote: Enumerating objects: 12, done.");
+        assert_eq!(p.phase, "enumerating");
+        assert_eq!(p.percent, None);
+    }
+
+    #[test]
+    fn header_lines_map_to_other() {
+        let p = parse("Cloning into 'repo'...");
+        assert_eq!(p.phase, "other");
+        assert_eq!(p.percent, None);
+
+        // `remote:` 后无第二段 phase。
+        let p = parse("remote: Total 273 (delta 0), reused 0 (delta 0)");
+        assert_eq!(p.phase, "other");
+    }
+
+    #[test]
+    fn done_lines_without_percent() {
+        let p = parse("Receiving objects: 100% (273/273), done.");
+        assert_eq!(p.percent, Some(100));
+    }
+}

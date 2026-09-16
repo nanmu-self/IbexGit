@@ -5,10 +5,75 @@ use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::time::timeout;
+
+/// 运行时可更新的 spawn 配置（P7）：凭据 helper 注入、代理、SSH。
+/// 由 `app_set_net_config` 命令更新（前端设置），lib.rs 启动时注入凭据部分。
+#[derive(Debug, Clone, Default)]
+pub struct NetSpawnConfig {
+    /// credential helper `-c` 参数对 + env 对（credential.rs::spawn_injection）。
+    pub credential: Option<CredSpawnInjection>,
+    /// inherit = 不设（默认）；none = 显式清除；custom = 设为用户值。
+    pub proxy_mode: ProxyMode,
+    pub proxy_url: Option<String>,
+    /// 设置后 `GIT_SSH_COMMAND = "ssh -i <path> -o IdentitiesOnly=yes"`。
+    pub ssh_key_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CredSpawnInjection {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ProxyMode {
+    #[default]
+    Inherit,
+    None,
+    Custom,
+}
+
+impl ProxyMode {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "none" => Self::None,
+            "custom" => Self::Custom,
+            _ => Self::Inherit,
+        }
+    }
+
+    const PROXY_VARS: &'static [&'static str] = &[
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+    ];
+}
+
+/// 线程共享、运行时可变的 spawn 配置（CliEngine 构造时传入）。
+#[derive(Clone, Default)]
+pub struct SharedNetConfig(Arc<std::sync::RwLock<NetSpawnConfig>>);
+
+impl SharedNetConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&self, f: impl FnOnce(&mut NetSpawnConfig)) {
+        let mut cfg = self.0.write().unwrap();
+        f(&mut cfg);
+    }
+
+    fn snapshot(&self) -> NetSpawnConfig {
+        self.0.read().unwrap().clone()
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum RunnerError {
@@ -123,6 +188,8 @@ pub struct GitProcessRunner {
     utf8_env: bool,
     /// Disable terminal prompts globally.
     no_prompt: bool,
+    /// P7 spawn 配置（凭据注入 / 代理 / SSH），运行时可变。
+    net_config: SharedNetConfig,
 }
 
 enum RunOutcome {
@@ -136,7 +203,22 @@ impl GitProcessRunner {
             default_timeout_secs,
             utf8_env: true,
             no_prompt: true,
+            net_config: SharedNetConfig::new(),
         }
+    }
+
+    /// 构造时指定共享 spawn 配置（P7：lib.rs 注入凭据 helper 配置）。
+    pub fn with_net_config(default_timeout_secs: u64, net_config: SharedNetConfig) -> Self {
+        Self {
+            default_timeout_secs,
+            utf8_env: true,
+            no_prompt: true,
+            net_config,
+        }
+    }
+
+    pub fn net_config(&self) -> SharedNetConfig {
+        self.net_config.clone()
     }
 
     /// Build a base command with common flags.
@@ -151,6 +233,40 @@ impl GitProcessRunner {
             cmd.env("GIT_EDITOR", "true");
             cmd.env("GIT_PAGER", "cat");
         }
+
+        // P7：凭据 helper / 代理 / SSH 注入（所有 git 进程统一生效）。
+        let net = self.net_config.snapshot();
+        if let Some(cred) = &net.credential {
+            // 先空值重置再接自身 helper，屏蔽用户全局 helper 的过期凭据。
+            for arg in &cred.args {
+                cmd.arg(arg);
+            }
+            for (k, v) in &cred.env {
+                cmd.env(k, v);
+            }
+        }
+        match net.proxy_mode {
+            ProxyMode::Inherit => {}
+            ProxyMode::None => {
+                for var in ProxyMode::PROXY_VARS {
+                    cmd.env_remove(var);
+                }
+            }
+            ProxyMode::Custom => {
+                if let Some(url) = net.proxy_url.as_deref().filter(|s| !s.is_empty()) {
+                    for var in ProxyMode::PROXY_VARS {
+                        cmd.env(var, url);
+                    }
+                }
+            }
+        }
+        if let Some(key) = net.ssh_key_path.as_deref().filter(|s| !s.is_empty()) {
+            cmd.env(
+                "GIT_SSH_COMMAND",
+                format!("ssh -i {key} -o IdentitiesOnly=yes"),
+            );
+        }
+
         cmd.arg("-c").arg("core.quotepath=false");
         cmd
     }
@@ -219,8 +335,49 @@ impl GitProcessRunner {
             }
         }
 
-        self.run_command_bytes(&mut cmd, stdin_mode, stdin_bytes, timeout_secs, cancel)
-            .await
+        self.run_command_bytes(
+            &mut cmd,
+            stdin_mode,
+            stdin_bytes,
+            timeout_secs,
+            cancel,
+            None,
+        )
+        .await
+    }
+
+    /// 流式 run（P7）：stderr 逐行（含 `\r` 分段）转发给 `on_line`，
+    /// 返回值仍含完整 stderr（clone/fetch 进度 + 错误信息两用）。
+    pub async fn run_streaming(
+        &self,
+        git: &str,
+        args: &[&str],
+        timeout_secs: Option<u64>,
+        cancel: Option<&CancelToken>,
+        on_line: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> Result<ProcessResult, AppError> {
+        let mut cmd = self.base_command(git);
+        cmd.args(args);
+        cmd.stdout(process::Stdio::piped());
+        cmd.stderr(process::Stdio::piped());
+        cmd.stdin(process::Stdio::null());
+
+        let out = self
+            .run_command_bytes(
+                &mut cmd,
+                StdinMode::Null,
+                None,
+                timeout_secs,
+                cancel,
+                Some(on_line),
+            )
+            .await?;
+        Ok(ProcessResult {
+            exit_code: out.exit_code,
+            stdout: String::from_utf8(out.stdout).map_err(|_| RunnerError::Utf8)?,
+            stderr: out.stderr,
+            duration_ms: out.duration_ms,
+        })
     }
 
     /// Execute an arbitrary command with the runner's timeout / cancel /
@@ -235,7 +392,7 @@ impl GitProcessRunner {
         cancel: Option<&CancelToken>,
     ) -> Result<ProcessResult, AppError> {
         let out = self
-            .run_command_bytes(cmd, stdin_mode, stdin_bytes, timeout_secs, cancel)
+            .run_command_bytes(cmd, stdin_mode, stdin_bytes, timeout_secs, cancel, None)
             .await?;
         Ok(ProcessResult {
             exit_code: out.exit_code,
@@ -245,7 +402,8 @@ impl GitProcessRunner {
         })
     }
 
-    /// Core execution path returning raw stdout bytes.
+    /// Core execution path returning raw stdout bytes. `stderr_forward`（P7）
+    /// 提供时，stderr 逐行转发（clone 进度）且返回值仍含完整 stderr。
     async fn run_command_bytes(
         &self,
         cmd: &mut Command,
@@ -253,6 +411,7 @@ impl GitProcessRunner {
         stdin_bytes: Option<&[u8]>,
         timeout_secs: Option<u64>,
         cancel: Option<&CancelToken>,
+        stderr_forward: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<RawResult, AppError> {
         // Safety net only: normal paths reap or kill explicitly. `kill_on_drop`
         // plus the Windows job's KILL_ON_JOB_CLOSE make even panic paths clean up.
@@ -276,6 +435,34 @@ impl GitProcessRunner {
             }
         }
 
+        // P7 流式 stderr：逐行转发 + 累积（替代 wait_with_output 的 stderr 收集）。
+        let stderr_task = stderr_forward.map(|fwd| {
+            let pipe = child.take_stderr();
+            tokio::spawn(async move {
+                let mut collected: Vec<u8> = Vec::new();
+                if let Some(pipe) = pipe {
+                    let mut reader = tokio::io::BufReader::new(pipe);
+                    let mut buf = Vec::new();
+                    loop {
+                        buf.clear();
+                        match reader.read_until(b'\n', &mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => {}
+                        }
+                        collected.extend_from_slice(&buf);
+                        let chunk = String::from_utf8_lossy(&buf);
+                        for seg in chunk.split('\r') {
+                            let seg = seg.trim_end_matches('\n');
+                            if !seg.is_empty() {
+                                fwd(seg.to_string());
+                            }
+                        }
+                    }
+                }
+                collected
+            })
+        });
+
         let timeout_dur = Duration::from_secs(timeout_secs.unwrap_or(self.default_timeout_secs));
         let cancel = cancel.cloned().unwrap_or_default();
 
@@ -295,17 +482,34 @@ impl GitProcessRunner {
             Err(_elapsed) => {
                 child.kill_tree();
                 let _ = child.wait().await;
+                if let Some(t) = stderr_task {
+                    let _ = t.await;
+                }
                 Err(RunnerError::Timeout(timeout_dur.as_secs()).into())
             }
             Ok(RunOutcome::Cancelled) => {
                 child.kill_tree();
                 let _ = child.wait().await;
+                if let Some(t) = stderr_task {
+                    let _ = t.await;
+                }
                 Err(RunnerError::Cancelled.into())
             }
-            Ok(RunOutcome::Done(Err(e))) => Err(e.into()),
+            Ok(RunOutcome::Done(Err(e))) => {
+                if let Some(t) = stderr_task {
+                    let _ = t.await;
+                }
+                Err(e.into())
+            }
             Ok(RunOutcome::Done(Ok(output))) => {
                 let exit_code = output.status.code();
-                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                let stderr = match stderr_task {
+                    Some(t) => match t.await {
+                        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                        Err(_) => String::from_utf8_lossy(&output.stderr).into_owned(),
+                    },
+                    None => String::from_utf8_lossy(&output.stderr).into_owned(),
+                };
                 Ok(RawResult {
                     exit_code,
                     stdout: output.stdout,

@@ -4,6 +4,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 pub mod commands;
 pub mod core {
     pub mod compat;
+    pub mod credential;
     pub mod engine;
     pub mod error;
     pub mod graph;
@@ -94,10 +95,21 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::workspace::workspace_upsert_group,
             commands::workspace::workspace_delete_group,
             commands::workspace::workspace_update_repo,
+            commands::net::git_clone,
+            commands::net::clone_cancel,
+            commands::net::repo_init,
+            commands::net::credential_list,
+            commands::net::credential_delete,
+            commands::net::credential_respond,
+            commands::net::known_hosts_list,
+            commands::net::known_hosts_remove,
+            commands::net::app_set_net_config,
         ])
         .events(tauri_specta::collect_events![
             core::watcher::RepoChanged,
             commands::workspace::AppOpenPaths,
+            commands::net::CloneEvent,
+            core::credential::CredentialPrompt,
         ])
 }
 
@@ -115,7 +127,6 @@ pub fn run() {
     };
 
     fmt().with_env_filter(filter).init();
-
     let builder = specta_builder::<tauri::Wry>();
 
     tauri::Builder::default()
@@ -176,6 +187,65 @@ pub fn run() {
                 data_dir.join("recovery"),
             ));
 
+            // CredentialBroker (P7, ADR-004): channel server + keychain + UI
+            // bridge. Starts BEFORE the engine so every git process we spawn
+            // already carries the helper injection.
+            let bridge = NetUiBridge {
+                handle: app.handle().clone(),
+            };
+            let broker = crate::core::credential::CredentialBroker::start(
+                data_dir.clone(),
+                std::sync::Arc::new(bridge),
+            )?;
+            app.manage(broker.clone());
+            app.manage(crate::commands::net::AppEmitter(app.handle().clone()));
+
+            // Shared spawn config: credential injection + runtime-updatable
+            // proxy/SSH settings (app_set_net_config).
+            let net_config = crate::core::runner::SharedNetConfig::new();
+            let inject_from = |cfg: &crate::core::runner::SharedNetConfig,
+                               path: &std::path::Path,
+                               broker: &std::sync::Arc<
+                crate::core::credential::CredentialBroker,
+            >| {
+                let injection = broker.spawn_injection(path);
+                cfg.update(|c| {
+                    c.credential = Some(crate::core::runner::CredSpawnInjection {
+                        args: injection.args,
+                        env: injection.env,
+                    });
+                });
+            };
+            match credential_helper_path() {
+                Some(path) => inject_from(&net_config, &path, &broker),
+                None if cfg!(debug_assertions) => {
+                    // 开发态兜底：`tauri dev` 只构建主 bin。后台补建 helper，
+                    // 完成后动态注入（后续 git 进程生效）。
+                    tracing::warn!("credential-helper not built yet; building in background");
+                    let net_cfg = net_config.clone();
+                    let broker2 = broker.clone();
+                    std::thread::spawn(move || {
+                        let built = std::process::Command::new(env!("CARGO"))
+                            .args(["build", "--bin", "credential-helper"])
+                            .current_dir(env!("CARGO_MANIFEST_DIR"))
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false);
+                        if let Some(path) = built.then(credential_helper_path).flatten() {
+                            inject_from(&net_cfg, &path, &broker2);
+                            tracing::info!("credential-helper built and injected");
+                        } else {
+                            tracing::error!("failed to build credential-helper");
+                        }
+                    });
+                }
+                None => tracing::warn!(
+                    "credential-helper binary not found next to the app; \
+                     credential takeover disabled"
+                ),
+            }
+            app.manage(net_config.clone());
+
             // Detect git version on startup
             let git_caps = match crate::core::compat::GitCapabilities::detect() {
                 Ok(caps) => {
@@ -193,10 +263,13 @@ pub fn run() {
             app.manage(git_caps);
 
             // Git engine stack: runner → cli engine → repo manager.
-            let runner = crate::core::runner::GitProcessRunner::new(120);
+            let runner = crate::core::runner::GitProcessRunner::with_net_config(120, net_config);
             let engine: std::sync::Arc<dyn crate::core::engine::GitEngine> =
                 std::sync::Arc::new(crate::core::engine::CliEngine::new(runner, "git"));
             app.manage(crate::core::repo::RepoManager::new(engine));
+
+            // Clone task registry (P7): taskId → CancelToken.
+            app.manage(crate::commands::net::CloneTasks::default());
 
             // State invalidation system (PLAN §4.3):
             // fs event → classify → debounce(300ms, cap 1s) → invalidate caches
@@ -239,4 +312,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// credential-helper 可执行文件路径：与主程序同目录（开发态 =
+/// target/debug，安装态 = 安装目录）。
+fn credential_helper_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let name = if cfg!(windows) {
+        "credential-helper.exe"
+    } else {
+        "credential-helper"
+    };
+    let path = exe.parent()?.join(name);
+    path.is_file().then_some(path)
+}
+
+/// P7 UI 桥：CredentialPrompt 经 tauri-specta 事件推给前端。
+struct NetUiBridge {
+    handle: tauri::AppHandle,
+}
+
+impl crate::core::credential::UiBridge for NetUiBridge {
+    fn show(&self, prompt: crate::core::credential::CredentialPrompt) {
+        use tauri_specta::Event as _;
+        if let Err(e) = prompt.emit(&self.handle) {
+            tracing::warn!("failed to emit CredentialPrompt: {}", e);
+        }
+    }
 }

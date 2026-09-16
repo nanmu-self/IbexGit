@@ -3,7 +3,7 @@
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
   import { pickRepo } from "$lib/repo-picker";
-  import { showToast } from "$lib/stores/toast";
+  import { netDialogs } from "$lib/stores/netdialogs.svelte";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import CloudDownload from "@lucide/svelte/icons/cloud-download";
   import FilePlus from "@lucide/svelte/icons/file-plus";
@@ -29,7 +29,7 @@
         <Button
           variant="outline"
           class="h-11 text-sm"
-          onclick={() => showToast("info", t("welcome.cloneSoon"))}
+          onclick={() => netDialogs.openClone()}
         >
           <CloudDownload class="size-4" />
           {t("welcome.clone")}
@@ -37,7 +37,7 @@
         <Button
           variant="outline"
           class="h-11 text-sm"
-          onclick={() => showToast("info", t("welcome.newSoon"))}
+          onclick={() => netDialogs.openNewRepo()}
         >
           <FilePlus class="size-4" />
           {t("welcome.new")}

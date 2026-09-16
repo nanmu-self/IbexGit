@@ -39,7 +39,11 @@ function runOp(id: RepoId, kind: NetOpKind, op: () => Promise<unknown>): Promise
     try {
       await op();
     } catch (e) {
-      normalizeError(e);
+      const err = normalizeError(e);
+      // P7 取消语义：凭据框取消 / 用户取消 → “已取消”（非错误样式）。
+      if (err.code === "credential_cancelled" || err.code === "operation_cancelled") {
+        showToast("info", t("netops.cancelled"));
+      }
     } finally {
       clearBusy(id);
     }

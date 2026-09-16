@@ -1,5 +1,11 @@
 import { commands, type RepoId } from "./bindings";
-import type { GraphFilter, LineSelection } from "./bindings";
+import type {
+  CloneRequest,
+  CredentialReply,
+  GraphFilter,
+  LineSelection,
+  NetConfig,
+} from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
 import type { RepoMeta, RepoUiState } from "./bindings";
@@ -16,10 +22,15 @@ export type {
   BackupRef,
   BranchCompare,
   BranchInfo,
+  CloneEvent,
+  CloneRequest,
   CommitDetail,
   CommitFileStat,
   CommitInfo,
   CommitResult,
+  CredentialEntry,
+  CredentialPrompt,
+  CredentialReply,
   DiffFile,
   DiffHunk,
   DiffLine,
@@ -33,7 +44,9 @@ export type {
   GraphPage,
   GraphRow,
   GroupsFile,
+  KnownHost,
   LineSelection,
+  NetConfig,
   RecentRepo,
   RecoveryEntry,
   ReflogEntry,
@@ -281,6 +294,33 @@ export const recovery = {
     wrap(commands.recoveryRestore(id, snapshotId)),
   remove: (id: RepoId, snapshotId: string) =>
     wrap(commands.recoveryDelete(id, snapshotId)),
+};
+
+/**
+ * P7 网络/凭据：克隆（可取消 + 进度事件）、新建仓库、凭据管理、
+ * host key 信任、代理与 SSH 配置。
+ */
+export const net = {
+  /** 启动后台克隆任务，返回 taskId；进度经 onCloneEvent 事件推送。 */
+  clone: (request: CloneRequest) => wrap(commands.gitClone(request)),
+  cloneCancel: (taskId: number) => wrap(commands.cloneCancel(taskId)),
+  /** 新建空仓库（可选 README / .gitignore 模板，不自动提交）。 */
+  initRepo: (path: string, readme: boolean, gitignore: boolean) =>
+    wrap(commands.repoInit(path, readme, gitignore)),
+
+  // ---- 凭据管理（机密只存 OS keychain，索引不含明文） ----
+  credentialList: () => wrap(commands.credentialList()),
+  credentialDelete: (key: string) => wrap(commands.credentialDelete(key)),
+  /** 回复凭据请求（三动作：submit / trust_host_key / cancel）。 */
+  credentialRespond: (requestId: string, reply: CredentialReply) =>
+    wrap(commands.credentialRespond(requestId, reply)),
+
+  // ---- SSH host key 信任库 ----
+  knownHostsList: () => wrap(commands.knownHostsList()),
+  knownHostsRemove: (host: string) => wrap(commands.knownHostsRemove(host)),
+
+  // ---- 代理 / SSH 配置（runner spawn 时统一注入） ----
+  setNetConfig: (config: NetConfig) => wrap(commands.appSetNetConfig(config)),
 };
 
 /**

@@ -1,6 +1,7 @@
 use crate::core::error::AppError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 pub mod parse;
 pub mod patch;
@@ -588,9 +589,38 @@ pub trait GitEngine: Send + Sync {
     async fn merge(&self, repo: &str, target: &str, ff_only: bool)
         -> Result<MergeResult, AppError>;
 
+    // Clone / Init (P7)
+    /// Clone a remote repository (P7 克隆对话框)。Runs **without** `-C`
+    /// (the target dir doesn't exist yet); `--progress` is implicit via
+    /// streaming stderr → `on_line` per progress line. Cancel kills the
+    /// whole process tree.
+    async fn clone_repo(
+        &self,
+        opts: &CloneOptions,
+        cancel: Option<&crate::core::runner::CancelToken>,
+        on_line: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> Result<(), AppError>;
+    /// `git init`（P7 新建仓库；default branch 由 `-c init.defaultBranch=main`
+    /// 固定，README/.gitignore 模板与首个提交由命令层处理）。
+    async fn init_repo(&self, path: &str) -> Result<(), AppError>;
+
     // Blame (P9)
     async fn blame(&self, repo: &str, path: &str) -> Result<Vec<ReflogEntry>, AppError>;
 }
 
 pub mod cli;
 pub use cli::CliEngine;
+
+/// Clone 参数（P7 克隆对话框）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CloneOptions {
+    pub url: String,
+    /// 目标目录（绝对路径）。
+    pub dest: String,
+    /// `--depth N`（浅克隆）。
+    pub depth: Option<u32>,
+    /// `--single-branch`。
+    pub single_branch: bool,
+    /// `--recurse-submodules`。
+    pub recurse_submodules: bool,
+}

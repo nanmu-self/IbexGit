@@ -15,6 +15,7 @@
   import { repos, samePath } from "$lib/stores/repos.svelte";
   import { pickRepo } from "$lib/repo-picker";
   import { showToast } from "$lib/stores/toast";
+  import { netDialogs } from "$lib/stores/netdialogs.svelte";
   import { BOOKMARKS, bookmarkColor } from "$lib/bookmarks";
   import type { RepoGroup } from "$lib/git/bindings";
   import Search from "@lucide/svelte/icons/search";
@@ -22,6 +23,7 @@
   import Folder from "@lucide/svelte/icons/folder";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import CloudDownload from "@lucide/svelte/icons/cloud-download";
+  import KeyRound from "@lucide/svelte/icons/key-round";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Trash2 from "@lucide/svelte/icons/trash-2";
@@ -190,13 +192,17 @@
           <FolderOpen class="size-4" />
           {t("repos.openFolder")}
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onclick={() => showToast("info", t("welcome.cloneSoon"))}
-        >
+        <Button variant="outline" size="sm" onclick={() => netDialogs.openClone()}>
           <CloudDownload class="size-4" />
           {t("repos.clone")}
+        </Button>
+        <Button variant="outline" size="sm" onclick={() => netDialogs.openNewRepo()}>
+          <FolderPlus class="size-4" />
+          {t("repos.newRepo")}
+        </Button>
+        <Button variant="outline" size="sm" onclick={() => netDialogs.openCredentials()}>
+          <KeyRound class="size-4" />
+          {t("repos.credentials")}
         </Button>
       </div>
     </div>

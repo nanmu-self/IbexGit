@@ -63,6 +63,12 @@ impl TreeChild {
         self.child.stdin.take()
     }
 
+    /// Take the child's stderr handle (once) — used by the P7 streaming
+    /// progress path (`clone --progress`).
+    pub fn take_stderr(&mut self) -> Option<tokio::process::ChildStderr> {
+        self.child.stderr.take()
+    }
+
     /// Fire the tree kill. Reap with [`TreeChild::wait`] afterwards.
     pub fn kill_tree(&mut self) {
         match &self.kill {

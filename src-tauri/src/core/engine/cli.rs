@@ -1,8 +1,32 @@
-use crate::core::engine::{self, parse, DiffModel, DiffOptions, DiffSource, FileContent};
+use crate::core::engine::{
+    self, parse, CloneOptions, DiffModel, DiffOptions, DiffSource, FileContent,
+};
 use crate::core::error::AppError;
-use crate::core::runner::{GitProcessRunner, ProcessResult, StdinMode};
+use crate::core::runner::{CancelToken, GitProcessRunner, ProcessResult, StdinMode};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+
+/// 网络操作（fetch/pull/push/clone）失败时：stderr 含取消标记 →
+/// `CredentialCancelled`（用户在凭据框点了取消，而非认证失败；设计文档 §5）。
+fn ensure_success_net(res: &ProcessResult) -> Result<(), AppError> {
+    if res.exit_code != Some(0)
+        && res
+            .stderr
+            .contains(crate::core::credential::CREDENTIAL_CANCELLED_MARKER)
+    {
+        return Err(AppError::CredentialCancelled);
+    }
+    match res.exit_code {
+        Some(0) => Ok(()),
+        Some(code) => Err(AppError::git_command(
+            format!("git exited with code {}", code),
+            res.stderr.clone(),
+            res.stdout.clone(),
+        )),
+        None => Err(AppError::internal("git process terminated by signal")),
+    }
+}
 
 /// Log format shared by `log`, `graph` and `commit_detail` (8 lines per
 /// commit, see `parse_log`).
@@ -895,7 +919,7 @@ impl engine::GitEngine for CliEngine {
             args.push(r);
         }
         let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(&res)
+        ensure_success_net(&res)
     }
 
     async fn reflog(
@@ -1091,12 +1115,12 @@ impl engine::GitEngine for CliEngine {
             args.push(branch.to_string());
             let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             let res = self.run(args_refs, StdinMode::Null, None, None).await?;
-            self.ensure_success(&res)?;
+            ensure_success_net(&res)?;
         }
         if tags {
             let args = ["-C", repo, "push", remote, "--tags"];
             let res = self.run(args, StdinMode::Null, None, None).await?;
-            self.ensure_success(&res)?;
+            ensure_success_net(&res)?;
         }
         if branch.is_empty() && !tags {
             return Err(AppError::parse(
@@ -1127,6 +1151,14 @@ impl engine::GitEngine for CliEngine {
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+        // 凭据取消必须以错误浮出（任务=已取消），不折叠进 success=false。
+        if res.exit_code != Some(0)
+            && res
+                .stderr
+                .contains(crate::core::credential::CREDENTIAL_CANCELLED_MARKER)
+        {
+            return Err(AppError::CredentialCancelled);
+        }
         let success = res.exit_code == Some(0);
         let combined = format!("{}{}", res.stdout, res.stderr);
         Ok(engine::PullResult {
@@ -1186,6 +1218,82 @@ impl engine::GitEngine for CliEngine {
         // Blame lands in P4 (own BlameLine type); placeholder until then.
         let _ = repo;
         Err(AppError::not_implemented("blame"))
+    }
+
+    async fn clone_repo(
+        &self,
+        opts: &CloneOptions,
+        cancel: Option<&CancelToken>,
+        on_line: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> Result<(), AppError> {
+        // 目标目录存在且非空 → 提前拒绝（git 的报错体验差且会留下半成品）。
+        let dest = Path::new(&opts.dest);
+        if dest.exists() {
+            let non_empty = std::fs::read_dir(dest)
+                .map(|mut it| it.next().is_some())
+                .unwrap_or(false);
+            if non_empty {
+                return Err(AppError::parse(format!(
+                    "destination path '{}' already exists and is not empty",
+                    opts.dest
+                )));
+            }
+        }
+
+        let mut args: Vec<String> = vec!["clone".to_string(), "--progress".to_string()];
+        if let Some(depth) = opts.depth {
+            args.push("--depth".to_string());
+            args.push(depth.to_string());
+        }
+        if opts.single_branch {
+            args.push("--single-branch".to_string());
+        }
+        if opts.recurse_submodules {
+            args.push("--recurse-submodules".to_string());
+        }
+        args.push("--".to_string());
+        args.push(opts.url.clone());
+        args.push(opts.dest.clone());
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+        // 克隆可能很慢：超时给足（1h），可取消才是主要退出路径。
+        // 进度回调可选（无 UI 的场景如取消测试/服务端用例）。
+        let res = match on_line {
+            Some(on_line) => {
+                self.runner
+                    .run_streaming(&self.git_path, &args_refs, Some(3600), cancel, on_line)
+                    .await
+            }
+            None => {
+                self.runner
+                    .run_with_token(
+                        &self.git_path,
+                        &args_refs,
+                        StdinMode::Null,
+                        None,
+                        Some(3600),
+                        cancel,
+                    )
+                    .await
+            }
+        };
+        let res = match res {
+            Ok(r) => r,
+            Err(AppError::OperationCancelled) => {
+                // 清理半成品目录（仅空目录/仅 .git 的场景安全）。
+                let _ = std::fs::remove_dir_all(dest);
+                return Err(AppError::OperationCancelled);
+            }
+            Err(e) => return Err(e),
+        };
+        ensure_success_net(&res)?;
+        Ok(())
+    }
+
+    async fn init_repo(&self, path: &str) -> Result<(), AppError> {
+        let args = ["-c", "init.defaultBranch=main", "init", "-q", path];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
     }
 }
 

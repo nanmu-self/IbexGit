@@ -9,6 +9,7 @@
   import { repos } from "$lib/stores/repos.svelte";
   import { showToast } from "$lib/stores/toast";
   import { pickRepo } from "$lib/repo-picker";
+  import { netDialogs } from "$lib/stores/netdialogs.svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Sun from "@lucide/svelte/icons/sun";
@@ -116,8 +117,8 @@
         <DropdownMenu.Shortcut>{shortcutLabel("repo.open")}</DropdownMenu.Shortcut>
       </DropdownMenu.Item>
       <DropdownMenu.Separator />
-      <DropdownMenu.Item disabled onSelect={() => {}}>{t("menu.file.clone")}</DropdownMenu.Item>
-      <DropdownMenu.Item disabled onSelect={() => {}}>{t("menu.file.newRepo")}</DropdownMenu.Item>
+      <DropdownMenu.Item onSelect={() => netDialogs.openClone()}>{t("menu.file.clone")}</DropdownMenu.Item>
+      <DropdownMenu.Item onSelect={() => netDialogs.openNewRepo()}>{t("menu.file.newRepo")}</DropdownMenu.Item>
       <DropdownMenu.Separator />
       <DropdownMenu.Sub>
         <DropdownMenu.SubTrigger>{t("menu.file.recent")}</DropdownMenu.SubTrigger>

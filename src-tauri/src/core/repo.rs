@@ -480,8 +480,8 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::core::engine::{
-        BackupRef, BranchInfo, CommitInfo, CommitResult, DiffModel, DiffSource, IndexEntry,
-        PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        BackupRef, BranchInfo, CloneOptions, CommitInfo, CommitResult, DiffModel, DiffSource,
+        IndexEntry, PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -496,6 +496,19 @@ mod tests {
 
     #[async_trait::async_trait]
     impl GitEngine for MockEngine {
+        async fn clone_repo(
+            &self,
+            _opts: &CloneOptions,
+            _cancel: Option<&crate::core::runner::CancelToken>,
+            _on_line: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        ) -> Result<(), AppError> {
+            Err(AppError::not_implemented("clone"))
+        }
+
+        async fn init_repo(&self, _path: &str) -> Result<(), AppError> {
+            Err(AppError::not_implemented("init"))
+        }
+
         async fn status(&self, _repo: &str) -> Result<Vec<FileStatus>, AppError> {
             self.status_calls.fetch_add(1, Ordering::SeqCst);
             Ok(vec![FileStatus {

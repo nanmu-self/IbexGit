@@ -10,6 +10,7 @@
   import HistoryView from "$lib/components/history/HistoryView.svelte";
   import TagsView from "$lib/components/refs/TagsView.svelte";
   import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
+  import NetDialogsHost from "$lib/components/credential/NetDialogsHost.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
   import { Button } from "$lib/components/ui/button";
@@ -123,5 +124,6 @@
     </div>
     <StatusBar />
     <RefsDialogsHost />
+    <NetDialogsHost />
   </div>
 {/if}

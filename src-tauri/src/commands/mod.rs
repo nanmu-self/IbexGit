@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
+pub mod net;
 pub mod workspace;
 
 /// Return the detected git capabilities as JSON.

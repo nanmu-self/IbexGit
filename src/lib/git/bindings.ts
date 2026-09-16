@@ -238,11 +238,22 @@ export const commands = {
 	 *  star; full replace).
 	 */
 	workspaceUpdateRepo: (path: string, meta: RepoMeta_Deserialize) => __TAURI_INVOKE<null>("workspace_update_repo", { path, meta }),
+	gitClone: (request: CloneRequest) => __TAURI_INVOKE<number>("git_clone", { request }),
+	cloneCancel: (taskId: number) => __TAURI_INVOKE<null>("clone_cancel", { taskId }),
+	repoInit: (path: string, readme: boolean, gitignore: boolean) => __TAURI_INVOKE<null>("repo_init", { path, readme, gitignore }),
+	credentialList: () => __TAURI_INVOKE<CredentialEntry_Serialize[]>("credential_list"),
+	credentialDelete: (key: string) => __TAURI_INVOKE<null>("credential_delete", { key }),
+	credentialRespond: (requestId: string, reply: CredentialReply) => __TAURI_INVOKE<null>("credential_respond", { requestId, reply }),
+	knownHostsList: () => __TAURI_INVOKE<KnownHost[]>("known_hosts_list"),
+	knownHostsRemove: (host: string) => __TAURI_INVOKE<null>("known_hosts_remove", { host }),
+	appSetNetConfig: (config: NetConfig) => __TAURI_INVOKE<null>("app_set_net_config", { config }),
 };
 
 /** Events */
 export const events = {
 	appOpenPaths: makeEvent<AppOpenPaths>("app-open-paths"),
+	cloneEvent: makeEvent<CloneEvent>("clone-event"),
+	credentialPrompt: makeEvent<CredentialPrompt>("credential-prompt"),
 	repoChanged: makeEvent<RepoChanged_Deserialize>("repo-changed"),
 };
 
@@ -298,6 +309,27 @@ export type BranchInfo = {
 	detached: boolean,
 };
 
+/**  克隆任务进度事件（tauri-specta 事件 `CloneEvent`）。 */
+export type CloneEvent = {
+	task_id: number,
+	/**  `start` | `progress` | `done` | `cancelled` | `failed` */
+	phase: string,
+	/**  进度阶段：receiving / resolving / updating / counting / … */
+	stage: string | null,
+	percent: number | null,
+	message: string,
+	error: AppError | null,
+};
+
+/**  克隆请求参数（命令层打包，避免 8 参数命令）。 */
+export type CloneRequest = {
+	url: string,
+	dest: string,
+	depth: number | null,
+	single_branch: boolean,
+	recurse_submodules: boolean,
+};
+
 /**  Commit metadata + changed files (P5 提交详情). */
 export type CommitDetail = {
 	commit: CommitInfo,
@@ -340,6 +372,50 @@ export type CommitResult = {
 	short_hash: string,
 	message: string,
 };
+
+/**  凭据管理页条目（凭据索引，不含机密）。 */
+export type CredentialEntry = CredentialEntry_Serialize | CredentialEntry_Deserialize;
+
+/**  凭据管理页条目（凭据索引，不含机密）。 */
+export type CredentialEntry_Deserialize = {
+	key: string,
+	host: string,
+	username: string,
+	/**  Unix 秒（i32 到 2038 年足够，避免 specta BigInt 限制）。 */
+	updated_at: string,
+};
+
+/**  凭据管理页条目（凭据索引，不含机密）。 */
+export type CredentialEntry_Serialize = {
+	key: string,
+	host: string,
+	username: string,
+	/**  Unix 秒（i32 到 2038 年足够，避免 specta BigInt 限制）。 */
+	updated_at: string,
+};
+
+/**
+ *  `credential://request` 事件负载：前端据此渲染三动作对话框
+ *  （Submit / Cancel / Remember）。
+ */
+export type CredentialPrompt = 
+/**  HTTPS 凭据请求（credential helper get 未命中）。 */
+{ kind: "https"; request_id: string; protocol: string; host: string; path: string | null; username: string | null } | 
+/**  askpass 提示（口令短语 / 用户名 / 密码兜底）。 */
+{ kind: "askpass"; request_id: string; prompt: string; 
+/**  提示是索取用户名（普通输入框）还是机密（密码框）。 */
+is_secret: boolean } | 
+/**  SSH host key 首次确认（指纹展示 + 信任记忆）。 */
+{ kind: "host_key"; request_id: string; prompt: string; fingerprint: string | null; host: string | null };
+
+/**  前端 `credential_respond` 的应答（PLAN P7 三动作）。 */
+export type CredentialReply = 
+/**  HTTPS/askpass 提交；`remember` = 写入 keychain（批准后生效，见 §6）。 */
+{ action: "submit"; username: string | null; secret: string | null; remember: boolean } | 
+/**  host key：信任（应答 yes；remember = 存入信任库）。 */
+{ action: "trust_host_key"; remember: boolean } | 
+/**  用户取消 → CredentialCancelled。 */
+{ action: "cancel" };
 
 export type DiffFile = {
 	old_path: string | null,
@@ -544,6 +620,12 @@ export type GroupsFile_Serialize = {
 	repos: { [key in string]: RepoMeta_Serialize },
 };
 
+/**  已信任的 SSH host key 条目。 */
+export type KnownHost = {
+	host: string,
+	fingerprint: string,
+};
+
 /**
  *  One selected diff line for line-level operations (P4 行级暂存): indices
  *  into the cached [`DiffModel`] the frontend is displaying.
@@ -558,6 +640,14 @@ export type LineSelection = {
 export type MergeResult = {
 	success: boolean,
 	message: string,
+};
+
+/**  前端下发的网络配置（settings.json 持久化在前端 store）。 */
+export type NetConfig = {
+	/**  `inherit` | `none` | `custom` */
+	proxy_mode: string,
+	proxy_url: string | null,
+	ssh_key_path: string | null,
 };
 
 export type PullResult = {
