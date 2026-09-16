@@ -363,7 +363,8 @@
 
     <!-- list + detail -->
     <div class="flex min-h-0 flex-1">
-      <div class="min-w-0 flex-1">
+      <!-- flex-col so VirtualList's min-h-0 flex-1 actually constrains its height -->
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col">
         {#if rows.length === 0 && !loading}
           <EmptyState icon={GitBranch} title={t("history.empty")} hint={t("history.emptyHint")} />
         {:else}
@@ -413,14 +414,18 @@
       </div>
 
       {#if detailOpen && selectedHash}
-        <div class="shrink-0">
-          <PanelResizer
-            bind:width={settings.historyDetailWidth}
-            min={280}
-            max={720}
-            bind:dragging={detailResizing}
-          />
-        </div>
+        <!-- direct flex child: stretches to full row height (a wrapper div
+             would collapse the 4px grip to height 0 and make it undraggable) -->
+        <!-- sized panel sits right of the grip → side="right" keeps the
+             grip tracking the cursor (dragging right narrows the detail) -->
+        <PanelResizer
+          bind:width={settings.historyDetailWidth}
+          side="right"
+          min={280}
+          max={720}
+          bind:dragging={detailResizing}
+          onCommit={(w) => void settings.setHistoryDetailWidth(w)}
+        />
         <CommitDetailPanel hash={selectedHash} onClose={() => (detailOpen = false)} />
       {/if}
     </div>

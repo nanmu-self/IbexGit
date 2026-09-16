@@ -508,6 +508,7 @@
     bind:dragging={fileListDragging}
     min={220}
     max={560}
+    onCommit={(w) => void settings.setFileListWidth(w)}
   />
 
   <!-- 差异 + 提交框 -->
