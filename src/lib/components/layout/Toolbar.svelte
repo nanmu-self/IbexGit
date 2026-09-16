@@ -97,7 +97,17 @@
             disabled={!active || netBusy}
             onclick={() => requestRefAction({ kind: "push" })}
           >
-            <ArrowUpFromLine class="size-4" />
+            <span class="relative">
+              <ArrowUpFromLine class="size-4" />
+              <!-- 待推送数（ahead of upstream），随每次 refresh 更新 -->
+              {#if active && active.ahead > 0}
+                <span
+                  class="absolute -top-1.5 -right-2.5 flex min-w-3.5 justify-center rounded-full bg-primary px-1 text-[9px] leading-[14px] font-semibold text-primary-foreground tabular-nums"
+                >
+                  {active.ahead > 99 ? "99+" : active.ahead}
+                </span>
+              {/if}
+            </span>
             {t("toolbar.push")}
           </Button>
         {/snippet}
