@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+# 双 bin 目标（主程序 + credential-helper，P7）下 `cargo run`/`tauri dev` 的
+# 默认选择，否则报 "could not determine which binary to run"。
+default-run = "ibexgit"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
