@@ -9,7 +9,9 @@ import { git, repo, workspace, normalizeError } from "$lib/git";
 import { onRepoChanged, onAppOpenPaths } from "$lib/git/events";
 import type {
   BranchInfo,
+  ConflictSummary,
   FileStatus,
+  OperationState,
   RecentRepo,
   RepoChanged,
   RepoGroup,
@@ -42,6 +44,10 @@ export interface RepoTab {
   behind: number;
   files: FileStatus[];
   branches: BranchInfo[];
+  /** In-progress merge/rebase/cherry-pick/… (P8 banner). */
+  operation: OperationState | null;
+  /** Conflicted paths with type + block counts (P8 list badges). */
+  conflicts: ConflictSummary[];
   refreshing: boolean;
   /** Last status+branches round trip (SLA 埋点: IPC + re-read portion). */
   lastRefreshMs: number | null;
@@ -173,6 +179,8 @@ class ReposStore {
         behind: 0,
         files: [],
         branches: [],
+        operation: null,
+        conflicts: [],
         refreshing: false,
         lastRefreshMs: null,
       });
@@ -276,6 +284,17 @@ class ReposStore {
         git.branches(id),
       ]);
       this.#apply(id, files, branches, performance.now() - t0);
+      // P8: operation state + conflict list piggyback on the refresh
+      // cycle (cheap reads; failures must not break the status refresh).
+      const [operation, conflicts] = await Promise.all([
+        git.operationState(id).catch(() => null),
+        git.conflictList(id).catch(() => []),
+      ]);
+      const t = this.tabs.find((x) => x.id === id);
+      if (t) {
+        t.operation = operation;
+        t.conflicts = conflicts;
+      }
     } catch (raw) {
       const e = normalizeError(raw);
       const t = this.tabs.find((x) => x.id === id);

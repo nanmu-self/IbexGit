@@ -28,6 +28,10 @@ export type {
   CommitFileStat,
   CommitInfo,
   CommitResult,
+  ConflictBlock,
+  ConflictModel,
+  ConflictSummary,
+  ConflictType,
   CredentialEntry,
   CredentialPrompt,
   CredentialReply,
@@ -47,6 +51,8 @@ export type {
   KnownHost,
   LineSelection,
   NetConfig,
+  OperationKind,
+  OperationState,
   RecentRepo,
   RecoveryEntry,
   ReflogEntry,
@@ -276,6 +282,27 @@ export const git = {
   /** Restore file(s) from a revision into the worktree (snapshot-backed). */
   restoreFileVersion: (id: RepoId, rev: string, paths: string[]) =>
     wrap(commands.gitRestoreFileVersion(id, rev, paths)),
+
+  // ---- conflicts & operation state (P8) ----
+  /** All conflicted paths with lightweight classification. */
+  conflictList: (id: RepoId) => wrap(commands.gitConflictList(id)),
+  /** Full model for one conflicted path (editor input). */
+  conflictModel: (id: RepoId, path: string) =>
+    wrap(commands.gitConflictModel(id, path)),
+  /** Write the resolved document back and stage the path. */
+  resolveConflictText: (id: RepoId, path: string, text: string) =>
+    wrap(commands.gitResolveConflictText(id, path, text)),
+  /** Resolve by side: "ours" | "theirs" | "delete". */
+  resolveConflictSide: (id: RepoId, path: string, action: "ours" | "theirs" | "delete") =>
+    wrap(commands.gitResolveConflictSide(id, path, action)),
+  /** In-progress operation (merge/rebase/cherry-pick/…), if any. */
+  operationState: (id: RepoId) => wrap(commands.gitOperationState(id)),
+  operationAbort: (id: RepoId) => wrap(commands.gitOperationAbort(id)),
+  operationContinue: (id: RepoId) => wrap(commands.gitOperationContinue(id)),
+  operationSkip: (id: RepoId) => wrap(commands.gitOperationSkip(id)),
+  /** Open an external merge tool (git built-in name or custom command). */
+  mergetool: (id: RepoId, path: string, tool?: string, cmd?: string) =>
+    wrap(commands.gitMergetool(id, path, tool ?? null, cmd ?? null)),
 };
 
 /**

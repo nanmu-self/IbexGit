@@ -9,12 +9,15 @@
     stagedCount,
     repoReady,
     busy = false,
+    mode = "normal",
     oncommit,
     onamend = null,
   }: {
     stagedCount: number;
     repoReady: boolean;
     busy?: boolean;
+    /** P8: normal | merge | cherry_pick | revert (operation commit). */
+    mode?: "normal" | "merge" | "cherry_pick" | "revert";
     oncommit: (message: string, amend: boolean, noVerify: boolean, andPush: boolean) => Promise<void>;
     /** Called when Amend is checked; resolves to the HEAD message (or null). */
     onamend?: (() => Promise<string | null>) | null;
@@ -82,6 +85,11 @@
 </script>
 
 <div class="space-y-2 border-t bg-background p-2.5">
+  {#if mode !== "normal"}
+    <div class="text-xs text-amber-600 dark:text-amber-400">
+      {t(`conflict.commitHint.${mode}`)}
+    </div>
+  {/if}
   <Input
     placeholder={t("commit.subject")}
     bind:value={subject}
@@ -98,18 +106,22 @@
     class="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
   ></textarea>
   <div class="flex items-center gap-4 text-xs text-muted-foreground">
-    <label class="flex items-center gap-1.5">
-      <Checkbox bind:checked={amend} disabled={!repoReady} />
-      {t("commit.amend")}
-    </label>
+    {#if mode === "normal"}
+      <label class="flex items-center gap-1.5">
+        <Checkbox bind:checked={amend} disabled={!repoReady} />
+        {t("commit.amend")}
+      </label>
+    {/if}
     <label class="flex items-center gap-1.5">
       <Checkbox bind:checked={noVerify} disabled={!repoReady} />
       {t("commit.noVerify")}
     </label>
-    <label class="flex items-center gap-1.5">
-      <Checkbox bind:checked={andPush} disabled={!repoReady} />
-      {t("commit.andPush")}
-    </label>
+    {#if mode === "normal"}
+      <label class="flex items-center gap-1.5">
+        <Checkbox bind:checked={andPush} disabled={!repoReady} />
+        {t("commit.andPush")}
+      </label>
+    {/if}
     <Button
       class="ml-auto h-8 min-w-36 text-xs"
       disabled={!canCommit}
@@ -117,7 +129,17 @@
       onclick={submit}
     >
       <GitCommitHorizontal class="size-3.5" data-icon="inline-start" />
-      {amend ? t("commit.amendButton") : stagedCount > 0 ? t("commit.buttonN", { n: stagedCount }) : t("commit.button")}
+      {mode === "merge"
+        ? t("conflict.commitButton.merge")
+        : mode === "cherry_pick"
+          ? t("conflict.commitButton.cherry_pick")
+          : mode === "revert"
+            ? t("conflict.commitButton.revert")
+            : amend
+              ? t("commit.amendButton")
+              : stagedCount > 0
+                ? t("commit.buttonN", { n: stagedCount })
+                : t("commit.button")}
     </Button>
   </div>
 </div>

@@ -3,7 +3,7 @@
   import { VirtualList } from "$lib/components/ui/virtual-list";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { t } from "$lib/i18n";
-  import type { FileStatus } from "$lib/git";
+  import type { ConflictSummary, ConflictType, FileStatus } from "$lib/git";
   import CirclePlus from "@lucide/svelte/icons/circle-plus";
   import CircleMinus from "@lucide/svelte/icons/circle-minus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
@@ -22,6 +22,7 @@
     activeKey = null,
     filtered = false,
     selection,
+    conflictMeta = {},
     onrowclick,
     onrowcontext,
     onstage,
@@ -37,6 +38,8 @@
     filtered?: boolean;
     /** Reactive SvelteSet of selected row keys (`source:path`). */
     selection: Set<string>;
+    /** P8: path → conflict classification for badges. */
+    conflictMeta?: Record<string, ConflictSummary>;
     onrowclick: (file: FileStatus, source: "worktree" | "staged", e: MouseEvent) => void;
     onrowcontext: (file: FileStatus, source: "worktree" | "staged", e: MouseEvent) => void;
     onstage: (paths: string[]) => void;
@@ -79,6 +82,16 @@
       return { letter: "M", cls: "bg-amber-500/90 text-white", title: "modified" };
     return { letter: "M", cls: "bg-muted-foreground/70 text-white", title: s };
   }
+
+  const TYPE_KEY: Record<ConflictType, string> = {
+    content: "content",
+    delete_modify: "delete_modify",
+    add_add: "add_add",
+    rename: "rename",
+    rename_delete: "rename_delete",
+    binary: "binary",
+    directory_file: "directory_file",
+  };
 </script>
 
 <div class="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -117,6 +130,23 @@
         <span class="min-w-0 flex-1 truncate">
           <span class="text-muted-foreground/60">{dir}</span>{name}
         </span>
+        {#if conflictMeta[file.path]}
+          {@const meta = conflictMeta[file.path]}
+          <span
+            class="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-600 dark:text-red-400"
+            title={t(`conflict.type.${TYPE_KEY[meta.conflict_type]}`)}
+          >
+            {t(`conflict.type.${TYPE_KEY[meta.conflict_type]}`)}
+          </span>
+          {#if meta.block_count > 0}
+            <span
+              class="rounded-full bg-red-500/15 px-1.5 text-[10px] leading-4 text-red-500"
+              title={t("conflict.blocksN", { n: meta.block_count })}
+            >
+              {meta.block_count}
+            </span>
+          {/if}
+        {/if}
         <span class="text-[10px] text-red-500/80">{file.status}</span>
         <button
           type="button"

@@ -4,6 +4,8 @@
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
   import DiffViewer from "$lib/components/diff/DiffViewer.svelte";
+  import ConflictEditor from "$lib/components/merge/ConflictEditor.svelte";
+  import OperationBanner from "$lib/components/merge/OperationBanner.svelte";
   import StatusSections from "./StatusSections.svelte";
   import StatusTree from "./StatusTree.svelte";
   import CommitBox from "./CommitBox.svelte";
@@ -19,6 +21,7 @@
     git,
     recovery,
     normalizeError,
+    type ConflictSummary,
     type FileStatus,
     type DiffModel,
     type LineSelection,
@@ -41,6 +44,17 @@
     repos.ui.selected_file
       ? `${repos.ui.selected_file.source}:${repos.ui.selected_file.path}`
       : null
+  );
+
+  // ---- P8 conflict/operation state ----
+  const conflictMeta = $derived.by(() => {
+    const map: Record<string, ConflictSummary> = {};
+    for (const c of active?.conflicts ?? []) map[c.path] = c;
+    return map;
+  });
+  const selectedIsConflict = $derived(
+    repos.ui.selected_file?.source === "worktree" &&
+      repos.ui.selected_file.path in conflictMeta,
   );
 
   // ---- sections (filtered) ----
@@ -132,6 +146,12 @@
     const tab = repos.active;
     const refreshMark = tab?.lastRefreshMs;
     if (!sel || !tab) {
+      diffModel = null;
+      diffLoading = false;
+      return;
+    }
+    // Conflicted paths render through the ConflictEditor instead.
+    if (sel.source === "worktree" && sel.path in conflictMeta) {
       diffModel = null;
       diffLoading = false;
       return;
@@ -327,6 +347,29 @@
 
   // ---- commit ----
   let commitBusy = $state(false);
+  let commitBox = $state<{
+    loadMessage: (full: string | null) => void;
+  } | null>(null);
+
+  // P8: prefill the commit message from MERGE_MSG while a merge /
+  // cherry-pick / revert is in progress (git commit --cleanup=strip
+  // removes the "# Conflicts:" comment block on the Rust side). Only
+  // load once per distinct message — refresh cycles replace the
+  // operation object and must not clobber user edits.
+  let lastPrefill = $state<string | null>(null);
+  $effect(() => {
+    const msg = active?.operation?.message ?? null;
+    if (msg && msg !== lastPrefill) {
+      lastPrefill = msg;
+      commitBox?.loadMessage(msg);
+    }
+  });
+
+  const commitMode = $derived.by(() => {
+    const kind = active?.operation?.kind;
+    if (kind === "merge" || kind === "cherry_pick" || kind === "revert") return kind;
+    return "normal" as const;
+  });
 
   async function loadHeadMessage(): Promise<string | null> {
     const id = repos.activeId;
@@ -424,7 +467,20 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1">
+<div class="flex min-h-0 flex-1 flex-col">
+  {#if active?.operation}
+    <OperationBanner
+      repoId={active.id}
+      operation={active.operation}
+      conflictCount={active.conflicts.length}
+      onchanged={() => void repos.refresh(active.id)}
+      onresolve={() => {
+        const first = active.conflicts[0];
+        if (first) repos.updateUi({ selected_file: { path: first.path, source: "worktree" } });
+      }}
+    />
+  {/if}
+  <div class="flex min-h-0 flex-1">
   <!-- 文件列表 -->
   <div
     class="flex min-h-0 flex-col border-r {!fileListDragging
@@ -479,6 +535,7 @@
         staged={sections.staged}
         unstaged={sections.unstaged}
         {activeKey}
+        {conflictMeta}
         filtered={filteredActive}
         {selection}
         onrowclick={onRowClick}
@@ -514,24 +571,39 @@
   <!-- 差异 + 提交框 -->
   <div class="flex min-w-0 flex-1 flex-col">
     <div class="min-h-0 flex-1">
-      <DiffViewer
-        model={diffModel}
-        loading={diffLoading}
-        repoId={active?.id ?? null}
-        ignoreWhitespace={diffIgnoreWs}
-        onlineop={handleLineOp}
-        onexpand={handleExpand}
-        onignorewschange={handleIgnoreWs}
-      />
+      {#if selectedIsConflict && repos.ui.selected_file && active}
+        <ConflictEditor
+          repoId={active.id}
+          path={repos.ui.selected_file.path}
+          revision={active.lastRefreshMs ?? 0}
+          onresolved={() => void repos.refresh(active.id)}
+          onrefresh={() => void repos.refresh(active.id)}
+        />
+      {:else}
+        <DiffViewer
+          model={diffModel}
+          loading={diffLoading}
+          repoId={active?.id ?? null}
+          ignoreWhitespace={diffIgnoreWs}
+          onlineop={handleLineOp}
+          onexpand={handleExpand}
+          onignorewschange={handleIgnoreWs}
+        />
+      {/if}
     </div>
 
-    <CommitBox
-      {stagedCount}
-      repoReady={active !== null}
-      busy={commitBusy}
-      oncommit={handleCommit}
-      onamend={loadHeadMessage}
-    />
+    {#if active?.operation?.kind !== "rebase" && active?.operation?.kind !== "apply"}
+      <CommitBox
+        bind:this={commitBox}
+        {stagedCount}
+        repoReady={active !== null}
+        busy={commitBusy}
+        mode={commitMode}
+        oncommit={handleCommit}
+        onamend={loadHeadMessage}
+      />
+    {/if}
+  </div>
   </div>
 </div>
 
