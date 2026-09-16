@@ -160,6 +160,7 @@
   "conflict.type.rename_delete": "Rename/Delete",
   "conflict.type.binary": "Binary conflict",
   "conflict.type.directory_file": "File/Directory conflict",
+  "conflict.entered": "Conflict occurred — the resolution flow is active",
   "conflict.blocksN": "{n} conflict block(s)",
   "conflict.prev": "Previous conflict",
   "conflict.next": "Next conflict",

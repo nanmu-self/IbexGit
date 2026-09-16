@@ -32,6 +32,20 @@ export function isBusy(id: RepoId | null): boolean {
   return id !== null && netops.busy[id] !== undefined;
 }
 
+/**
+ * P8: after a failed merge/pull/rebase/cherry-pick, detect whether a
+ * conflict flow took over (MERGE_HEAD / rebase state set) → info toast
+ * instead of an error; the OperationBanner guides from here.
+ */
+export async function conflictEntered(id: RepoId): Promise<boolean> {
+  const op = await git.operationState(id).catch(() => null);
+  if (op) {
+    showToast("info", t("conflict.entered"));
+    return true;
+  }
+  return false;
+}
+
 function runOp(id: RepoId, kind: NetOpKind, op: () => Promise<unknown>): Promise<void> {
   if (netops.busy[id]) return Promise.resolve();
   setBusy(id, kind);
@@ -71,7 +85,7 @@ export function runPull(
     await repos.refresh(id);
     if (res.success) {
       showToast("success", t("netops.pullDone"));
-    } else {
+    } else if (!(await conflictEntered(id))) {
       showToast("error", res.message || t("netops.pullFailed"));
     }
   });

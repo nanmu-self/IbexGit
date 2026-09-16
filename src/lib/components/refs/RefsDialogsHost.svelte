@@ -21,7 +21,7 @@
   import { repos } from "$lib/stores/repos.svelte";
   import { refsData, loadRefsData } from "$lib/stores/refsdata.svelte";
   import { onRefAction, type RefAction } from "$lib/stores/refbus";
-  import { runFetch, runPull, runPush } from "$lib/stores/netops.svelte";
+  import { conflictEntered, runFetch, runPull, runPush } from "$lib/stores/netops.svelte";
   import { showToast } from "$lib/stores/toast";
   import { git, recovery, normalizeError, type StashEntry } from "$lib/git";
   import type { BackupRef } from "$lib/git/bindings";
@@ -511,12 +511,17 @@
         const res = await git.merge(repoId, target, ffOnly);
         if (res.success) {
           showToast("success", t("refs.merge.done", { target }));
-        } else {
+        } else if (!(await conflictEntered(repoId))) {
+          // P8: conflict → the banner takes over; only a real failure toasts.
           showToast("error", res.message || t("refs.merge.failed"));
         }
       } else {
-        await git.rebase(repoId, target);
-        showToast("success", t("refs.rebase.done", { target }));
+        try {
+          await git.rebase(repoId, target);
+          showToast("success", t("refs.rebase.done", { target }));
+        } catch (e) {
+          if (!(await conflictEntered(repoId))) throw e;
+        }
       }
       await refreshAll();
     } finally {

@@ -24,6 +24,7 @@
   } from "$lib/git";
   import { repos } from "$lib/stores/repos.svelte";
   import { loadRefsData } from "$lib/stores/refsdata.svelte";
+  import { conflictEntered } from "$lib/stores/netops.svelte";
   import { requestRefAction } from "$lib/stores/refbus";
   import { settings } from "$lib/stores/settings.svelte";
   import { showToast } from "$lib/stores/toast";
@@ -234,11 +235,20 @@
     opBusy = true;
     try {
       if (dialogMode === "cherry-pick") {
-        await git.cherryPick(id, [...dialogHashes].reverse()); // oldest first
-        showToast("success", t("history.cherryPickDone", { n: dialogHashes.length }));
+        try {
+          await git.cherryPick(id, [...dialogHashes].reverse()); // oldest first
+          showToast("success", t("history.cherryPickDone", { n: dialogHashes.length }));
+        } catch (e) {
+          // P8: conflict → banner takeover, dialog closes normally.
+          if (!(await conflictEntered(id))) throw e;
+        }
       } else if (dialogMode === "revert") {
-        await git.revert(id, [...dialogHashes]); // newest first
-        showToast("success", t("history.revertDone", { n: dialogHashes.length }));
+        try {
+          await git.revert(id, [...dialogHashes]); // newest first
+          showToast("success", t("history.revertDone", { n: dialogHashes.length }));
+        } catch (e) {
+          if (!(await conflictEntered(id))) throw e;
+        }
       } else {
         await git.squash(id, [...dialogHashes], squashMessage);
         showToast("success", t("history.squashDone", { n: dialogHashes.length }));

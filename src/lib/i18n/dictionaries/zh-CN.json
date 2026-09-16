@@ -160,6 +160,7 @@
   "conflict.type.rename_delete": "重命名/删除",
   "conflict.type.binary": "二进制冲突",
   "conflict.type.directory_file": "文件/目录冲突",
+  "conflict.entered": "发生冲突，已进入冲突解决流程",
   "conflict.blocksN": "{n} 个冲突块",
   "conflict.prev": "上一个冲突",
   "conflict.next": "下一个冲突",
