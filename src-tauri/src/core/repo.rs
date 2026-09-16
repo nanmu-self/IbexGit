@@ -393,22 +393,26 @@ impl RepoManager {
         }
 
         let g = s.graph.as_mut().expect("cached graph");
+        // First page of a valid cache: serve the loaded rows (≤ batch).
+        // Must run BEFORE the complete-graph check — the empty delta below
+        // is page-append semantics meant for `more` requests only; serving
+        // it to a first-page request wiped the list on every refresh
+        // (history "disappeared" after F5 / a branch switch).
+        if !more {
+            let end = g.rows.len().min(batch as usize);
+            return Ok(GraphPage {
+                rows: g.rows[..end].to_vec(),
+                start: 0,
+                complete: g.complete,
+                width: g.state.width as u32,
+            });
+        }
         if g.complete {
             // Nothing more to load; serve an empty delta.
             return Ok(GraphPage {
                 rows: Vec::new(),
                 start: g.rows.len() as u32,
                 complete: true,
-                width: g.state.width as u32,
-            });
-        }
-        if !more {
-            // First page of a valid cache: serve the loaded rows (≤ batch).
-            let end = g.rows.len().min(batch as usize);
-            return Ok(GraphPage {
-                rows: g.rows[..end].to_vec(),
-                start: 0,
-                complete: g.complete,
                 width: g.state.width as u32,
             });
         }

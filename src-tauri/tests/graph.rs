@@ -198,6 +198,53 @@ async fn graph_pages_lay_out_merged_history() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归：首页请求（more=false）在缓存有效且 complete 时必须返回缓存 rows，
+/// 而不是 `more` 专用的空 delta —— 否则每次点刷新/切分支后（缓存未失效、
+/// 前端 reload 首页）列表会被空页清空（历史"消失"）。
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_first_page_on_fresh_cache_returns_rows() {
+    let dir = build_merged_repo(3);
+    let mgr = RepoManager::new(engine());
+    let id = mgr.open(dir.clone()).await.unwrap();
+
+    let expected = 3 /* base */ + 3 * (2 /* branch */ + 1 /* merge */);
+    let first = mgr
+        .graph_page(id, &GraphFilter::default(), false, 500)
+        .await
+        .unwrap();
+    assert_eq!(first.rows.len(), expected);
+    assert!(first.complete);
+
+    // 模拟前端刷新（F5 / watcher 事件后的 reload）：缓存有效 → 再次首页请求。
+    for _ in 0..3 {
+        let again = mgr
+            .graph_page(id, &GraphFilter::default(), false, 500)
+            .await
+            .unwrap();
+        assert_eq!(again.start, 0);
+        assert_eq!(
+            again.rows.len(),
+            expected,
+            "first page must never be an empty delta"
+        );
+        assert_eq!(
+            again.rows.first().unwrap().commit.hash,
+            first.rows.first().unwrap().commit.hash
+        );
+    }
+
+    // `more` 语义保持不变：complete 缓存上的翻页仍是空 delta。
+    let more = mgr
+        .graph_page(id, &GraphFilter::default(), true, 500)
+        .await
+        .unwrap();
+    assert!(more.rows.is_empty());
+    assert_eq!(more.start as usize, expected);
+
+    mgr.close(id).await.unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// PLAN P5 验收：50+ 分支合并的图形正确（连通性不变量 + lane 上限合理）。
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_50_branches_merge_correctly() {
