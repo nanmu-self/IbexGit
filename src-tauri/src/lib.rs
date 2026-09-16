@@ -91,6 +91,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_discard_lines,
             commands::git_unstage_lines,
             commands::git_file_content,
+            commands::git_file_history,
+            commands::git_blame,
             commands::git_branches,
             commands::recovery_list,
             commands::recovery_restore,

@@ -1394,10 +1394,75 @@ impl engine::GitEngine for CliEngine {
         })
     }
 
-    async fn blame(&self, repo: &str, _path: &str) -> Result<Vec<engine::ReflogEntry>, AppError> {
-        // Blame lands in P9 (own BlameLine type); placeholder until then.
-        let _ = repo;
-        Err(AppError::not_implemented("blame"))
+    async fn file_history(
+        &self,
+        repo: &str,
+        path: &str,
+        limit: u32,
+        start: Option<&str>,
+    ) -> Result<Vec<engine::FileCommit>, AppError> {
+        // --follow tracks the file across renames; --name-status -z carries
+        // the per-commit path (rename entries: status/old/new) so the UI can
+        // fetch the right diff for every entry. See parse_file_history for
+        // the exact record shape.
+        let mut args: Vec<String> = vec![
+            "-C".into(),
+            repo.into(),
+            "log".into(),
+            "--follow".into(),
+            "--no-color".into(),
+            "--format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P".into(),
+            "--name-status".into(),
+            "-z".into(),
+        ];
+        if limit > 0 {
+            // One extra record when paginating: the cursor commit itself,
+            // dropped below (needed so the rename link at the boundary is
+            // re-detected — `--skip` miscounts under --follow).
+            args.push("-n".into());
+            args.push((limit + u32::from(start.is_some())).to_string());
+        }
+        if let Some(s) = start {
+            args.push(s.to_string());
+        }
+        args.push("--".into());
+        args.push(path.into());
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+        if res.exit_code != Some(0) {
+            // Unborn HEAD (fresh repository): empty history, not an error.
+            if res.stderr.contains("does not have any commits") {
+                return Ok(Vec::new());
+            }
+            return Err(AppError::git_command(
+                format!("git exited with code {:?}", res.exit_code),
+                res.stderr,
+                res.stdout,
+            ));
+        }
+        let mut commits = parse::parse_file_history(&res.stdout);
+        if start.is_some() && !commits.is_empty() {
+            // Defensive: only drop when the cursor really heads the page.
+            if commits[0].hash == start.unwrap_or_default() {
+                commits.remove(0);
+            }
+        }
+        Ok(commits)
+    }
+
+    async fn blame(&self, repo: &str, path: &str) -> Result<engine::BlameResult, AppError> {
+        // Porcelain output is locale-independent; paths arrive raw UTF-8
+        // (core.quotepath=false is forced by the runner).
+        let res = self
+            .run(
+                ["-C", repo, "blame", "--porcelain", "--", path],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_blame(&res.stdout))
     }
 
     // =====================

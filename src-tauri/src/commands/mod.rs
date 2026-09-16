@@ -1354,6 +1354,43 @@ pub async fn git_reflog(
 }
 
 // =====================
+// P9: file trace (单文件历史 + Blame)
+// =====================
+
+/// Single-file history with rename following (`git log --follow`),
+/// newest first. `start` = last hash of the previous page (cursor
+/// pagination; see the engine doc). Read-only.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_file_history(
+    id: RepoId,
+    path: String,
+    limit: u32,
+    start: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::FileCommit>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path_root = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .file_history(&path_root, &path, limit, start.as_deref())
+        .await
+}
+
+/// Blame the current worktree version of a path (`git blame --porcelain`).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_blame(
+    id: RepoId,
+    path: String,
+    repos: State<'_, RepoManager>,
+) -> Result<crate::core::engine::BlameResult, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path_root = resolve(&repos, id).await?;
+    repos.engine().blame(&path_root, &path).await
+}
+
+// =====================
 // P6: branch compare + merge/rebase previews
 // =====================
 

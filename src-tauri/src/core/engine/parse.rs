@@ -4,8 +4,9 @@
 //! spawning processes (P1 acceptance: full parser unit-test coverage).
 
 use super::{
-    BackupRef, BranchInfo, CommitFileStat, CommitInfo, DiffFile, DiffHunk, DiffLine, DiffLineKind,
-    DiffModel, DiffSource, FileStatus, IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+    BackupRef, BlameCommit, BlameLine, BlameResult, BranchInfo, CommitFileStat, CommitInfo,
+    DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffSource, FileCommit, FileStatus,
+    IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
 };
 use crate::core::error::AppError;
 
@@ -842,6 +843,237 @@ pub fn parse_backup_refs(output: &str) -> Vec<BackupRef> {
 }
 
 // =====================
+// file history --follow (P9)
+// =====================
+
+/// `true` when the token is a `--name-status` status marker: a single letter
+/// (A/M/D/T/U) or a score-carrying rename/copy marker (`R93`, `C100`).
+/// Status tokens never collide with the 40-hex commit marker that starts the
+/// next record, which makes the interleaved format/name-status stream
+/// unambiguous (paths are consumed positionally after each status token).
+fn is_name_status_token(tok: &str) -> bool {
+    matches!(tok, "A" | "M" | "D" | "T" | "U")
+        || (tok.len() >= 2
+            && (tok.starts_with('R') || tok.starts_with('C'))
+            && tok[1..].bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn is_hex40(tok: &str) -> bool {
+    tok.len() == 40 && tok.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Parse `git log --follow --format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P
+/// --name-status -z -- <path>`.
+///
+/// Record shape with `-z` (verified against git 2.54):
+/// `<H> NUL <h> NUL <an> NUL <ae> NUL <aI> NUL <s> NUL <P> NUL LF`
+/// then the name-status entries — `M NUL path NUL`, renames
+/// `R100 NUL old NUL new NUL` — with no separator before the next record.
+/// The record-terminator newline glues onto the first token after it and is
+/// stripped; a new record begins at a 40-hex token.
+pub fn parse_file_history(output: &str) -> Vec<FileCommit> {
+    let mut toks = output
+        .split('\0')
+        .map(|t| t.strip_prefix('\n').unwrap_or(t))
+        .peekable();
+    let mut out = Vec::new();
+    while let Some(hash) = toks.next() {
+        if hash.is_empty() {
+            continue;
+        }
+        if !is_hex40(hash) {
+            break; // trailing garbage
+        }
+        let (Some(short_hash), Some(author), Some(email), Some(date), Some(message), Some(parents)) = (
+            toks.next(),
+            toks.next(),
+            toks.next(),
+            toks.next(),
+            toks.next(),
+            toks.next(),
+        ) else {
+            break;
+        };
+
+        // Name-status entries: consume complete groups while the next token
+        // is a status marker. With a single filtered path there is exactly
+        // one entry; keep the first for the model. R/C entries carry two
+        // paths (old, new), all others exactly one — tokens are consumed
+        // positionally so the next record's hash is never swallowed.
+        let mut status = String::new();
+        let mut path = String::new();
+        let mut orig_path = None;
+        let mut score = None;
+        while toks
+            .peek()
+            .is_some_and(|t| !t.is_empty() && is_name_status_token(t))
+        {
+            let st = toks.next().unwrap();
+            let Some(p1) = toks.next() else {
+                break;
+            };
+            if status.is_empty() {
+                let letter = st.chars().next().unwrap_or('M').to_string();
+                score = st[letter.len()..].parse::<u32>().ok();
+                status = letter.clone();
+                if letter == "R" || letter == "C" {
+                    orig_path = Some(p1.to_string());
+                    path = toks.next().unwrap_or_default().to_string();
+                } else {
+                    path = p1.to_string();
+                }
+            } else if st.starts_with('R') || st.starts_with('C') {
+                // Rarity guard: consume the extra path of later two-path
+                // entries so the walk stays aligned (first entry kept).
+                let _ = toks.next();
+            }
+        }
+        if status.is_empty() {
+            continue; // no entry for the filtered path — skip defensively
+        }
+        out.push(FileCommit {
+            hash: hash.to_string(),
+            short_hash: short_hash.to_string(),
+            author: author.to_string(),
+            email: email.to_string(),
+            date: date.to_string(),
+            message: message.to_string(),
+            parents: parents.split_whitespace().map(|s| s.to_string()).collect(),
+            path,
+            orig_path,
+            status,
+            score,
+        });
+    }
+    out
+}
+
+// =====================
+// blame --porcelain (P9)
+// =====================
+
+/// sha git uses for working-tree lines that are not committed yet.
+const BLAME_UNCOMMITTED_SHA: &str = "0000000000000000000000000000000000000000";
+
+/// unix ts + `+HHMM` tz offset → ISO 8601 (git `%aI` style).
+fn iso_from_ts_tz(ts: &str, tz: &str) -> String {
+    let Ok(secs) = ts.parse::<i64>() else {
+        return String::new();
+    };
+    use chrono::FixedOffset;
+    let offset = (|| {
+        let bytes = tz.as_bytes();
+        if bytes.len() != 5 || (bytes[0] != b'+' && bytes[0] != b'-') {
+            return None;
+        }
+        let hh: i32 = tz.get(1..3)?.parse().ok()?;
+        let mm: i32 = tz.get(3..5)?.parse().ok()?;
+        let sign = if bytes[0] == b'-' { -1 } else { 1 };
+        FixedOffset::east_opt(sign * (hh * 3600 + mm * 60))
+    })()
+    // Unknown tz → UTC rather than failure.
+    .or_else(|| FixedOffset::east_opt(0));
+    chrono::DateTime::from_timestamp(secs, 0)
+        .map(|utc| utc.with_timezone(&offset.unwrap()))
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
+        .unwrap_or_default()
+}
+
+/// Parse `git blame --porcelain -- <path>`.
+///
+/// Per line: a header `<sha> <origNo> <finalNo> [<groupSize>]`, then — only
+/// for the first line of a commit — the metadata block (`author` …,
+/// optional `boundary`, optional `previous`, terminated by `filename`),
+/// then the content line prefixed with a TAB. Content lines never start
+/// with a TAB-stripped header shape, and metadata keys are disjoint from
+/// headers, so a single line walk is unambiguous.
+pub fn parse_blame(output: &str) -> BlameResult {
+    let mut out = BlameResult::default();
+    let mut idx_by_sha: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    // split('\n') instead of lines(): content must keep CRLF fidelity
+    // (see PLAN P4: str::lines() 会吞 \r).
+    let mut it = output.split('\n').peekable();
+    while let Some(header) = it.next() {
+        if header.is_empty() {
+            continue;
+        }
+        let mut parts = header.split(' ');
+        let sha = parts.next().unwrap_or("");
+        if !is_hex40(sha) {
+            continue; // defensive: only commit headers start a record
+        }
+        let orig_no = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+        let final_no = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+        // group size (4th field) is redundant — ignored.
+
+        let commit_idx = if let Some(i) = idx_by_sha.get(sha) {
+            *i
+        } else {
+            let mut c = BlameCommit {
+                hash: sha.to_string(),
+                short_hash: sha[..7.min(sha.len())].to_string(),
+                author: String::new(),
+                email: String::new(),
+                date: String::new(),
+                summary: String::new(),
+                path: String::new(),
+                boundary: false,
+                uncommitted: sha == BLAME_UNCOMMITTED_SHA,
+            };
+            let mut ts = String::new();
+            let mut tz = String::new();
+            // Metadata until `filename` (its terminator) or the next record.
+            while let Some(line) = it.peek() {
+                if line.starts_with('\t') {
+                    break;
+                }
+                let mut kv = line.splitn(2, ' ');
+                let key = kv.next().unwrap_or("");
+                if is_hex40(key) {
+                    break; // next record's header
+                }
+                let value = kv.next().unwrap_or("");
+                it.next();
+                match key {
+                    "author" => c.author = value.to_string(),
+                    "author-mail" => {
+                        c.email = value.trim_matches(|c| c == '<' || c == '>').to_string()
+                    }
+                    "author-time" => ts = value.to_string(),
+                    "author-tz" => tz = value.to_string(),
+                    "summary" => c.summary = value.to_string(),
+                    "filename" => c.path = value.to_string(),
+                    "boundary" => c.boundary = true,
+                    _ => {} // committer-* / previous — not needed by the UI
+                }
+            }
+            c.date = iso_from_ts_tz(&ts, &tz);
+            let idx = out.commits.len() as u32;
+            out.commits.push(c);
+            idx_by_sha.insert(sha.to_string(), idx);
+            idx
+        };
+
+        // Content line (TAB-prefixed); strip one trailing CR (CRLF files).
+        let content = match it.peek() {
+            Some(l) if l.starts_with('\t') => {
+                let l = it.next().unwrap();
+                let raw = &l[1..];
+                raw.strip_suffix('\r').unwrap_or(raw)
+            }
+            _ => "", // header without content (defensive; git always emits it)
+        };
+        out.lines.push(BlameLine {
+            commit: commit_idx,
+            orig_no,
+            final_no,
+            content: content.to_string(),
+        });
+    }
+    out
+}
+
+// =====================
 // tests
 // =====================
 
@@ -1625,5 +1857,199 @@ mod clone_progress_tests {
     fn done_lines_without_percent() {
         let p = parse("Receiving objects: 100% (273/273), done.");
         assert_eq!(p.percent, Some(100));
+    }
+}
+
+#[cfg(test)]
+mod p9_file_trace_tests {
+    use super::*;
+
+    // Format under test (cli.rs::file_history):
+    // %H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P + --name-status -z
+
+    fn rec(hash: &str, author: &str, date: &str, msg: &str, parents: &str) -> String {
+        format!("{hash}\0{hash}1\0{author}\0{author}@x\0{date}\0{msg}\0{parents}\0\n")
+    }
+
+    // ---------- parse_file_history ----------
+
+    #[test]
+    fn file_history_modify_only() {
+        let raw = format!(
+            "{}M\0src/a.rs\0{}M\0src/a.rs\0",
+            rec(
+                &"a".repeat(40),
+                "Ann",
+                "2026-01-02T10:00:00+08:00",
+                "second",
+                &"b".repeat(40)
+            ),
+            rec(
+                &"b".repeat(40),
+                "Bob",
+                "2026-01-01T10:00:00+08:00",
+                "first",
+                ""
+            )
+        );
+        let out = parse_file_history(&raw);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].hash, "a".repeat(40));
+        assert_eq!(out[0].path, "src/a.rs");
+        assert_eq!(out[0].status, "M");
+        assert_eq!(out[0].orig_path, None);
+        assert_eq!(out[0].parents, vec!["b".repeat(40)]);
+        assert_eq!(out[1].status, "M");
+        assert!(out[1].parents.is_empty());
+    }
+
+    #[test]
+    fn file_history_rename_entry_carries_old_and_new_path() {
+        // rename commit R100: status, old, new — then the next record.
+        let raw = format!(
+            "{}R100\0f.txt\0d/g.txt\0{}A\0f.txt\0",
+            rec(
+                &"a".repeat(40),
+                "Ann",
+                "2026-01-02T10:00:00+08:00",
+                "rename",
+                &"b".repeat(40)
+            ),
+            rec(
+                &"b".repeat(40),
+                "Bob",
+                "2026-01-01T10:00:00+08:00",
+                "first",
+                ""
+            )
+        );
+        let out = parse_file_history(&raw);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].status, "R");
+        assert_eq!(out[0].score, Some(100));
+        assert_eq!(out[0].orig_path.as_deref(), Some("f.txt"));
+        assert_eq!(out[0].path, "d/g.txt");
+        // pre-rename history keeps the old path
+        assert_eq!(out[1].path, "f.txt");
+    }
+
+    #[test]
+    fn file_history_chinese_and_typed_paths() {
+        let raw = format!(
+            "{}M\0中文/文档.md\0",
+            rec(&"a".repeat(40), "安", "2026-01-01T00:00:00Z", "标题", "")
+        );
+        let out = parse_file_history(&raw);
+        assert_eq!(out[0].path, "中文/文档.md");
+    }
+
+    #[test]
+    fn file_history_skips_empty_token_and_stops_on_garbage() {
+        // trailing NUL → empty token; non-hex token terminates the stream.
+        let raw = format!("{}M\0a.rs\0\0", rec(&"a".repeat(40), "A", "t", "m", ""));
+        let out = parse_file_history(&raw);
+        assert_eq!(out.len(), 1);
+        assert_eq!(parse_file_history("nonsense"), Vec::<FileCommit>::new());
+    }
+
+    #[test]
+    fn file_history_subject_looking_like_hex_stays_positional() {
+        // 40-hex *subject* is a positional format field — consumed, never
+        // mistaken for the next record (which starts after the name-status).
+        let subject = "F".repeat(40);
+        let raw = format!(
+            "{}M\0a.rs\0{}M\0a.rs\0",
+            rec(&"a".repeat(40), "A", "t", &subject, &"b".repeat(40)),
+            rec(&"b".repeat(40), "B", "t", "plain", "")
+        );
+        let out = parse_file_history(&raw);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].message, subject);
+    }
+
+    // ---------- parse_blame ----------
+
+    const SHA1: &str = "1111111111111111111111111111111111111111";
+    const SHA2: &str = "2222222222222222222222222222222222222222";
+
+    fn meta(author: &str, ts: &str, tz: &str, summary: &str, path: &str) -> String {
+        format!(
+            "author {author}\nauthor-mail <{author}@x>\nauthor-time {ts}\nauthor-tz {tz}\n\
+             committer {author}\ncommitter-mail <{author}@x>\ncommitter-time {ts}\n\
+             committer-tz {tz}\nsummary {summary}\nboundary\nfilename {path}\n"
+        )
+    }
+
+    #[test]
+    fn blame_basic_attribution_and_dedup() {
+        let raw = format!(
+            "{SHA1} 1 1 1\n{}\tline one\n{SHA1} 2 2 1\n\tline two\n{SHA2} 3 3 1\n{}\tline three\n",
+            meta("Ann", "1700000000", "+0800", "c1", "a.txt"),
+            meta("Bob", "1700000100", "-0530", "c2", "a.txt"),
+        );
+        let out = parse_blame(&raw);
+        assert_eq!(out.commits.len(), 2);
+        assert_eq!(out.lines.len(), 3);
+        assert_eq!(out.commits[0].hash, SHA1);
+        assert_eq!(out.commits[0].author, "Ann");
+        assert_eq!(out.commits[0].path, "a.txt");
+        assert!(out.commits[0].boundary);
+        assert!(!out.commits[0].uncommitted);
+        // author ts+tz → ISO with offset
+        assert_eq!(out.commits[0].date, "2023-11-15T06:13:20+08:00");
+        assert_eq!(out.commits[1].date, "2023-11-14T16:45:00-05:30");
+        // lines 1+2 share commit index 0; line 3 → commit 1
+        assert_eq!(out.lines[0].commit, 0);
+        assert_eq!(out.lines[1].commit, 0);
+        assert_eq!(out.lines[2].commit, 1);
+        assert_eq!(out.lines[0].content, "line one");
+        assert_eq!(out.lines[2].orig_no, 3);
+        assert_eq!(out.lines[2].final_no, 3);
+    }
+
+    #[test]
+    fn blame_uncommitted_lines_use_zero_sha_pseudo_commit() {
+        let raw = format!(
+            "{SHA1} 1 1 1\n{}\tcommitted\n{BLAME_UNCOMMITTED_SHA} 2 2 1\n{}\tlocal edit\n",
+            meta("Ann", "1700000000", "+0000", "c1", "a.txt"),
+            "author Not Committed Yet\nauthor-mail <not.committed.yet>\n\
+             author-time 1700000500\nauthor-tz +0000\nsummary Version of a.txt\n\
+             filename a.txt\n",
+        );
+        let out = parse_blame(&raw);
+        assert_eq!(out.commits.len(), 2);
+        assert!(!out.commits[0].uncommitted);
+        assert!(out.commits[1].uncommitted);
+        assert_eq!(out.lines[1].commit, 1);
+        assert_eq!(out.lines[1].content, "local edit");
+    }
+
+    #[test]
+    fn blame_preserves_crlf_and_empty_content() {
+        // CRLF file: git emits "\tcontent\r\n" — the trailing CR is stripped
+        // for display; a genuinely empty content line stays empty. The
+        // second line re-uses the seen commit (no metadata block repeat).
+        let raw = format!(
+            "{SHA1} 1 1 2\n{}\tfirst\r\n{SHA1} 2 2 2\n\t\n",
+            meta("Ann", "1700000000", "+0000", "c1", "a.txt"),
+        );
+        let out = parse_blame(&raw);
+        assert_eq!(out.lines.len(), 2);
+        assert_eq!(out.commits.len(), 1);
+        assert_eq!(out.lines[0].content, "first");
+        assert_eq!(out.lines[1].content, "");
+        assert_eq!(out.lines[1].commit, 0);
+    }
+
+    #[test]
+    fn blame_empty_file_yields_empty_result() {
+        assert_eq!(parse_blame(""), BlameResult::default());
+    }
+
+    #[test]
+    fn blame_iso_fallback_on_bad_ts() {
+        assert_eq!(iso_from_ts_tz("nope", "+0800"), "");
+        // unknown tz → UTC ISO rather than failure
+        assert_eq!(iso_from_ts_tz("0", "xxxxx"), "1970-01-01T00:00:00+00:00");
     }
 }

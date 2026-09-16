@@ -480,8 +480,9 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::core::engine::{
-        BackupRef, BranchInfo, CloneOptions, CommitInfo, CommitResult, DiffModel, DiffSource,
-        IndexEntry, PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, DiffModel,
+        DiffSource, FileCommit, IndexEntry, PullResult, RebaseState, ReflogEntry, RemoteInfo,
+        StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -758,7 +759,16 @@ mod tests {
         ) -> Result<crate::core::engine::MergeResult, AppError> {
             Err(err("merge"))
         }
-        async fn blame(&self, _: &str, _: &str) -> Result<Vec<ReflogEntry>, AppError> {
+        async fn file_history(
+            &self,
+            _: &str,
+            _: &str,
+            _: u32,
+            _: Option<&str>,
+        ) -> Result<Vec<FileCommit>, AppError> {
+            Err(err("file_history"))
+        }
+        async fn blame(&self, _: &str, _: &str) -> Result<BlameResult, AppError> {
             Err(err("blame"))
         }
 

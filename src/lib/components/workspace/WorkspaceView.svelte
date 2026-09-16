@@ -29,6 +29,7 @@
   } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
   import { runPush } from "$lib/stores/netops.svelte";
+  import { fileView } from "$lib/stores/fileview.svelte";
   import { onAction } from "$lib/keyboard";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -307,8 +308,13 @@
   let ignorePaths = $state<string[]>([]);
   let ignoreOpen = $state(false);
 
-  function showPlaceholder(feature: string): void {
-    showToast("info", t("common.comingSoonPhase", { feature, phase: "P9" }));
+  // P9：文件右键 → 单文件历史 / Blame（冲突行同样走此处，入口打通）。
+  function openFileHistory(target: ContextTarget): void {
+    fileView.show(target.path, "history");
+  }
+
+  function openBlame(target: ContextTarget): void {
+    fileView.show(target.path, "blame");
   }
 
   async function reveal(target: ContextTarget): Promise<void> {
@@ -655,8 +661,8 @@
 <FileContextMenu
   target={ctxTarget}
   onclose={() => (ctxTarget = null)}
-  onhistory={(tgt) => showPlaceholder(t("workspace.ctx.history"))}
-  onblame={(tgt) => showPlaceholder(t("workspace.ctx.blame"))}
+  onhistory={openFileHistory}
+  onblame={openBlame}
   onreveal={reveal}
   oncopypath={copyPath}
   onignore={askIgnore}

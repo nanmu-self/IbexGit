@@ -250,6 +250,14 @@ export const commands = {
 	 *  `:0` for the index, or a commit-ish). Oversized files return `data: null`.
 	 */
 	gitFileContent: (id: RepoId_Deserialize, path: string, rev: string | null) => __TAURI_INVOKE<FileContent>("git_file_content", { id, path, rev }),
+	/**
+	 *  Single-file history with rename following (`git log --follow`),
+	 *  newest first. `start` = last hash of the previous page (cursor
+	 *  pagination; see the engine doc). Read-only.
+	 */
+	gitFileHistory: (id: RepoId_Deserialize, path: string, limit: number, start: string | null) => __TAURI_INVOKE<FileCommit[]>("git_file_history", { id, path, limit, start }),
+	/**  Blame the current worktree version of a path (`git blame --porcelain`). */
+	gitBlame: (id: RepoId_Deserialize, path: string) => __TAURI_INVOKE<BlameResult>("git_blame", { id, path }),
 	gitBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_branches", { id }),
 	recoveryList: (id: RepoId_Deserialize) => __TAURI_INVOKE<RecoveryEntry[]>("recovery_list", { id }),
 	recoveryRestore: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_restore", { id, snapshotId }),
@@ -329,6 +337,44 @@ export type BackupRef = {
 	short_hash: string,
 	date: string,
 	subject: string,
+};
+
+/**
+ *  One distinct commit in a blame result (P9 Blame 视图). Lines reference
+ *  commits by index to avoid repeating the metadata per line.
+ */
+export type BlameCommit = {
+	hash: string,
+	short_hash: string,
+	author: string,
+	email: string,
+	/**  Author date, ISO 8601 with the author-tz offset. */
+	date: string,
+	summary: string,
+	/**
+	 *  The path this file had at this commit (porcelain `filename` field —
+	 *  the pre-rename name for lines predating a rename).
+	 */
+	path: string,
+	/**  History ends here (root commit / shallow boundary). */
+	boundary: boolean,
+	/**  Working-tree change that is not committed yet (all-zero sha). */
+	uncommitted: boolean,
+};
+
+/**  One blamed line; `commit` is an index into [`BlameResult::commits`]. */
+export type BlameLine = {
+	commit: number,
+	/**  Line number in the commit's version of the file (1-based). */
+	orig_no: number,
+	/**  Line number in the current worktree file (1-based). */
+	final_no: number,
+	content: string,
+};
+
+export type BlameResult = {
+	commits: BlameCommit[],
+	lines: BlameLine[],
 };
 
 /**  Ahead/behind + merge base of two revs (branch compare view). */
@@ -608,6 +654,28 @@ export type DiffModel = {
 };
 
 export type DiffSource = "worktree" | "staged" | "commit" | "stash";
+
+/**
+ *  One commit of a single file's history (`git log --follow`, P9 文件追溯).
+ *  Entries are newest first; the path fields track the file across renames.
+ */
+export type FileCommit = {
+	hash: string,
+	short_hash: string,
+	author: string,
+	email: string,
+	date: string,
+	message: string,
+	parents: string[],
+	/**  The path this file had **at this commit** (for renames: the new path). */
+	path: string,
+	/**  Old path when this commit renamed/copied the file (`R`/`C` entry). */
+	orig_path: string | null,
+	/**  name-status letter of this file in the commit: A/M/D/T/R/C. */
+	status: string,
+	/**  Rename/copy similarity score (e.g. `93` for `R93`). */
+	score: number | null,
+};
 
 /**
  *  Content of one file revision (worktree or a git object), base64-encoded

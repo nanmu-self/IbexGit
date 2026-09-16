@@ -20,6 +20,9 @@ export { commands };
 export type {
   AppError,
   BackupRef,
+  BlameCommit,
+  BlameLine,
+  BlameResult,
   BranchCompare,
   BranchInfo,
   CloneEvent,
@@ -41,6 +44,7 @@ export type {
   DiffLineKind,
   DiffModel,
   DiffSource,
+  FileCommit,
   FileContent,
   FileStatus,
   GraphEdge,
@@ -178,6 +182,14 @@ export const git = {
   /** Content of one revision of a file (image diff); null data = too large. */
   fileContent: (id: RepoId, path: string, rev: string | null) =>
     wrap(commands.gitFileContent(id, path, rev)),
+
+  // ---- file trace (P9 单文件历史 + Blame) ----
+  /** Single-file history with rename following, newest first.
+   *  `start` = last hash of the previous page (cursor pagination). */
+  fileHistory: (id: RepoId, path: string, limit = 500, start?: string | null) =>
+    wrap(commands.gitFileHistory(id, path, limit, start ?? null)),
+  /** Blame the current worktree version of a path. */
+  blame: (id: RepoId, path: string) => wrap(commands.gitBlame(id, path)),
   branches: (id: RepoId) => wrap(commands.gitBranches(id)),
   checkoutBranch: (id: RepoId, name: string) =>
     wrap(commands.gitCheckoutBranch(id, name)),

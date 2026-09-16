@@ -331,6 +331,64 @@ pub struct CloneProgress {
     pub message: String,
 }
 
+/// One commit of a single file's history (`git log --follow`, P9 文件追溯).
+/// Entries are newest first; the path fields track the file across renames.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct FileCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub email: String,
+    pub date: String,
+    pub message: String,
+    pub parents: Vec<String>,
+    /// The path this file had **at this commit** (for renames: the new path).
+    pub path: String,
+    /// Old path when this commit renamed/copied the file (`R`/`C` entry).
+    pub orig_path: Option<String>,
+    /// name-status letter of this file in the commit: A/M/D/T/R/C.
+    pub status: String,
+    /// Rename/copy similarity score (e.g. `93` for `R93`).
+    pub score: Option<u32>,
+}
+
+/// One distinct commit in a blame result (P9 Blame 视图). Lines reference
+/// commits by index to avoid repeating the metadata per line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct BlameCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub email: String,
+    /// Author date, ISO 8601 with the author-tz offset.
+    pub date: String,
+    pub summary: String,
+    /// The path this file had at this commit (porcelain `filename` field —
+    /// the pre-rename name for lines predating a rename).
+    pub path: String,
+    /// History ends here (root commit / shallow boundary).
+    pub boundary: bool,
+    /// Working-tree change that is not committed yet (all-zero sha).
+    pub uncommitted: bool,
+}
+
+/// One blamed line; `commit` is an index into [`BlameResult::commits`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct BlameLine {
+    pub commit: u32,
+    /// Line number in the commit's version of the file (1-based).
+    pub orig_no: u32,
+    /// Line number in the current worktree file (1-based).
+    pub final_no: u32,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
+pub struct BlameResult {
+    pub commits: Vec<BlameCommit>,
+    pub lines: Vec<BlameLine>,
+}
+
 /// In-progress repository operation (P8 仓库状态头: merge/rebase/…).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
@@ -645,8 +703,23 @@ pub trait GitEngine: Send + Sync {
     /// 固定，README/.gitignore 模板与首个提交由命令层处理）。
     async fn init_repo(&self, path: &str) -> Result<(), AppError>;
 
-    // Blame (P9)
-    async fn blame(&self, repo: &str, path: &str) -> Result<Vec<ReflogEntry>, AppError>;
+    // File trace (P9)
+    /// Single-file history with rename following (`git log --follow`),
+    /// newest first. `start` is the last hash of the previous page (the
+    /// next page is fetched from that commit and its duplicate dropped —
+    /// `--skip` miscounts under `--follow`, and a cursor at the rename
+    /// boundary must itself be in the traversal for the rename link to be
+    /// re-detected). `limit == 0` means unlimited.
+    async fn file_history(
+        &self,
+        repo: &str,
+        path: &str,
+        limit: u32,
+        start: Option<&str>,
+    ) -> Result<Vec<FileCommit>, AppError>;
+    /// Blame the current worktree version of a path (`git blame --porcelain`).
+    /// Uncommitted lines reference an `uncommitted` pseudo-commit.
+    async fn blame(&self, repo: &str, path: &str) -> Result<BlameResult, AppError>;
 
     // =====================
     // Conflicts & operation state (P8)

@@ -10,6 +10,9 @@
     /** Fired when the viewport approaches the bottom (infinite scroll). */
     onNearBottom = undefined,
     nearBottomThreshold = 600,
+    /** Enable horizontal scrolling (P9 blame): the inner canvas grows to
+     *  the widest row instead of clipping long lines. */
+    scrollX = false,
   }: {
     items: T[];
     itemHeight: number;
@@ -18,12 +21,20 @@
     getKey?: (item: T, index: number) => string | number;
     onNearBottom?: () => void;
     nearBottomThreshold?: number;
+    scrollX?: boolean;
   } = $props();
 
   let scrollTop = $state(0);
   let viewport = $state(0);
   /** Distance from the bottom at the last near-bottom fire (debounce). */
   let lastFireAt = -1;
+  let scroller: HTMLDivElement | null = null;
+
+  /** Center the given row in the viewport (jump-to-line support). */
+  export function scrollToIndex(index: number): void {
+    if (!scroller) return;
+    scroller.scrollTop = Math.max(0, index * itemHeight - viewport / 2 + itemHeight / 2);
+  }
 
   const start = $derived(
     Math.max(0, Math.floor(scrollTop / itemHeight) - overscan)
@@ -52,11 +63,12 @@
 </script>
 
 <div
-  class="min-h-0 flex-1 overflow-y-auto"
+  bind:this={scroller}
+  class="min-h-0 flex-1 {scrollX ? 'overflow-auto' : 'overflow-y-auto'}"
   bind:clientHeight={viewport}
   onscroll={handleScroll}
 >
-  <div class="relative w-full" style="height: {items.length * itemHeight}px">
+  <div class="relative w-full {scrollX ? 'min-w-max' : ''}" style="height: {items.length * itemHeight}px">
     {#each visible as v (getKey ? getKey(v.item, v.index) : v.index)}
       <div
         class="absolute left-0 right-0"

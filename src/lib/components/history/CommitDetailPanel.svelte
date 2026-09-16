@@ -18,10 +18,12 @@
   import { settings } from "$lib/stores/settings.svelte";
   import { showToast } from "$lib/stores/toast";
   import { requestRefAction } from "$lib/stores/refbus";
+  import { fileView } from "$lib/stores/fileview.svelte";
   import List from "@lucide/svelte/icons/list";
   import FolderTree from "@lucide/svelte/icons/folder-tree";
   import Copy from "@lucide/svelte/icons/copy";
   import History from "@lucide/svelte/icons/history";
+  import TextSelect from "@lucide/svelte/icons/text-select";
   import DiffFileIcon from "@lucide/svelte/icons/file-diff";
   import Tag from "@lucide/svelte/icons/tag";
 
@@ -190,6 +192,38 @@
     restoreOpen = true;
   }
 
+  // ---- file row context menu (P9 历史右键入口) ----
+  let fileMenu = $state<{ path: string; x: number; y: number } | null>(null);
+
+  function openFileMenu(path: string, e: MouseEvent): void {
+    e.preventDefault();
+    e.stopPropagation();
+    fileMenu = { path, x: e.clientX, y: e.clientY };
+  }
+
+  $effect(() => {
+    if (!fileMenu) return;
+    const ondown = (e: MouseEvent): void => {
+      const panel = document.getElementById("file-row-menu");
+      if (!panel || !panel.contains(e.target as Node)) fileMenu = null;
+    };
+    const onescape = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") fileMenu = null;
+    };
+    window.addEventListener("mousedown", ondown, true);
+    window.addEventListener("keydown", onescape, true);
+    return () => {
+      window.removeEventListener("mousedown", ondown, true);
+      window.removeEventListener("keydown", onescape, true);
+    };
+  });
+
+  function fileMenuStyle(x: number, y: number): string {
+    const W = 200;
+    const H = 92;
+    return `left:${Math.min(x, window.innerWidth - W - 8)}px;top:${Math.min(y, window.innerHeight - H - 8)}px`;
+  }
+
   async function confirmRestore(): Promise<void> {
     const id = repos.activeId;
     const h = hash;
@@ -300,6 +334,7 @@
             role="button"
             tabindex="0"
             onkeydown={(e) => e.key === "Enter" && (selectedFile = f.path)}
+            oncontextmenu={(e) => openFileMenu(f.path, e)}
           >
             <span
               class="w-4 shrink-0 text-center font-mono font-semibold {statusColor(f.status)}"
@@ -376,3 +411,33 @@
   confirmLabel={t("history.restoreFile")}
   onconfirm={confirmRestore}
 />
+
+<!-- 文件行右键菜单（P9：查看文件历史 / Blame） -->
+{#if fileMenu}
+  <div
+    id="file-row-menu"
+    class="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in zoom-in-95 duration-100"
+    style={fileMenuStyle(fileMenu.x, fileMenu.y)}
+  >
+    <button
+      type="button"
+      class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent"
+      onclick={() => {
+        fileView.show(fileMenu!.path, "history");
+        fileMenu = null;
+      }}
+    >
+      <History class="size-3.5" /> {t("history.ctx.fileHistory")}
+    </button>
+    <button
+      type="button"
+      class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent"
+      onclick={() => {
+        fileView.show(fileMenu!.path, "blame");
+        fileMenu = null;
+      }}
+    >
+      <TextSelect class="size-3.5" /> {t("history.ctx.fileBlame")}
+    </button>
+  </div>
+{/if}

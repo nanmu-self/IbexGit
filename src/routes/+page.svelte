@@ -9,6 +9,7 @@
   import WorkspaceView from "$lib/components/workspace/WorkspaceView.svelte";
   import HistoryView from "$lib/components/history/HistoryView.svelte";
   import TagsView from "$lib/components/refs/TagsView.svelte";
+  import FileInspectDialog from "$lib/components/file/FileInspectDialog.svelte";
   import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
   import NetDialogsHost from "$lib/components/credential/NetDialogsHost.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
@@ -125,5 +126,6 @@
     <StatusBar />
     <RefsDialogsHost />
     <NetDialogsHost />
+    <FileInspectDialog />
   </div>
 {/if}
