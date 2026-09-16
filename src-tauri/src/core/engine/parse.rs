@@ -802,6 +802,24 @@ pub fn parse_nul_paths(output: &str) -> Vec<String> {
         .collect()
 }
 
+/// Parse `git config --list -z` output (P10 Git 配置查看器): entries are
+/// NUL-terminated, the first LF inside an entry separates key from value
+/// (further LFs belong to the value — multi-line values are preserved).
+/// A valueless (boolean-true) key is reported with an empty value.
+pub fn parse_config_list_z(output: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for entry in output.split('\0') {
+        if entry.is_empty() {
+            continue;
+        }
+        match entry.split_once('\n') {
+            Some((key, value)) => out.push((key.to_string(), value.to_string())),
+            None => out.push((entry.to_string(), String::new())),
+        }
+    }
+    out
+}
+
 /// Parse `git rev-list --left-right --count A...B` → `(left, right)`.
 pub fn parse_range_count(output: &str) -> (u32, u32) {
     let line = output.lines().next().unwrap_or("");
@@ -1674,6 +1692,41 @@ mod tests {
         let out = parse_nul_paths(raw);
         assert_eq!(out, vec!["a.txt", "dir/", "中 文.txt"]);
         assert!(parse_nul_paths("").is_empty());
+    }
+
+    // ---------- config --list -z (P10 配置查看器) ----------
+
+    #[test]
+    fn config_list_z_basic_and_empty() {
+        assert!(parse_config_list_z("").is_empty());
+        // Trailing NUL yields no phantom entry.
+        let raw = "core\nvalue with = and spaces\0user\n张三\0";
+        let out = parse_config_list_z(raw);
+        assert_eq!(
+            out,
+            vec![
+                ("core".to_string(), "value with = and spaces".to_string()),
+                ("user".to_string(), "张三".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn config_list_z_multiline_and_valueless() {
+        // Multi-line value: only the first LF separates key from value.
+        // Valueless (boolean-true) key = no LF at all → empty value.
+        let raw = "alias.lg\nlog --oneline\n --graph\0core.bare\0";
+        let out = parse_config_list_z(raw);
+        assert_eq!(
+            out,
+            vec![
+                (
+                    "alias.lg".to_string(),
+                    "log --oneline\n --graph".to_string()
+                ),
+                ("core.bare".to_string(), String::new()),
+            ]
+        );
     }
 
     #[test]

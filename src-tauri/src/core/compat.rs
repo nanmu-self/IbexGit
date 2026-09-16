@@ -136,6 +136,30 @@ impl GitCapabilities {
         Ok(caps)
     }
 
+    /// Version string of an arbitrary git executable (P10 设置中心：自定义
+    /// git 路径的连通性测试）。Runs `<program> --version` and returns the
+    /// trimmed output (e.g. "git version 2.54.0.windows.1").
+    pub fn version_of(program: &str) -> Result<String, AppError> {
+        let output = Command::new(program)
+            .arg("--version")
+            .output()
+            .map_err(|e| AppError::io_with_detail(program, e.to_string()))?;
+        if !output.status.success() {
+            return Err(AppError::git_command(
+                format!("{program} --version"),
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout),
+            ));
+        }
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if version.is_empty() {
+            return Err(AppError::parse(format!(
+                "{program} --version produced no output"
+            )));
+        }
+        Ok(version)
+    }
+
     fn parse_version(version_str: &str) -> Result<(u32, u32, u32), AppError> {
         // git version 2.40.0.windows.1
         let re = Regex::new(r"(\d+)\.(\d+)\.(\d+)").unwrap();

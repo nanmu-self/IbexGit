@@ -198,7 +198,7 @@
           </Button>
         {/snippet}
       </Tooltip.Trigger>
-      <Tooltip.Content>{t("sidebar.comingSoon", { phase: "P10" })}</Tooltip.Content>
+      <Tooltip.Content>{t("sidebar.comingSoon", { phase: "Backlog" })}</Tooltip.Content>
     </Tooltip.Root>
 
     <Tooltip.Root>

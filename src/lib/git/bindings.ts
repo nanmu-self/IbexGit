@@ -259,6 +259,29 @@ export const commands = {
 	/**  Blame the current worktree version of a path (`git blame --porcelain`). */
 	gitBlame: (id: RepoId_Deserialize, path: string) => __TAURI_INVOKE<BlameResult>("git_blame", { id, path }),
 	gitBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_branches", { id }),
+	/**  List the user-level git config (P10 设置中心 → Git 配置）。 */
+	gitConfigGlobal: () => __TAURI_INVOKE<ConfigEntry[]>("git_config_global"),
+	/**  List the repository-level git config (P10 设置中心 → Git 配置）。 */
+	gitConfigLocal: (id: RepoId_Deserialize) => __TAURI_INVOKE<ConfigEntry[]>("git_config_local", { id }),
+	/**  Read the global gitignore (`core.excludesFile` or default path). */
+	gitGitignoreGlobal: () => __TAURI_INVOKE<{
+	/**  Resolved absolute path (display purpose). */
+	path: string,
+	/**  Raw file content (lossy UTF-8). */
+	content: string,
+} | null>("git_gitignore_global"),
+	/**  Read the commit message template (`commit.template`), if configured. */
+	gitCommitTemplate: (id: RepoId_Deserialize) => __TAURI_INVOKE<{
+	path: string,
+	content: string,
+} | null>("git_commit_template", { id }),
+	/**  Adjust the tracing filter at runtime (P10 高级：日志级别）。 */
+	appSetLogLevel: (level: string) => __TAURI_INVOKE<null>("app_set_log_level", { level }),
+	/**
+	 *  Run `<path> --version` to validate a user-configured git executable
+	 *  (P10 设置中心：git 路径自定义). Returns the trimmed version string.
+	 */
+	appCheckGitPath: (path: string) => __TAURI_INVOKE<string>("app_check_git_path", { path }),
 	recoveryList: (id: RepoId_Deserialize) => __TAURI_INVOKE<RecoveryEntry[]>("recovery_list", { id }),
 	recoveryRestore: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_restore", { id, snapshotId }),
 	recoveryDelete: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_delete", { id, snapshotId }),
@@ -458,6 +481,24 @@ export type CommitResult = {
 	hash: string,
 	short_hash: string,
 	message: string,
+};
+
+/**
+ *  The commit message template (`commit.template`), resolved to an absolute
+ *  path and read (P10 提交辅助).
+ */
+export type CommitTemplate = {
+	path: string,
+	content: string,
+};
+
+/**
+ *  One `key = value` pair from `git config --list -z` (P10 Git 配置查看器).
+ *  Valueless (boolean-true) keys get an empty value.
+ */
+export type ConfigEntry = {
+	key: string,
+	value: string,
 };
 
 /**
@@ -734,6 +775,17 @@ export type FileStatus_Serialize = {
 	/**  skip-worktree (porcelain v2 XY contains `S`). */
 	skipped: boolean,
 	conflict: boolean,
+};
+
+/**
+ *  The global gitignore file (`core.excludesFile` or the platform default
+ *  `~/.config/git/ignore`), read for the read-only viewer.
+ */
+export type GitignoreFile = {
+	/**  Resolved absolute path (display purpose). */
+	path: string,
+	/**  Raw file content (lossy UTF-8). */
+	content: string,
 };
 
 /**  One edge segment drawn within a single commit row. */

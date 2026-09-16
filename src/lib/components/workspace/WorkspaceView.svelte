@@ -19,6 +19,7 @@
   import { settings } from "$lib/stores/settings.svelte";
   import {
     git,
+    app,
     recovery,
     normalizeError,
     type ConflictSummary,
@@ -388,6 +389,26 @@
     }
   }
 
+  // ---- P10 提交辅助：commit.template 预填（每仓库一次） ----
+  let template = $state<{ repoId: string; content: string } | null>(null);
+  $effect(() => {
+    const id = active?.id;
+    if (!id) return;
+    let stale = false;
+    app
+      .commitTemplate(id)
+      .then((tpl) => {
+        if (!stale && tpl) template = { repoId: id, content: tpl.content };
+      })
+      .catch(() => {}); // 未配置 / 不可读 → 不预填
+    return () => {
+      stale = true;
+    };
+  });
+  const templateForActive = $derived(
+    template && active && template.repoId === active.id ? template : null,
+  );
+
   async function handleCommit(
     message: string,
     amend: boolean,
@@ -605,6 +626,7 @@
         repoReady={active !== null}
         busy={commitBusy}
         mode={commitMode}
+        template={templateForActive}
         oncommit={handleCommit}
         onamend={loadHeadMessage}
       />

@@ -480,9 +480,9 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::core::engine::{
-        BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, DiffModel,
-        DiffSource, FileCommit, IndexEntry, PullResult, RebaseState, ReflogEntry, RemoteInfo,
-        StashEntry, TagInfo,
+        BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, CommitTemplate,
+        ConfigEntry, DiffModel, DiffSource, FileCommit, GitignoreFile, IndexEntry, PullResult,
+        RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -820,6 +820,19 @@ mod tests {
             _: Option<&str>,
         ) -> Result<(), AppError> {
             Err(err("mergetool"))
+        }
+
+        async fn config_global(&self) -> Result<Vec<ConfigEntry>, AppError> {
+            Err(err("config_global"))
+        }
+        async fn config_local(&self, _: &str) -> Result<Vec<ConfigEntry>, AppError> {
+            Err(err("config_local"))
+        }
+        async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError> {
+            Err(err("global_gitignore"))
+        }
+        async fn commit_template(&self, _: &str) -> Result<Option<CommitTemplate>, AppError> {
+            Err(err("commit_template"))
         }
     }
 

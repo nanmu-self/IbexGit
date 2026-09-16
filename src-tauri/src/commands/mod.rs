@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
+pub mod app;
 pub mod net;
 pub mod workspace;
 
@@ -1619,6 +1620,54 @@ pub async fn git_mergetool(
         .engine()
         .mergetool(&root, &path, tool.as_deref(), cmd.as_deref())
         .await
+}
+
+// =====================
+// P10: Git 配置查看器 / 提交模板（只读）
+// =====================
+
+/// List the user-level git config (P10 设置中心 → Git 配置）。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_config_global(
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::ConfigEntry>, AppError> {
+    let _permit = repos.read_permit().await?;
+    repos.engine().config_global().await
+}
+
+/// List the repository-level git config (P10 设置中心 → Git 配置）。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_config_local(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::ConfigEntry>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let root = resolve(&repos, id).await?;
+    repos.engine().config_local(&root).await
+}
+
+/// Read the global gitignore (`core.excludesFile` or default path).
+#[tauri::command]
+#[specta::specta]
+pub async fn git_gitignore_global(
+    repos: State<'_, RepoManager>,
+) -> Result<Option<crate::core::engine::GitignoreFile>, AppError> {
+    let _permit = repos.read_permit().await?;
+    repos.engine().global_gitignore().await
+}
+
+/// Read the commit message template (`commit.template`), if configured.
+#[tauri::command]
+#[specta::specta]
+pub async fn git_commit_template(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Option<crate::core::engine::CommitTemplate>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let root = resolve(&repos, id).await?;
+    repos.engine().commit_template(&root).await
 }
 
 // Keep Arc<RepoManager> constructible for tests without a Tauri app.

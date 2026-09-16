@@ -16,6 +16,7 @@
   import { pickRepo } from "$lib/repo-picker";
   import { showToast } from "$lib/stores/toast";
   import { netDialogs } from "$lib/stores/netdialogs.svelte";
+  import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { BOOKMARKS, bookmarkColor } from "$lib/bookmarks";
   import type { RepoGroup } from "$lib/git/bindings";
   import Search from "@lucide/svelte/icons/search";
@@ -200,7 +201,7 @@
           <FolderPlus class="size-4" />
           {t("repos.newRepo")}
         </Button>
-        <Button variant="outline" size="sm" onclick={() => netDialogs.openCredentials()}>
+        <Button variant="outline" size="sm" onclick={() => appDialogs.openSettings("credentials")}>
           <KeyRound class="size-4" />
           {t("repos.credentials")}
         </Button>

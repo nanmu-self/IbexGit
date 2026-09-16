@@ -1,11 +1,44 @@
 use crate::core::engine::{
-    self, conflict, parse, CloneOptions, DiffModel, DiffOptions, DiffSource, FileContent,
+    self, conflict, parse, CloneOptions, CommitTemplate, ConfigEntry, DiffModel, DiffOptions,
+    DiffSource, FileContent, GitignoreFile,
 };
 use crate::core::error::AppError;
 use crate::core::runner::{CancelToken, GitProcessRunner, ProcessResult, StdinMode};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+
+/// Default global gitignore: `$XDG_CONFIG_HOME/git/ignore`, else
+/// `~/.config/git/ignore` (git applies the same XDG rule on all platforms,
+/// with HOME = %USERPROFILE% on Windows).
+fn default_gitignore_path() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("git").join("ignore"));
+        }
+    }
+    Some(expand_home(
+        &Path::new("~").join(".config").join("git").join("ignore"),
+    ))
+}
+
+/// Expand a leading `~` (or a bare `~` path) to the user home directory.
+fn expand_home(path: &Path) -> PathBuf {
+    let home = || {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+    };
+    if path == Path::new("~") {
+        return home().unwrap_or_else(|| path.to_path_buf());
+    }
+    if let Ok(rest) = path.strip_prefix("~") {
+        if let Some(home) = home() {
+            return home.join(rest);
+        }
+    }
+    path.to_path_buf()
+}
 
 /// 网络操作（fetch/pull/push/clone）失败时：stderr 含取消标记 →
 /// `CredentialCancelled`（用户在凭据框点了取消，而非认证失败；设计文档 §5）。
@@ -1700,6 +1733,105 @@ impl engine::GitEngine for CliEngine {
             .run(refs, StdinMode::Null, None, Some(MERGETOOL_TIMEOUT_SECS))
             .await?;
         self.ensure_success(&res)
+    }
+
+    // ---- P10: 配置查看器 / 提交模板（只读） ----
+
+    async fn config_global(&self) -> Result<Vec<ConfigEntry>, AppError> {
+        let res = self
+            .run(
+                ["config", "--list", "-z", "--global"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_config_list_z(&res.stdout)
+            .into_iter()
+            .map(|(key, value)| ConfigEntry { key, value })
+            .collect())
+    }
+
+    async fn config_local(&self, repo: &str) -> Result<Vec<ConfigEntry>, AppError> {
+        let res = self
+            .run(
+                ["-C", repo, "config", "--list", "-z", "--local"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_config_list_z(&res.stdout)
+            .into_iter()
+            .map(|(key, value)| ConfigEntry { key, value })
+            .collect())
+    }
+
+    async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError> {
+        // `--type=path` expands `~`; unset → exit 1 with empty output.
+        let res = self
+            .run(
+                [
+                    "config",
+                    "--global",
+                    "--type=path",
+                    "--get",
+                    "core.excludesFile",
+                ],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        let configured = if res.exit_code == Some(0) {
+            let v = res.stdout.trim();
+            (!v.is_empty()).then(|| PathBuf::from(v))
+        } else {
+            None
+        };
+        let path = configured.or_else(default_gitignore_path);
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Ok(None); // default path absent — no global ignore, not an error
+        };
+        Ok(Some(GitignoreFile {
+            path: path.display().to_string(),
+            content: String::from_utf8_lossy(&bytes).into_owned(),
+        }))
+    }
+
+    async fn commit_template(&self, repo: &str) -> Result<Option<CommitTemplate>, AppError> {
+        let res = self
+            .run(
+                ["-C", repo, "config", "--get", "commit.template"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        if res.exit_code != Some(0) {
+            return Ok(None); // unset (exit 1) or config error → no template
+        }
+        let raw = res.stdout.trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        // git resolves commit.template relative to the worktree root; `~`
+        // is NOT expanded for this (non path-typed) value — do both here.
+        let mut path = expand_home(Path::new(raw));
+        if path.is_relative() {
+            path = Path::new(repo).join(path);
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|e| AppError::io_with_detail("read commit template", e.to_string()))?;
+        Ok(Some(CommitTemplate {
+            path: path.display().to_string(),
+            content: String::from_utf8_lossy(&bytes).into_owned(),
+        }))
     }
 
     async fn clone_repo(

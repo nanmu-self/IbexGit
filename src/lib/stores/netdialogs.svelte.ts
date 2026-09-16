@@ -15,7 +15,7 @@ import { t } from "$lib/i18n";
 import { repos } from "$lib/stores/repos.svelte";
 import { normalizeError } from "$lib/git";
 
-export type DialogName = "clone" | "newRepo" | "credentials";
+export type DialogName = "clone" | "newRepo";
 
 /** 一个克隆任务的展示状态。 */
 export interface CloneTask {
@@ -32,7 +32,6 @@ export interface CloneTask {
 class NetDialogsStore {
   cloneOpen = $state(false);
   newRepoOpen = $state(false);
-  credentialsOpen = $state(false);
   /** 活动的克隆任务（一次一个，v1 简化）。非空 ⇒ 克隆对话框切到进度页。 */
   activeTask = $state<CloneTask | null>(null);
 
@@ -44,14 +43,9 @@ class NetDialogsStore {
     this.newRepoOpen = true;
   }
 
-  openCredentials(): void {
-    this.credentialsOpen = true;
-  }
-
   closeAll(): void {
     this.cloneOpen = false;
     this.newRepoOpen = false;
-    this.credentialsOpen = false;
   }
 
   /** 克隆完成后的收尾：打开克隆出的仓库。 */

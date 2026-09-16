@@ -1,0 +1,600 @@
+<script lang="ts">
+  /**
+   * Settings center (P10)：通用 / Git / 网络 / 凭据 / 外部工具 / Git 配置 /
+   * 高级。P7 的网络与凭据管理从 NetworkDialog 迁入；mergetool 默认工具
+   * （P8 遗留的持久化）也在此配置。
+   */
+  import * as Dialog from "$lib/components/ui/dialog";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { t } from "$lib/i18n";
+  import { settings } from "$lib/stores/settings.svelte";
+  import { appDialogs, type SettingsSection } from "$lib/stores/appdialogs.svelte";
+  import { repos } from "$lib/stores/repos.svelte";
+  import { app, net, normalizeError, type CommitTemplate, type ConfigEntry, type CredentialEntry, type GitignoreFile, type KnownHost } from "$lib/git";
+  import { showToast } from "$lib/stores/toast";
+  import { appDataDir } from "@tauri-apps/api/path";
+  import { openPath } from "@tauri-apps/plugin-opener";
+  import Settings2 from "@lucide/svelte/icons/settings-2";
+  import GitBranch from "@lucide/svelte/icons/git-branch";
+  import Globe from "@lucide/svelte/icons/globe";
+  import KeyRound from "@lucide/svelte/icons/key-round";
+  import Wrench from "@lucide/svelte/icons/wrench";
+  import FolderGit2 from "@lucide/svelte/icons/folder-git-2";
+  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
+  import FolderOpen from "@lucide/svelte/icons/folder-open";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+
+  const open = $derived(appDialogs.settingsOpen);
+  const section = $derived(appDialogs.settingsSection);
+
+  const SECTIONS: { id: SettingsSection; icon: typeof Settings2 }[] = [
+    { id: "general", icon: Settings2 },
+    { id: "git", icon: GitBranch },
+    { id: "network", icon: Globe },
+    { id: "credentials", icon: KeyRound },
+    { id: "tools", icon: Wrench },
+    { id: "gitconfig", icon: FolderGit2 },
+    { id: "advanced", icon: SlidersHorizontal },
+  ];
+
+  // ---- form mirrors ----
+  let sshKeyPath = $state("");
+  let proxyMode = $state<"inherit" | "none" | "custom">("inherit");
+  let proxyUrl = $state("");
+
+  // ---- git path test ----
+  let gitPathInput = $state("");
+  let gitPathTesting = $state(false);
+  let gitPathResult = $state<string | null>(null);
+
+  // ---- credentials (P7 迁入) ----
+  let credentials = $state<CredentialEntry[]>([]);
+  let hosts = $state<KnownHost[]>([]);
+
+  // ---- git config viewer ----
+  let globalConfig = $state<ConfigEntry[]>([]);
+  let localConfig = $state<ConfigEntry[]>([]);
+  let gitignore = $state<GitignoreFile | null>(null);
+  let template = $state<CommitTemplate | null>(null);
+  let configLoading = $state(false);
+
+  const activeRepo = $derived(repos.active);
+
+  $effect(() => {
+    if (!open) return;
+    sshKeyPath = settings.sshKeyPath;
+    proxyMode = settings.proxyMode;
+    proxyUrl = settings.proxyUrl;
+    gitPathInput = settings.gitPath;
+    gitPathResult = null;
+    if (section === "credentials") void loadCredentials();
+    if (section === "gitconfig") void loadConfig();
+    if (section === "git") void loadTemplate();
+  });
+
+  async function loadCredentials(): Promise<void> {
+    try {
+      [credentials, hosts] = await Promise.all([net.credentialList(), net.knownHostsList()]);
+    } catch (err) {
+      normalizeError(err);
+    }
+  }
+
+  async function loadConfig(): Promise<void> {
+    configLoading = true;
+    try {
+      const [g, ig] = await Promise.all([app.configGlobal(), app.gitignoreGlobal()]);
+      globalConfig = g;
+      gitignore = ig;
+      localConfig = activeRepo ? await app.configLocal(activeRepo.id) : [];
+    } catch (err) {
+      normalizeError(err);
+    } finally {
+      configLoading = false;
+    }
+  }
+
+  async function loadTemplate(): Promise<void> {
+    template = null;
+    if (!activeRepo) return;
+    try {
+      template = await app.commitTemplate(activeRepo.id);
+    } catch {
+      template = null; // unset or unreadable → no template UI
+    }
+  }
+
+  async function deleteCredential(key: string): Promise<void> {
+    try {
+      await net.credentialDelete(key);
+      credentials = credentials.filter((c) => c.key !== key);
+      showToast("success", t("net.credDeleted"));
+    } catch (err) {
+      normalizeError(err);
+    }
+  }
+
+  async function removeHost(host: string): Promise<void> {
+    try {
+      await net.knownHostsRemove(host);
+      hosts = hosts.filter((h) => h.host !== host);
+      showToast("success", t("net.hostRemoved"));
+    } catch (err) {
+      normalizeError(err);
+    }
+  }
+
+  async function saveNetConfig(): Promise<void> {
+    try {
+      await settings.setNetwork({ sshKeyPath, proxyMode, proxyUrl });
+      showToast("success", t("net.configSaved"));
+    } catch (err) {
+      normalizeError(err);
+    }
+  }
+
+  async function testGitPath(): Promise<void> {
+    gitPathTesting = true;
+    gitPathResult = null;
+    try {
+      gitPathResult = await app.checkGitPath(gitPathInput);
+    } catch (err) {
+      normalizeError(err);
+      gitPathResult = null;
+    } finally {
+      gitPathTesting = false;
+    }
+  }
+
+  async function saveGitPath(): Promise<void> {
+    await settings.setGitPath(gitPathInput.trim());
+    showToast("info", t("settings.git.pathSaved"));
+  }
+
+  async function openDir(sub: string | null): Promise<void> {
+    try {
+      const base = await appDataDir();
+      await openPath(sub ? `${base}/${sub}` : base);
+    } catch (err) {
+      normalizeError(err);
+    }
+  }
+
+  const MERGE_TOOLS = [
+    { id: "", label: "settings.tools.gitDefault" },
+    { id: "vscode", label: "settings.tools.vscode" },
+    { id: "meld", label: "settings.tools.meld" },
+    { id: "kdiff3", label: "settings.tools.kdiff3" },
+    { id: "p4merge", label: "settings.tools.p4merge" },
+    { id: "vimdiff", label: "settings.tools.vimdiff" },
+    { id: "custom", label: "settings.tools.custom" },
+  ] as const;
+
+  const LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
+
+  function setMergeTool(id: string): void {
+    const cmd = id === "custom" ? settings.mergeToolCmd : "";
+    void settings.setMergeTool(id, cmd);
+  }
+
+  function setCustomCmd(cmd: string): void {
+    void settings.setMergeTool(settings.mergeToolId, cmd);
+  }
+</script>
+
+<Dialog.Root bind:open={appDialogs.settingsOpen}>
+  <Dialog.Content class="flex max-w-3xl gap-0 overflow-hidden p-0">
+    <Dialog.Header class="sr-only">
+      <Dialog.Title>{t("settings.title")}</Dialog.Title>
+      <Dialog.Description>{t("settings.desc")}</Dialog.Description>
+    </Dialog.Header>
+
+    <!-- left nav -->
+    <nav class="flex w-44 shrink-0 flex-col gap-0.5 border-r bg-muted/30 p-2">
+      {#each SECTIONS as s (s.id)}
+        <button
+          type="button"
+          class="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] {section ===
+          s.id
+            ? 'bg-accent font-medium text-accent-foreground'
+            : 'text-muted-foreground hover:bg-accent/60'}"
+          onclick={() => appDialogs.openSettings(s.id)}
+        >
+          <s.icon class="size-3.5" />
+          {t(`settings.nav.${s.id}`)}
+        </button>
+      {/each}
+    </nav>
+
+    <!-- right pane -->
+    <div class="max-h-[70vh] min-w-0 flex-1 overflow-y-auto p-4">
+      {#if section === "general"}
+        <section class="space-y-4">
+          <h3 class="text-sm font-semibold">{t("settings.nav.general")}</h3>
+          <div class="space-y-1.5">
+            <span class="text-xs text-muted-foreground">{t("settings.general.theme")}</span>
+            <div class="grid grid-cols-3 gap-1.5">
+              {#each ["light", "dark", "system"] as mode}
+                <button
+                  type="button"
+                  class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {settings.theme ===
+                  mode
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50'}"
+                  onclick={() => void settings.setTheme(mode as typeof settings.theme)}
+                >
+                  {t(`theme.${mode}`)}
+                </button>
+              {/each}
+            </div>
+          </div>
+          <div class="space-y-1.5">
+            <span class="text-xs text-muted-foreground">{t("settings.general.language")}</span>
+            <div class="grid grid-cols-2 gap-1.5">
+              {#each ["zh-CN", "en"] as loc}
+                <button
+                  type="button"
+                  class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {settings.locale ===
+                  loc
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50'}"
+                  onclick={() => void settings.setLocale(loc as typeof settings.locale)}
+                >
+                  {t(loc === "zh-CN" ? "lang.zhCN" : "lang.en")}
+                </button>
+              {/each}
+            </div>
+          </div>
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{t("settings.general.font")}</span>
+            <Input
+              value={settings.editorFont}
+              placeholder={t("settings.general.fontHint")}
+              class="h-8 font-mono text-[12px]"
+              onchange={(e) => void settings.setEditorFont(e.currentTarget.value)}
+            />
+          </label>
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{t("settings.general.tabSize")}</span>
+            <Input
+              type="number"
+              min="1"
+              max="8"
+              value={settings.editorTabSize}
+              class="h-8 w-24"
+              onchange={(e) =>
+                void settings.setEditorTabSize(
+                  Math.min(8, Math.max(1, Number(e.currentTarget.value) || 4)),
+                )}
+            />
+          </label>
+        </section>
+      {:else if section === "git"}
+        <section class="space-y-4">
+          <h3 class="text-sm font-semibold">{t("settings.nav.git")}</h3>
+
+          <div class="space-y-1.5">
+            <span class="text-xs text-muted-foreground">{t("settings.git.pullStrategy")}</span>
+            <div class="grid grid-cols-3 gap-1.5">
+              {#each ["merge", "rebase", "ff_only"] as m}
+                <button
+                  type="button"
+                  class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {settings.pullStrategy ===
+                  m
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50'}"
+                  onclick={() => void settings.setPullStrategy(m as typeof settings.pullStrategy)}
+                >
+                  {t(`refs.pull.mode${m === "ff_only" ? "FfOnly" : m === "rebase" ? "Rebase" : "Merge"}`)}
+                </button>
+              {/each}
+            </div>
+            <p class="text-[11px] text-muted-foreground">{t("settings.git.pullHint")}</p>
+          </div>
+
+          <div class="space-y-1.5">
+            <span class="text-xs text-muted-foreground">{t("settings.git.pushUpstream")}</span>
+            <div class="grid grid-cols-3 gap-1.5">
+              {#each ["whenMissing", "always", "never"] as m}
+                <button
+                  type="button"
+                  class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {settings.pushSetUpstream ===
+                  m
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50'}"
+                  onclick={() => void settings.setPushSetUpstream(m as typeof settings.pushSetUpstream)}
+                >
+                  {t(`settings.git.upstream_${m}`)}
+                </button>
+              {/each}
+            </div>
+            <label class="flex items-center gap-2 pt-1 text-[13px]">
+              <Checkbox
+                checked={settings.pushIncludeTags}
+                onCheckedChange={(v) => void settings.setPushIncludeTags(v === true)}
+              />
+              {t("settings.git.pushTags")}
+            </label>
+          </div>
+
+          <div class="space-y-1.5 rounded-md border p-3">
+            <span class="text-xs font-medium">{t("settings.git.path")}</span>
+            <div class="flex gap-1.5">
+              <Input
+                bind:value={gitPathInput}
+                placeholder="git"
+                class="h-8 flex-1 font-mono text-[12px]"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={gitPathTesting || !gitPathInput.trim()}
+                onclick={() => void testGitPath()}
+              >
+                {#if gitPathTesting}<LoaderCircle class="size-3.5 animate-spin" />{/if}
+                {t("settings.git.pathTest")}
+              </Button>
+            </div>
+            {#if gitPathResult}
+              <p class="font-mono text-[11px] text-green-600 dark:text-green-400">{gitPathResult}</p>
+            {/if}
+            <div class="flex items-center justify-between">
+              <p class="text-[11px] text-muted-foreground">{t("settings.git.pathHint")}</p>
+              <Button type="button" size="sm" variant="outline" onclick={() => void saveGitPath()}>
+                {t("settings.git.pathSave")}
+              </Button>
+            </div>
+          </div>
+
+          <div class="space-y-1.5 rounded-md border p-3">
+            <span class="text-xs font-medium">{t("settings.git.template")}</span>
+            {#if !activeRepo}
+              <p class="text-[11px] text-muted-foreground">{t("settings.git.needRepo")}</p>
+            {:else if template === null}
+              <p class="text-[11px] text-muted-foreground">{t("settings.git.templateNone")}</p>
+            {:else}
+              <p class="font-mono text-[11px] text-muted-foreground">{template.path}</p>
+              <pre
+                class="editor-font max-h-28 overflow-auto rounded border bg-muted/40 p-2 text-[11px] whitespace-pre-wrap">{template.content}</pre>
+            {/if}
+          </div>
+        </section>
+      {:else if section === "network"}
+        <section class="space-y-3">
+          <h3 class="text-sm font-semibold">{t("settings.nav.network")}</h3>
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{t("net.sshKey")}</span>
+            <Input
+              bind:value={sshKeyPath}
+              placeholder={t("net.sshKeyHint")}
+              class="h-8 font-mono text-[12px]"
+            />
+          </label>
+          <div class="grid grid-cols-3 gap-1.5">
+            {#each ["inherit", "none", "custom"] as mode}
+              <button
+                type="button"
+                class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {proxyMode ===
+                mode
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50'}"
+                onclick={() => (proxyMode = mode as typeof proxyMode)}
+              >
+                {t(`net.proxy_${mode}`)}
+              </button>
+            {/each}
+          </div>
+          {#if proxyMode === "custom"}
+            <label class="block space-y-1">
+              <span class="text-xs text-muted-foreground">{t("net.proxyUrl")}</span>
+              <Input
+                bind:value={proxyUrl}
+                placeholder="http://127.0.0.1:7890"
+                class="h-8 font-mono text-[12px]"
+              />
+            </label>
+          {:else if proxyMode === "none"}
+            <label class="flex items-center gap-2 text-[13px]">
+              <Checkbox checked={true} disabled />
+              <span class="text-muted-foreground">{t("net.proxyNoneHint")}</span>
+            </label>
+          {/if}
+          <div class="flex justify-end">
+            <Button type="button" size="sm" onclick={() => void saveNetConfig()}>
+              {t("net.configSave")}
+            </Button>
+          </div>
+        </section>
+      {:else if section === "credentials"}
+        <section class="space-y-5">
+          <h3 class="text-sm font-semibold">{t("settings.nav.credentials")}</h3>
+          <div class="space-y-2">
+            <h4 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              <KeyRound class="mr-1 inline size-3.5" />
+              {t("net.credSection")}
+            </h4>
+            {#if credentials.length === 0}
+              <p class="rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                {t("net.credEmpty")}
+              </p>
+            {:else}
+              <ul class="divide-y overflow-hidden rounded-md border">
+                {#each credentials as c (c.key)}
+                  <li class="flex items-center gap-2 px-3 py-2">
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[13px]">{c.host}</div>
+                      <div class="truncate font-mono text-[11px] text-muted-foreground">
+                        {c.username} · {c.key}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t("net.credDelete")}
+                      onclick={() => void deleteCredential(c.key)}
+                    >
+                      <Trash2 class="size-3.5 text-muted-foreground" />
+                    </Button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+          <div class="space-y-2">
+            <h4 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              {t("net.hostSection")}
+            </h4>
+            {#if hosts.length === 0}
+              <p class="rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                {t("net.hostEmpty")}
+              </p>
+            {:else}
+              <ul class="divide-y overflow-hidden rounded-md border">
+                {#each hosts as h (h.host)}
+                  <li class="flex items-center gap-2 px-3 py-2">
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[13px]">{h.host}</div>
+                      <div class="truncate font-mono text-[11px] text-muted-foreground">{h.fingerprint}</div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t("net.hostRemove")}
+                      onclick={() => void removeHost(h.host)}
+                    >
+                      <Trash2 class="size-3.5 text-muted-foreground" />
+                    </Button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </section>
+      {:else if section === "tools"}
+        <section class="space-y-4">
+          <h3 class="text-sm font-semibold">{t("settings.nav.tools")}</h3>
+          <div class="space-y-1.5">
+            <span class="text-xs text-muted-foreground">{t("settings.tools.default")}</span>
+            <div class="grid grid-cols-3 gap-1.5">
+              {#each MERGE_TOOLS as tool}
+                <button
+                  type="button"
+                  class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {settings.mergeToolId ===
+                  tool.id
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/50'}"
+                  onclick={() => setMergeTool(tool.id)}
+                >
+                  {t(tool.label)}
+                </button>
+              {/each}
+            </div>
+            <p class="text-[11px] text-muted-foreground">{t("settings.tools.hint")}</p>
+          </div>
+          {#if settings.mergeToolId === "custom"}
+            <label class="block space-y-1">
+              <span class="text-xs text-muted-foreground">{t("settings.tools.cmd")}</span>
+              <Input
+                value={settings.mergeToolCmd}
+                placeholder="code --wait --merge $REMOTE $LOCAL $BASE $MERGED"
+                class="h-8 font-mono text-[12px]"
+                onchange={(e) => setCustomCmd(e.currentTarget.value)}
+              />
+            </label>
+          {/if}
+        </section>
+      {:else if section === "gitconfig"}
+        <section class="space-y-5">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold">{t("settings.nav.gitconfig")}</h3>
+            {#if configLoading}<LoaderCircle class="size-3.5 animate-spin" />{/if}
+          </div>
+          <p class="text-[11px] text-muted-foreground">{t("settings.gitconfig.readonly")}</p>
+
+          <div class="space-y-1.5">
+            <h4 class="text-xs font-semibold text-muted-foreground">{t("settings.gitconfig.global")}</h4>
+            {#if globalConfig.length === 0}
+              <p class="rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
+                {t("settings.gitconfig.empty")}
+              </p>
+            {:else}
+              <ul class="max-h-44 divide-y overflow-y-auto rounded-md border">
+                {#each globalConfig as entry, i (`${entry.key}.${i}`)}
+                  <li class="flex gap-2 px-2.5 py-1.5 font-mono text-[11px]">
+                    <span class="w-44 shrink-0 truncate text-muted-foreground" title={entry.key}>{entry.key}</span>
+                    <span class="min-w-0 flex-1 whitespace-pre-wrap break-all">{entry.value}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+
+          <div class="space-y-1.5">
+            <h4 class="text-xs font-semibold text-muted-foreground">{t("settings.gitconfig.local")}</h4>
+            {#if !activeRepo}
+              <p class="text-[11px] text-muted-foreground">{t("settings.git.needRepo")}</p>
+            {:else if localConfig.length === 0}
+              <p class="rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
+                {t("settings.gitconfig.empty")}
+              </p>
+            {:else}
+              <ul class="max-h-44 divide-y overflow-y-auto rounded-md border">
+                {#each localConfig as entry, i (`${entry.key}.${i}`)}
+                  <li class="flex gap-2 px-2.5 py-1.5 font-mono text-[11px]">
+                    <span class="w-44 shrink-0 truncate text-muted-foreground" title={entry.key}>{entry.key}</span>
+                    <span class="min-w-0 flex-1 whitespace-pre-wrap break-all">{entry.value}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+
+          <div class="space-y-1.5">
+            <h4 class="text-xs font-semibold text-muted-foreground">{t("settings.gitconfig.gitignore")}</h4>
+            {#if gitignore === null}
+              <p class="text-[11px] text-muted-foreground">{t("settings.gitconfig.gitignoreNone")}</p>
+            {:else}
+              <p class="font-mono text-[11px] text-muted-foreground">{gitignore.path}</p>
+              <pre
+                class="editor-font max-h-36 overflow-auto rounded border bg-muted/40 p-2 text-[11px]">{gitignore.content}</pre>
+            {/if}
+          </div>
+        </section>
+      {:else if section === "advanced"}
+        <section class="space-y-4">
+          <h3 class="text-sm font-semibold">{t("settings.nav.advanced")}</h3>
+          <label class="block w-40 space-y-1">
+            <span class="text-xs text-muted-foreground">{t("settings.advanced.logLevel")}</span>
+            <select
+              value={settings.logLevel || ""}
+              class="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
+              onchange={(e) => void settings.setLogLevel(e.currentTarget.value)}
+            >
+              <option value="">{t("settings.advanced.logDefault")}</option>
+              {#each LOG_LEVELS as lvl}
+                <option value={lvl}>{lvl}</option>
+              {/each}
+            </select>
+            <p class="text-[11px] text-muted-foreground">{t("settings.advanced.logHint")}</p>
+          </label>
+          <div class="flex gap-2">
+            <Button type="button" variant="outline" size="sm" onclick={() => void openDir(null)}>
+              <FolderOpen class="size-3.5" data-icon="inline-start" />
+              {t("settings.advanced.openConfig")}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onclick={() => void openDir("logs")}>
+              <FolderOpen class="size-3.5" data-icon="inline-start" />
+              {t("settings.advanced.openLogs")}
+            </Button>
+          </div>
+        </section>
+      {/if}
+    </div>
+  </Dialog.Content>
+</Dialog.Root>

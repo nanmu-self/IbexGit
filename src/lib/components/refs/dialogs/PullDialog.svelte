@@ -5,6 +5,7 @@
   import { Button } from "$lib/components/ui/button";
   import { t } from "$lib/i18n";
   import type { BranchInfo } from "$lib/git/bindings";
+  import { settings } from "$lib/stores/settings.svelte";
 
   let {
     open = $bindable(false),
@@ -39,7 +40,8 @@
           ? up.slice(slash + 1)
           : up
         : currentBranch;
-      mode = "merge";
+      // P10: remember the user's default pull strategy.
+      mode = settings.pullStrategy;
     }
   });
 

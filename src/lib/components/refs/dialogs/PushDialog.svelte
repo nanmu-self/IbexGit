@@ -7,6 +7,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { t } from "$lib/i18n";
   import type { RemoteInfo } from "$lib/git/bindings";
+  import { settings } from "$lib/stores/settings.svelte";
 
   let {
     open = $bindable(false),
@@ -37,8 +38,11 @@
   $effect(() => {
     if (open) {
       remote = remotes[0]?.name ?? "origin";
-      setUpstream = !hasUpstream && !!branch;
-      pushTags = false;
+      // P10: defaults from the settings center.
+      setUpstream =
+        settings.pushSetUpstream === "always" ||
+        (settings.pushSetUpstream === "whenMissing" && !hasUpstream && !!branch);
+      pushTags = settings.pushIncludeTags;
       force = false;
       confirmText = "";
     }

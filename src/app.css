@@ -89,7 +89,13 @@
 /* ===================== P8 conflict editor (CodeMirror) ===================== */
 .cm-conflict-host .cm-editor {
   height: 100%;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-editor, var(--font-mono, ui-monospace, monospace));
+  tab-size: var(--editor-tab-size, 4);
+}
+/* P10 设置中心：可配置的编辑器字体 / tab 宽度（diff 正文与冲突编辑器）。 */
+.diff-body .font-mono {
+  font-family: var(--font-editor, var(--font-mono, ui-monospace, monospace));
+  tab-size: var(--editor-tab-size, 4);
 }
 .cm-conflict-host .cm-editor.cm-focused {
   outline: none;

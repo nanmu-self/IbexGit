@@ -429,6 +429,34 @@ pub struct OperationState {
     pub message: Option<String>,
 }
 
+// ---- P10: 配置查看器 / 提交模板 ----
+
+/// One `key = value` pair from `git config --list -z` (P10 Git 配置查看器).
+/// Valueless (boolean-true) keys get an empty value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ConfigEntry {
+    pub key: String,
+    pub value: String,
+}
+
+/// The global gitignore file (`core.excludesFile` or the platform default
+/// `~/.config/git/ignore`), read for the read-only viewer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct GitignoreFile {
+    /// Resolved absolute path (display purpose).
+    pub path: String,
+    /// Raw file content (lossy UTF-8).
+    pub content: String,
+}
+
+/// The commit message template (`commit.template`), resolved to an absolute
+/// path and read (P10 提交辅助).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CommitTemplate {
+    pub path: String,
+    pub content: String,
+}
+
 // =====================
 // GitEngine trait
 // =====================
@@ -769,6 +797,19 @@ pub trait GitEngine: Send + Sync {
         tool: Option<&str>,
         cmd: Option<&str>,
     ) -> Result<(), AppError>;
+
+    // ---- P10: 配置查看器 / 提交模板（只读） ----
+
+    /// List the user-level config (`git config --list -z --global`).
+    async fn config_global(&self) -> Result<Vec<ConfigEntry>, AppError>;
+    /// List the repository-level config (`git config --list -z --local`).
+    async fn config_local(&self, repo: &str) -> Result<Vec<ConfigEntry>, AppError>;
+    /// Read the global gitignore (`core.excludesFile`, else the default
+    /// `~/.config/git/ignore`); `None` when neither file exists.
+    async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError>;
+    /// Read the commit message template (`commit.template`, merged config;
+    /// relative paths resolve against the repo root, `~` is expanded).
+    async fn commit_template(&self, repo: &str) -> Result<Option<CommitTemplate>, AppError>;
 }
 
 pub mod cli;

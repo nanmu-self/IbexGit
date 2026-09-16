@@ -11,6 +11,7 @@
   import { t } from "$lib/i18n";
   import { git, normalizeError, type ConflictModel, type ConflictType } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
+  import { settings } from "$lib/stores/settings.svelte";
   import Check from "@lucide/svelte/icons/check";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -170,7 +171,7 @@
     }
   }
 
-  // ---- external merge tool (P8 外部工具调用) ----
+  // ---- external merge tool (P8 外部工具调用；P10 默认工具持久化) ----
   const TOOL_PRESETS: Array<{ id: string; label: string; cmd?: string }> = [
     { id: "vscode", label: "VS Code", cmd: "code --wait --merge $REMOTE $LOCAL $BASE $MERGED" },
     { id: "meld", label: "Meld" },
@@ -179,6 +180,21 @@
     { id: "vimdiff", label: "Vimdiff" },
   ];
   let toolMenuOpen = $state(false);
+
+  /** Tool from the settings center (label for the menu default entry). */
+  const defaultTool = $derived.by(() => {
+    const id = settings.mergeToolId;
+    if (!id) return null;
+    if (id === "custom") {
+      return settings.mergeToolCmd
+        ? { label: t("settings.tools.custom"), tool: undefined, cmd: settings.mergeToolCmd }
+        : null;
+    }
+    const preset = TOOL_PRESETS.find((p) => p.id === id);
+    return preset
+      ? { label: preset.label, tool: preset.cmd ? undefined : preset.id, cmd: preset.cmd }
+      : null;
+  });
 
   async function runTool(preset: (typeof TOOL_PRESETS)[number]): Promise<void> {
     const id = repoId;
@@ -299,6 +315,17 @@
     <div class="border-b bg-muted/40 px-3 py-2">
       <div class="mb-1.5 text-xs text-muted-foreground">{t("conflict.mergetoolPick")}</div>
       <div class="flex flex-wrap gap-1.5">
+        {#if defaultTool}
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={busy}
+            onclick={() =>
+              runTool({ id: "default", label: defaultTool.label, cmd: defaultTool.cmd })}
+          >
+            {t("conflict.mergetoolDefault", { tool: defaultTool.label })}
+          </Button>
+        {/if}
         {#each TOOL_PRESETS as preset (preset.id)}
           <Button variant="outline" size="xs" disabled={busy} onclick={() => runTool(preset)}>
             {preset.label}

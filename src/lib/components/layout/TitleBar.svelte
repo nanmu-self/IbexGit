@@ -2,48 +2,35 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import * as Dialog from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
-  import { t, setLocale } from "$lib/i18n";
+  import { t } from "$lib/i18n";
   import { keymap, formatBinding, getPlatform, type ActionId } from "$lib/keyboard/keymap";
-  import { emitAction } from "$lib/keyboard";
   import { settings } from "$lib/stores/settings.svelte";
   import { repos } from "$lib/stores/repos.svelte";
-  import { showToast } from "$lib/stores/toast";
-  import { pickRepo } from "$lib/repo-picker";
-  import { netDialogs } from "$lib/stores/netdialogs.svelte";
+  import { appDialogs } from "$lib/stores/appdialogs.svelte";
+  import {
+    featuresForSection,
+    sectionGroups,
+    type FeatureSection,
+  } from "$lib/features";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Sun from "@lucide/svelte/icons/sun";
   import Moon from "@lucide/svelte/icons/moon";
   import Monitor from "@lucide/svelte/icons/monitor";
+  import Settings2 from "@lucide/svelte/icons/settings-2";
+  import Keyboard from "@lucide/svelte/icons/keyboard";
   import Minus from "@lucide/svelte/icons/minus";
   import Square from "@lucide/svelte/icons/square";
   import Copy from "@lucide/svelte/icons/copy";
   import X from "@lucide/svelte/icons/x";
 
-  let aboutOpen = $state(false);
-  let shortcutsOpen = $state(false);
-  let version = $state("");
-
   const platform = getPlatform();
 
-  function shortcutLabel(action: ActionId): string {
+  // ---- 菜单（P10）：菜单项由 features 注册表生成，键位引用 keymap ----
+  function shortcutLabel(action: ActionId | undefined): string {
+    if (!action) return "";
     const binding = keymap[action];
     return binding ? formatBinding(binding, platform) : "";
-  }
-
-  async function openAbout(): Promise<void> {
-    try {
-      version = await getVersion();
-    } catch {
-      version = "?";
-    }
-    aboutOpen = true;
-  }
-
-  async function cycleTheme(): Promise<void> {
-    const order = ["light", "dark", "system"] as const;
-    const next = order[(order.indexOf(settings.theme) + 1) % order.length];
-    await settings.setTheme(next);
   }
 
   // ---- 自绘窗口控制（tauri.conf.json 已关 decorations）----
@@ -77,6 +64,17 @@
     };
   });
 
+  async function openAbout(): Promise<void> {
+    try {
+      aboutVersion = await getVersion();
+    } catch {
+      aboutVersion = "?";
+    }
+    appDialogs.openAbout();
+  }
+
+  let aboutVersion = $state("");
+
   function minimizeWindow(): void {
     void appWindow.minimize().catch(() => {});
   }
@@ -89,6 +87,44 @@
     void appWindow.close().catch(() => {});
   }
 </script>
+
+{#snippet sectionItems(section: FeatureSection)}
+  {#each sectionGroups(section) as group, gi (group)}
+    {#if gi > 0}
+      <DropdownMenu.Separator />
+    {/if}
+    {#if section === "file" && group === 1}
+      <!-- 最近仓库（File 菜单专属分组） -->
+      <DropdownMenu.Sub>
+        <DropdownMenu.SubTrigger>{t("menu.file.recent")}</DropdownMenu.SubTrigger>
+        <DropdownMenu.SubContent class="w-64">
+          {#if repos.recent.length === 0}
+            <DropdownMenu.Item disabled>{t("menu.file.recentEmpty")}</DropdownMenu.Item>
+          {:else}
+            {#each repos.recent as r (r.path)}
+              <DropdownMenu.Item onSelect={() => repos.openPath(r.path)}>
+                <span class="flex-1 truncate">{r.name}</span>
+                <span class="ml-3 max-w-40 truncate text-xs text-muted-foreground">{r.path}</span>
+              </DropdownMenu.Item>
+            {/each}
+          {/if}
+        </DropdownMenu.SubContent>
+      </DropdownMenu.Sub>
+      <DropdownMenu.Separator />
+    {/if}
+    {#each featuresForSection(section).filter((f) => f.group === group) as f (f.id)}
+      <DropdownMenu.Item
+        onSelect={f.run}
+        disabled={f.needsRepo && !repos.active}
+      >
+        {t(f.labelKey)}
+        {#if shortcutLabel(f.shortcut)}
+          <DropdownMenu.Shortcut>{shortcutLabel(f.shortcut)}</DropdownMenu.Shortcut>
+        {/if}
+      </DropdownMenu.Item>
+    {/each}
+  {/each}
+{/snippet}
 
 <header
   data-tauri-drag-region
@@ -112,29 +148,7 @@
       {/snippet}
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start" class="w-52">
-      <DropdownMenu.Item onSelect={pickRepo}>
-        {t("menu.file.openRepo")}
-        <DropdownMenu.Shortcut>{shortcutLabel("repo.open")}</DropdownMenu.Shortcut>
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator />
-      <DropdownMenu.Item onSelect={() => netDialogs.openClone()}>{t("menu.file.clone")}</DropdownMenu.Item>
-      <DropdownMenu.Item onSelect={() => netDialogs.openNewRepo()}>{t("menu.file.newRepo")}</DropdownMenu.Item>
-      <DropdownMenu.Separator />
-      <DropdownMenu.Sub>
-        <DropdownMenu.SubTrigger>{t("menu.file.recent")}</DropdownMenu.SubTrigger>
-        <DropdownMenu.SubContent class="w-64">
-          {#if repos.recent.length === 0}
-            <DropdownMenu.Item disabled>{t("menu.file.recentEmpty")}</DropdownMenu.Item>
-          {:else}
-            {#each repos.recent as r (r.path)}
-              <DropdownMenu.Item onSelect={() => repos.openPath(r.path)}>
-                <span class="flex-1 truncate">{r.name}</span>
-                <span class="ml-3 max-w-40 truncate text-xs text-muted-foreground">{r.path}</span>
-              </DropdownMenu.Item>
-            {/each}
-          {/if}
-        </DropdownMenu.SubContent>
-      </DropdownMenu.Sub>
+      {@render sectionItems("file")}
     </DropdownMenu.Content>
   </DropdownMenu.Root>
 
@@ -146,19 +160,7 @@
       {/snippet}
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start" class="w-56">
-      <DropdownMenu.Item onSelect={() => emitAction("view.toggleSidebar")}>
-        {t("menu.view.toggleSidebar")}
-        <DropdownMenu.Shortcut>{shortcutLabel("view.toggleSidebar")}</DropdownMenu.Shortcut>
-      </DropdownMenu.Item>
-      <DropdownMenu.Item onSelect={() => emitAction("view.toggleTheme")}>
-        {t("menu.view.toggleTheme")}
-        <DropdownMenu.Shortcut>{shortcutLabel("view.toggleTheme")}</DropdownMenu.Shortcut>
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator />
-      <DropdownMenu.Item onSelect={() => emitAction("repo.refresh")}>
-        {t("menu.view.refresh")}
-        <DropdownMenu.Shortcut>{shortcutLabel("repo.refresh")}</DropdownMenu.Shortcut>
-      </DropdownMenu.Item>
+      {@render sectionItems("view")}
     </DropdownMenu.Content>
   </DropdownMenu.Root>
 
@@ -169,38 +171,8 @@
         <button {...props} class="rounded px-2.5 py-1 hover:bg-accent">{t("menu.repository")}</button>
       {/snippet}
     </DropdownMenu.Trigger>
-    <DropdownMenu.Content align="start" class="w-52">
-      <DropdownMenu.Item disabled onSelect={() => {}}>
-        {t("menu.repo.fetch")}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item disabled onSelect={() => {}}>
-        {t("menu.repo.pull")}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item disabled onSelect={() => {}}>
-        {t("menu.repo.push")}
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator />
-      <DropdownMenu.Item disabled onSelect={() => {}}>
-        {t("menu.repo.newBranch")}
-      </DropdownMenu.Item>
-    </DropdownMenu.Content>
-  </DropdownMenu.Root>
-
-  <!-- 语言 -->
-  <DropdownMenu.Root>
-    <DropdownMenu.Trigger>
-      {#snippet child({ props })}
-        <button {...props} class="rounded px-2.5 py-1 hover:bg-accent">{t("menu.language")}</button>
-      {/snippet}
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Content align="start" class="w-40">
-      <DropdownMenu.RadioGroup
-        value={settings.locale}
-        onValueChange={(v) => settings.setLocale(v as "zh-CN" | "en")}
-      >
-        <DropdownMenu.RadioItem value="zh-CN">{t("lang.zhCN")}</DropdownMenu.RadioItem>
-        <DropdownMenu.RadioItem value="en">{t("lang.en")}</DropdownMenu.RadioItem>
-      </DropdownMenu.RadioGroup>
+    <DropdownMenu.Content align="start" class="w-56">
+      {@render sectionItems("repository")}
     </DropdownMenu.Content>
   </DropdownMenu.Root>
 
@@ -212,10 +184,7 @@
       {/snippet}
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start" class="w-44">
-      <DropdownMenu.Item onSelect={() => (shortcutsOpen = true)}>
-        {t("menu.help.shortcuts")}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item onSelect={openAbout}>{t("menu.help.about")}</DropdownMenu.Item>
+      {@render sectionItems("help")}
     </DropdownMenu.Content>
   </DropdownMenu.Root>
 
@@ -224,7 +193,11 @@
       variant="ghost"
       size="icon"
       class="size-7"
-      onclick={cycleTheme}
+      onclick={() => {
+        const order = ["light", "dark", "system"] as const;
+        const next = order[(order.indexOf(settings.theme) + 1) % order.length];
+        void settings.setTheme(next);
+      }}
       title="{t('theme.toggle')} ({t(`theme.${settings.theme}`)})"
     >
       {#if settings.theme === "dark"}
@@ -234,6 +207,24 @@
       {:else}
         <Monitor class="size-4" />
       {/if}
+    </Button>
+    <Button
+      variant="ghost"
+      size="icon"
+      class="size-7"
+      onclick={() => appDialogs.openSettings()}
+      title="{t('settings.title')} ({shortcutLabel('app.settings')})"
+    >
+      <Settings2 class="size-4" />
+    </Button>
+    <Button
+      variant="ghost"
+      size="icon"
+      class="size-7"
+      onclick={() => appDialogs.openShortcuts()}
+      title={t('menu.help.shortcuts')}
+    >
+      <Keyboard class="size-4" />
     </Button>
 
     {#if platform !== "macos"}
@@ -279,22 +270,24 @@
 </header>
 
 <!-- 关于 -->
-<Dialog.Root bind:open={aboutOpen}>
+<Dialog.Root bind:open={appDialogs.aboutOpen}>
   <Dialog.Content class="max-w-sm">
     <Dialog.Header>
       <Dialog.Title>{t("dialog.about.title")}</Dialog.Title>
       <Dialog.Description>
-        {t("dialog.about.desc", { name: t("app.name"), version })}
+        {t("dialog.about.desc", { name: t("app.name"), version: aboutVersion })}
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => (aboutOpen = false)}>{t("common.close")}</Button>
+      <Button variant="outline" onclick={() => (appDialogs.aboutOpen = false)}>
+        {t("common.close")}
+      </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
 
 <!-- 快捷键 -->
-<Dialog.Root bind:open={shortcutsOpen}>
+<Dialog.Root bind:open={appDialogs.shortcutsOpen}>
   <Dialog.Content class="max-w-md">
     <Dialog.Header>
       <Dialog.Title>{t("dialog.shortcuts.title")}</Dialog.Title>
@@ -315,7 +308,7 @@
       {/each}
     </div>
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => (shortcutsOpen = false)}>
+      <Button variant="outline" onclick={() => (appDialogs.shortcutsOpen = false)}>
         {t("common.close")}
       </Button>
     </Dialog.Footer>

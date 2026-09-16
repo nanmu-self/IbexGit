@@ -31,6 +31,8 @@ export type {
   CommitFileStat,
   CommitInfo,
   CommitResult,
+  CommitTemplate,
+  ConfigEntry,
   ConflictBlock,
   ConflictModel,
   ConflictSummary,
@@ -47,6 +49,7 @@ export type {
   FileCommit,
   FileContent,
   FileStatus,
+  GitignoreFile,
   GraphEdge,
   GraphFilter,
   GraphPage,
@@ -360,6 +363,20 @@ export const net = {
 
   // ---- 代理 / SSH 配置（runner spawn 时统一注入） ----
   setNetConfig: (config: NetConfig) => wrap(commands.appSetNetConfig(config)),
+};
+
+/**
+ * P10 应用层：Git 配置查看器（只读）、提交模板、git 路径探测、日志级别。
+ */
+export const app = {
+  configGlobal: () => wrap(commands.gitConfigGlobal()),
+  configLocal: (id: RepoId) => wrap(commands.gitConfigLocal(id)),
+  gitignoreGlobal: () => wrap(commands.gitGitignoreGlobal()),
+  /** Resolved `commit.template` (path + content), or null when unset. */
+  commitTemplate: (id: RepoId) => wrap(commands.gitCommitTemplate(id)),
+  /** Validate a user-configured git executable; resolves to its version. */
+  checkGitPath: (path: string) => wrap(commands.appCheckGitPath(path)),
+  setLogLevel: (level: string) => wrap(commands.appSetLogLevel(level)),
 };
 
 /**

@@ -425,7 +425,7 @@
 
   <!-- body -->
   <div
-    class="min-h-0 flex-1 overflow-auto"
+    class="diff-body min-h-0 flex-1 overflow-auto"
     bind:clientHeight={viewportH}
     onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
   >

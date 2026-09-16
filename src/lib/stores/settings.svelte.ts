@@ -35,6 +35,27 @@ class SettingsStore {
   sshKeyPath = $state("");
   proxyMode = $state<"inherit" | "none" | "custom">("inherit");
   proxyUrl = $state("");
+  // ---- P10 设置中心 / 命令面板 ----
+  /** Editor font family (diff / conflict editor); empty = default mono. */
+  editorFont = $state("");
+  /** Tab width for the conflict editor (CSS tab-size). */
+  editorTabSize = $state(4);
+  /** Default pull strategy (PullDialog default selection). */
+  pullStrategy = $state<"merge" | "rebase" | "ff_only">("merge");
+  /** Default push upstream behaviour (PushDialog checkbox default). */
+  pushSetUpstream = $state<"whenMissing" | "always" | "never">("whenMissing");
+  /** Whether the PushDialog starts with "include tags" pre-checked. */
+  pushIncludeTags = $state(false);
+  /** Default external merge tool ("" = git default; "custom" = mergeToolCmd). */
+  mergeToolId = $state("");
+  /** Custom mergetool command template (uses $REMOTE $LOCAL $BASE $MERGED). */
+  mergeToolCmd = $state("");
+  /** Tracing filter (P10 高级）；empty = built-in default. */
+  logLevel = $state("");
+  /** Command palette: recently executed feature ids (MRU, max 10). */
+  recentFeatures = $state<string[]>([]);
+  /** Custom git executable (P10）；empty = PATH "git". Requires restart. */
+  gitPath = $state("");
 
   #store: Store | null = null;
 
@@ -65,6 +86,19 @@ class SettingsStore {
       this.proxyMode =
         (await this.#store.get<"inherit" | "none" | "custom">("proxyMode")) ?? "inherit";
       this.proxyUrl = (await this.#store.get<string>("proxyUrl")) ?? "";
+      this.editorFont = (await this.#store.get<string>("editorFont")) ?? "";
+      this.editorTabSize = (await this.#store.get<number>("editorTabSize")) ?? 4;
+      this.pullStrategy =
+        (await this.#store.get<"merge" | "rebase" | "ff_only">("pullStrategy")) ?? "merge";
+      this.pushSetUpstream =
+        (await this.#store.get<"whenMissing" | "always" | "never">("pushSetUpstream")) ??
+        "whenMissing";
+      this.pushIncludeTags = (await this.#store.get<boolean>("pushIncludeTags")) ?? false;
+      this.mergeToolId = (await this.#store.get<string>("mergeToolId")) ?? "";
+      this.mergeToolCmd = (await this.#store.get<string>("mergeToolCmd")) ?? "";
+      this.logLevel = (await this.#store.get<string>("logLevel")) ?? "";
+      this.recentFeatures = (await this.#store.get<string[]>("recentFeatures")) ?? [];
+      this.gitPath = (await this.#store.get<string>("gitPath")) ?? "";
     } finally {
       setLocale(this.locale);
       this.ready = true;
@@ -150,6 +184,63 @@ class SettingsStore {
       proxy_url: cfg.proxyUrl || null,
       ssh_key_path: cfg.sshKeyPath || null,
     });
+  }
+
+  /** P10: change + persist the tracing filter (applies immediately). */
+  async setLogLevel(level: string): Promise<void> {
+    this.logLevel = level;
+    await this.#store?.set("logLevel", level);
+    try {
+      await commands.appSetLogLevel(level);
+    } catch {
+      // Non-fatal in pure-browser dev mode.
+    }
+  }
+
+  /** P10: custom git executable; persisted only (restart applies it). */
+  async setGitPath(path: string): Promise<void> {
+    this.gitPath = path;
+    await this.#store?.set("gitPath", path);
+  }
+
+  /** P10: MRU bookkeeping for the command palette. */
+  async pushRecentFeature(id: string): Promise<void> {
+    const next = [id, ...this.recentFeatures.filter((x) => x !== id)].slice(0, 10);
+    this.recentFeatures = next;
+    await this.#store?.set("recentFeatures", next);
+  }
+
+  async setEditorFont(font: string): Promise<void> {
+    this.editorFont = font;
+    await this.#store?.set("editorFont", font);
+  }
+
+  async setEditorTabSize(size: number): Promise<void> {
+    this.editorTabSize = size;
+    await this.#store?.set("editorTabSize", size);
+  }
+
+  async setPullStrategy(strategy: "merge" | "rebase" | "ff_only"): Promise<void> {
+    this.pullStrategy = strategy;
+    await this.#store?.set("pullStrategy", strategy);
+  }
+
+  async setPushSetUpstream(mode: "whenMissing" | "always" | "never"): Promise<void> {
+    this.pushSetUpstream = mode;
+    await this.#store?.set("pushSetUpstream", mode);
+  }
+
+  async setPushIncludeTags(v: boolean): Promise<void> {
+    this.pushIncludeTags = v;
+    await this.#store?.set("pushIncludeTags", v);
+  }
+
+  /** Default external merge tool selection ("" = git default). */
+  async setMergeTool(id: string, cmd: string): Promise<void> {
+    this.mergeToolId = id;
+    this.mergeToolCmd = cmd;
+    await this.#store?.set("mergeToolId", id);
+    await this.#store?.set("mergeToolCmd", cmd);
   }
 
   async setSession(

@@ -33,6 +33,13 @@ export const keymap = {
   "repo.closeTab": { mod: true, key: "w", mac: { ctrl: true, key: "w" } },
   "repo.nextTab": { mod: true, alt: true, key: "arrowright" },
   "repo.prevTab": { mod: true, alt: true, key: "arrowleft" },
+  "repo.fetch": { mod: true, alt: true, key: "f" },
+  "repo.pull": { mod: true, alt: true, key: "p" },
+  "repo.push": { mod: true, alt: true, key: "u" },
+  "repo.stash": { mod: true, alt: true, key: "s" },
+  "repo.newBranch": { mod: true, alt: true, key: "b" },
+  "repo.newTag": { mod: true, alt: true, key: "t" },
+  "repo.reveal": { mod: true, alt: true, key: "r" },
   "view.toggleSidebar": { mod: true, key: "b" },
   "view.toggleTheme": {
     mod: true,
@@ -40,7 +47,12 @@ export const keymap = {
     key: "t",
     mac: { ctrl: true, shift: true, key: "t" },
   },
+  "view.changes": { mod: true, key: "1" },
+  "view.history": { mod: true, key: "2" },
+  "view.tags": { mod: true, key: "3" },
   "workspace.focusFilter": { mod: true, shift: true, key: "f" },
+  "app.palette": { mod: true, shift: true, key: "p" },
+  "app.settings": { mod: true, key: "," },
   "app.tasks": { mod: true, key: "j" },
 } satisfies Record<string, Binding>;
 

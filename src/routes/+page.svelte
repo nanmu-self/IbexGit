@@ -18,7 +18,7 @@
   import { settings } from "$lib/stores/settings.svelte";
   import { repos } from "$lib/stores/repos.svelte";
   import { onAction } from "$lib/keyboard";
-  import { pickRepo } from "$lib/repo-picker";
+  import { initFeatureShortcuts } from "$lib/features";
   import { t } from "$lib/i18n";
   import { showToast } from "$lib/stores/toast";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
@@ -46,20 +46,12 @@
 
   $effect(() => {
     const offs = [
-      onAction("repo.open", () => void pickRepo()),
-      onAction("repo.refresh", () => {
-        const id = repos.activeId;
-        if (id !== null) void repos.refresh(id);
-      }),
-      onAction("view.toggleSidebar", () => void settings.setShowSidebar(!settings.showSidebar)),
-      onAction("view.toggleTheme", () => {
-        const order = ["light", "dark", "system"] as const;
-        const next = order[(order.indexOf(settings.theme) + 1) % order.length];
-        void settings.setTheme(next);
-      }),
+      // P10：所有 feature 声明的快捷键由注册表统一接线（含打开/刷新/侧栏等），
+      // 这里只保留非 feature 的 Tab 切换与占位动作。
+      initFeatureShortcuts(),
       onAction("repo.nextTab", () => stepTab(1)),
       onAction("repo.prevTab", () => stepTab(-1)),
-      onAction("app.tasks", () => showToast("info", t("common.comingSoon", { phase: "P3" }))),
+      onAction("app.tasks", () => showToast("info", t("common.comingSoon", { phase: "P12" }))),
     ];
     return () => offs.forEach((off) => off());
   });

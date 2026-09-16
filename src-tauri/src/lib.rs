@@ -1,5 +1,88 @@
 use tauri::Manager;
-use tracing_subscriber::{fmt, EnvFilter};
+
+fn default_log_filter() -> String {
+    if cfg!(debug_assertions) {
+        "debug".into()
+    } else {
+        "info".into()
+    }
+}
+
+/// Best-effort appData resolution BEFORE the Tauri builder runs — needed to
+/// attach the file log layer at init (so the swappable `EnvFilter` sits above
+/// BOTH the stdout and file writers). Mirrors Tauri's `app_data_dir` rules:
+/// %APPDATA% (Roaming) on Windows, ~/Library/Application Support on macOS,
+/// XDG data dir on Linux.
+fn app_data_dir_guess(identifier: &str) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join(identifier))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME").map(|h| {
+            std::path::PathBuf::from(h)
+                .join("Library/Application Support")
+                .join(identifier)
+        })
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+            })?;
+        Some(base.join(identifier))
+    }
+}
+
+/// Two-phase tracing init (P10 高级：日志级别）: install the registry with a
+/// swappable `EnvFilter` on top of the stdout formatter and (when the app
+/// data dir could be resolved) a rolling file writer under
+/// `{appData}/logs/ibexgit.log`. Returns the reload handle used by
+/// `app_set_log_level` to adjust the filter at runtime.
+fn init_tracing(filter: &str, log_dir: Option<std::path::PathBuf>) -> commands::app::FilterHandle {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let (filter_layer, filter_handle) =
+        tracing_subscriber::reload::Layer::new(tracing_subscriber::EnvFilter::new(filter));
+
+    let file_layer = log_dir.map(|dir| {
+        let appender = tracing_appender::rolling::daily(dir.join("logs"), "ibexgit.log");
+        let (writer, guard) = tracing_appender::non_blocking(appender);
+        std::mem::forget(guard); // worker runs for the app lifetime
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(writer)
+    });
+
+    match file_layer {
+        Some(file) => tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(file)
+            .with(tracing_subscriber::fmt::layer())
+            .init(),
+        None => tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(tracing_subscriber::fmt::layer())
+            .init(),
+    }
+    filter_handle
+}
+
+/// Read one string value from the frontend settings store
+/// (`{appData}/settings.json`, a flat JSON object written by
+/// tauri-plugin-store).
+fn store_get_string(dir: &std::path::Path, key: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(dir.join("settings.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    match value.get(key) {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
 
 pub mod commands;
 pub mod core {
@@ -94,6 +177,12 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_file_history,
             commands::git_blame,
             commands::git_branches,
+            commands::git_config_global,
+            commands::git_config_local,
+            commands::git_gitignore_global,
+            commands::git_commit_template,
+            commands::app::app_set_log_level,
+            commands::app::app_check_git_path,
             commands::recovery_list,
             commands::recovery_restore,
             commands::recovery_delete,
@@ -125,19 +214,10 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
 }
 
 pub fn run() {
-    // Initialize tracing subscriber with env-based filter.
-    let filter = match std::env::var("IBEXGIT_LOG") {
-        Ok(val) => EnvFilter::new(val),
-        Err(_) => {
-            if cfg!(debug_assertions) {
-                EnvFilter::new("debug")
-            } else {
-                EnvFilter::new("info")
-            }
-        }
-    };
-
-    fmt().with_env_filter(filter).init();
+    let ctx = tauri::generate_context!();
+    // Initialize tracing with an env-based filter.
+    let filter = std::env::var("IBEXGIT_LOG").unwrap_or_else(|_| default_log_filter());
+    let filter_handle = init_tracing(&filter, app_data_dir_guess(&ctx.config().identifier));
     let builder = specta_builder::<tauri::Wry>();
 
     tauri::Builder::default()
@@ -192,6 +272,23 @@ pub fn run() {
             app.manage(crate::core::workspace::WorkspaceDir(
                 data_dir.join("workspaces"),
             ));
+
+            // P10 高级：文件日志已在 init_tracing 挂载（appData/logs）。
+
+            // P10 设置中心：持久化的日志级别（settings.json）与自定义 git 路径。
+            if std::env::var_os("IBEXGIT_LOG").is_none() {
+                if let Some(level) = store_get_string(&data_dir, "logLevel") {
+                    if let Ok(f) = tracing_subscriber::EnvFilter::try_new(&level) {
+                        let _ = filter_handle.modify(|l| *l = f);
+                    }
+                }
+            }
+            app.manage(commands::app::LogFilter(filter_handle));
+            let git_path = store_get_string(&data_dir, "gitPath")
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| "git".to_string());
+            tracing::info!(%git_path, "git executable");
 
             // Recovery snapshots root (PLAN §4.4/§4.7): {appData}/recovery.
             app.manage(crate::core::recovery::RecoveryManager::new(
@@ -276,7 +373,7 @@ pub fn run() {
             // Git engine stack: runner → cli engine → repo manager.
             let runner = crate::core::runner::GitProcessRunner::with_net_config(120, net_config);
             let engine: std::sync::Arc<dyn crate::core::engine::GitEngine> =
-                std::sync::Arc::new(crate::core::engine::CliEngine::new(runner, "git"));
+                std::sync::Arc::new(crate::core::engine::CliEngine::new(runner, &git_path));
             app.manage(crate::core::repo::RepoManager::new(engine));
 
             // Clone task registry (P7): taskId → CancelToken.
@@ -321,7 +418,7 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(ctx)
         .expect("error while running tauri application");
 }
 

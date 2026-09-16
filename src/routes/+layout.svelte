@@ -1,6 +1,8 @@
 <script lang="ts">
   import "../app.css";
   import ToastHost from "$lib/components/ui/toast/ToastHost.svelte";
+  import CommandPalette from "$lib/components/palette/CommandPalette.svelte";
+  import SettingsDialog from "$lib/components/settings/SettingsDialog.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { repos } from "$lib/stores/repos.svelte";
   import { initKeyboard } from "$lib/keyboard";
@@ -29,6 +31,21 @@
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
+  });
+
+  // P10 设置中心：可配置的编辑器字体与 tab 宽度（diff 正文 / 冲突编辑器）。
+  $effect(() => {
+    const root = document.documentElement;
+    const font = settings.editorFont.trim();
+    if (font) {
+      root.style.setProperty(
+        "--font-editor",
+        `'${font.replace(/'/g, "")}', var(--font-mono, ui-monospace)`,
+      );
+    } else {
+      root.style.removeProperty("--font-editor");
+    }
+    root.style.setProperty("--editor-tab-size", String(settings.editorTabSize));
   });
 
   // Backend events (watcher refresh + single-instance open) and window
@@ -76,3 +93,5 @@
 {/if}
 
 <ToastHost />
+<CommandPalette />
+<SettingsDialog />
