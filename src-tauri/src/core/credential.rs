@@ -490,16 +490,25 @@ impl CredentialBroker {
         &self.addr
     }
 
-    /// Runner 注入配置：`-c` 参数对 + env 对（设计文档 §4）。
+    /// Runner 注入配置（ADR-014：系统 helper 优先）。
+    ///
+    /// **追加链尾，不重置**：`-c credential.helper=<ours>` 多值 append 在
+    /// system/global 配置的 helper（GCM/osxkeychain…）之后——缓存命中时静默
+    /// 复用系统已验证的认证，未命中时弹其原生授权窗口；全链未命中才轮到
+    /// IbexGit 的对话框（兜底覆盖无 helper 环境）。过期凭据由 git 的
+    /// reject/erase 循环自动清理。
+    ///
+    /// askpass 桥（GIT/SSH_ASKPASS）保持注入：SSH 口令短语、host key 确认、
+    /// 以及 helper 全部未命中时 git 的最后追问（GIT_TERMINAL_PROMPT=0 下转
+    /// askpass）都走应用内 UI，取消流语义完整。
     pub fn spawn_injection(&self, helper_path: &Path) -> SpawnInjection {
         let helper = helper_path.to_string_lossy().replace('\\', "/");
         SpawnInjection {
             args: vec![
                 "-c".to_string(),
-                "credential.helper=".to_string(),
-                "-c".to_string(),
                 // git 经 shell 执行 helper 命令：双引号包裹路径（正斜杠），
-                // action（get/store/erase）由 git 追加。
+                // action（get/store/erase）由 git 追加。无空值重置：不屏蔽
+                // 用户全局 helper（ADR-014）。
                 format!("credential.helper=\"{helper}\" ibexgit-credential"),
             ],
             env: vec![
