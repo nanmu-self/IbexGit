@@ -227,27 +227,18 @@
     {/if}
 
     {#if model?.editable}
-      <div class="flex items-center gap-1">
-        <Button variant="ghost" size="icon-sm" title={t("conflict.prev")} onclick={() => navBlock(-1)}>
-          <ChevronLeft class="size-4" />
-        </Button>
-        <span class="min-w-14 text-center text-xs tabular-nums text-muted-foreground">
-          {liveBlocks > 0 ? `${currentBlock + 1}/${liveBlocks}` : t("conflict.noBlocks")}
-        </span>
-        <Button variant="ghost" size="icon-sm" title={t("conflict.next")} onclick={() => navBlock(1)}>
-          <ChevronRight class="size-4" />
-        </Button>
-      </div>
-      {#if canCompare}
-        <Button
-          variant="ghost"
-          size="sm"
-          class="text-xs"
-          onclick={() => (compareOpen = !compareOpen)}
-        >
-          <GitCompareArrows class="size-3.5" />
-          {t("conflict.viewSides")}
-        </Button>
+      {#if model.block_count > 0}
+        <div class="flex items-center gap-1">
+          <Button variant="ghost" size="icon-sm" title={t("conflict.prev")} onclick={() => navBlock(-1)}>
+            <ChevronLeft class="size-4" />
+          </Button>
+          <span class="min-w-14 text-center text-xs tabular-nums text-muted-foreground">
+            {liveBlocks > 0 ? `${currentBlock + 1}/${liveBlocks}` : t("conflict.noBlocks")}
+          </span>
+          <Button variant="ghost" size="icon-sm" title={t("conflict.next")} onclick={() => navBlock(1)}>
+            <ChevronRight class="size-4" />
+          </Button>
+        </div>
       {/if}
       <Button variant="ghost" size="icon-sm" title={t("conflict.mergetool")} onclick={() => (toolMenuOpen = !toolMenuOpen)}>
         <ExternalTool class="size-4" />
@@ -260,23 +251,37 @@
         {/if}
         {t("conflict.markResolved")}
       </Button>
-    {:else if model && !model.directory && !model.submodule}
+    {/if}
+
+    {#if model && !model.submodule && !model.directory && model.conflict_type !== "content"}
+      <!-- 选边动作：Modify/Delete、Add/Add、Binary、Rename 等；可编辑的内容冲突
+           不重复提供（编辑器 Accept 即选边）。 -->
       <Button variant="outline" size="sm" class="h-7 text-xs" disabled={busy} onclick={() => resolveSide("ours")}>
         {t("conflict.keepOurs")}
       </Button>
-      <Button variant="outline" size="sm" class="h-7 text-xs" disabled={busy || !model.has_incoming} onclick={() => resolveSide("theirs")}>
-        {t("conflict.keepTheirs")}
-      </Button>
+      {#if model.has_incoming}
+        <Button variant="outline" size="sm" class="h-7 text-xs" disabled={busy} onclick={() => resolveSide("theirs")}>
+          {t("conflict.keepTheirs")}
+        </Button>
+      {/if}
       <Button variant="outline" size="sm" class="h-7 text-xs text-red-500 hover:text-red-500" disabled={busy} onclick={() => (deleteOpen = true)}>
         {t("conflict.delete")}
       </Button>
-      {#if canCompare}
-        <Button variant="ghost" size="sm" class="h-7 text-xs" onclick={() => (compareOpen = !compareOpen)}>
-          <GitCompareArrows class="size-3.5" />
-          {t("conflict.viewSides")}
-        </Button>
-      {/if}
-    {:else if model}
+    {/if}
+
+    {#if canCompare && model && !model.submodule}
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-7 text-xs"
+        onclick={() => (compareOpen = !compareOpen)}
+      >
+        <GitCompareArrows class="size-3.5" />
+        {t("conflict.viewSides")}
+      </Button>
+    {/if}
+
+    {#if model && (model.directory || model.submodule)}
       <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <FileWarning class="size-3.5" />
         {t(model.directory ? "conflict.directoryHint" : "conflict.submoduleHint")}
