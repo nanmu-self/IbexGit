@@ -4,6 +4,7 @@
    * stashes and the HEAD reflog. Rows carry context menus; dialogs and
    * destructive flows are delegated to RefsDialogsHost via the ref bus.
    */
+  import { fade } from "svelte/transition";
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
   import { refsData, loadRefsData, REFS_RELOG_LIMIT } from "$lib/stores/refsdata.svelte";
@@ -457,14 +458,14 @@
       <ul class="pb-1">
         {#each reflog.slice(0, REFS_RELOG_LIMIT) as entry, i (i)}
           <li class="min-w-0"><div
-            class="flex cursor-default items-center gap-1.5 rounded px-2 py-[3px] text-[13px] hover:bg-accent/70"
+            class="flex cursor-default items-baseline gap-1.5 rounded px-2 py-[3px] text-[13px] hover:bg-accent/70"
             role="button"
             tabindex="0"
             title="{entry.short_hash} {entry.message} · {entry.date}"
             oncontextmenu={(e) => openMenu(e, (x, y) => ({ kind: "reflog", entry, x, y }))}
             onkeydown={(e) => e.key === "Enter" && checkout(entry.short_hash)}
           >
-            <span class="w-8 shrink-0 font-mono text-[10px] text-muted-foreground">
+            <span class="w-9 shrink-0 font-mono text-[10px] leading-4 text-muted-foreground">
               {entry.short_hash}
             </span>
             <span class="min-w-0 flex-1 truncate text-xs">{entry.message}</span>
@@ -481,7 +482,8 @@
 {#if menu}
   <div
     id="ref-context-menu"
-    class="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in zoom-in-95 duration-100"
+    class="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+    transition:fade={{ duration: 100 }}
     style="left:{Math.min(menu.x, window.innerWidth - 230)}px;top:{Math.min(
       menu.y,
       window.innerHeight - 320

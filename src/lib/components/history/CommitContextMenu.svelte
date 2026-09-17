@@ -5,6 +5,7 @@
   // interactive-rebase Backlog and are deliberately absent.
   // Hand-rolled like FileContextMenu — outside mousedown + Escape close,
   // viewport-clamped fixed positioning.
+  import { fade } from "svelte/transition";
   import { t } from "$lib/i18n";
   import type { GraphRow } from "$lib/git";
   import CircleDot from "@lucide/svelte/icons/circle-dot";
@@ -94,7 +95,8 @@
 {#if target}
   <div
     bind:this={panel}
-    class="fixed z-50 min-w-52 rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in zoom-in-95 duration-100"
+    class="fixed z-50 min-w-52 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+    transition:fade={{ duration: 100 }}
     style={style(target.x, target.y)}
   >
     <button type="button" class="menu-item" onclick={run(oncheckout)}>

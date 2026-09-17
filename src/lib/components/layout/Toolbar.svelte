@@ -4,8 +4,7 @@
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
   import { pickRepo } from "$lib/repo-picker";
-  import { revealItemInDir } from "@tauri-apps/plugin-opener";
-  import { normalizeError, git } from "$lib/git";
+  import { normalizeError, git, app } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
   import { runFetch, isBusy } from "$lib/stores/netops.svelte";
   import { requestRefAction } from "$lib/stores/refbus";
@@ -26,7 +25,19 @@
   function reveal(): void {
     const path = repos.active?.path;
     if (!path) return;
-    revealItemInDir(path).catch((e) => normalizeError(e));
+    // 进入项目目录本身（而非在父目录中选中它）。不走 opener 插件：
+    // Windows 上其 openPath 对目录是"父窗口中选中"的 reveal 语义。
+    app.openFolder(path).catch((e) => normalizeError(e));
+  }
+
+  async function openTerminal(): Promise<void> {
+    const path = repos.active?.path;
+    if (!path) return;
+    try {
+      await app.openTerminal(path);
+    } catch (e) {
+      normalizeError(e);
+    }
   }
 
   async function stashAll(): Promise<void> {
@@ -191,14 +202,15 @@
             variant="ghost"
             size="icon"
             class="flex h-11 w-auto min-w-12 flex-col gap-0.5 px-2 text-[10px] font-normal"
-            disabled
+            disabled={!active}
+            onclick={openTerminal}
           >
             <Terminal class="size-4" />
             {t("toolbar.openTerminal")}
           </Button>
         {/snippet}
       </Tooltip.Trigger>
-      <Tooltip.Content>{t("sidebar.comingSoon", { phase: "Backlog" })}</Tooltip.Content>
+      <Tooltip.Content>{t("toolbar.openTerminalTip")}</Tooltip.Content>
     </Tooltip.Root>
 
     <Tooltip.Root>

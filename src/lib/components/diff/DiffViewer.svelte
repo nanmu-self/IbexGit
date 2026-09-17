@@ -433,6 +433,7 @@
       <div class="p-4 text-sm text-muted-foreground">{t("diff.loading")}</div>
     {:else if !model || model.files.length === 0}
       <EmptyState
+        animate={false}
         icon={FileText}
         title={t("workspace.noFileSelected")}
         hint={t("workspace.diffHint")}

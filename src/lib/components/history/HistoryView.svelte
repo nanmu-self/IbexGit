@@ -1,3 +1,21 @@
+<script lang="ts" module>
+  import { fly, slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { browser } from "$app/environment";
+
+  // Reduced motion keeps the 80ms snap used by Welcome and Tree.
+  const reduceMotion =
+    browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /** Detached-HEAD banner: the list below glides instead of jumping. */
+  const bannerCollapse = reduceMotion
+    ? { duration: 80, easing: cubicOut }
+    : { duration: 240, easing: cubicOut };
+  /** Multi-select action bar: enter/exit from the same bottom edge. */
+  const barFly = reduceMotion
+    ? { y: 0, duration: 80, easing: cubicOut }
+    : { y: 8, duration: 200, easing: cubicOut };
+</script>
+
 <script lang="ts">
   // P5 提交历史主视图: virtualized commit list with the SVG graph,
   // search/filters, multi-select history operations (cherry-pick / squash /
@@ -437,6 +455,7 @@
     {#if active.detached}
       <div
         class="flex items-center gap-2 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400"
+        transition:slide={bannerCollapse}
       >
         <span class="min-w-0 flex-1 truncate">{t("history.detachedBanner")}</span>
         <Button variant="outline" size="xs" onclick={() => (createBranchOpen = true)}>
@@ -518,30 +537,35 @@
 
     <!-- multi-select action bar -->
     {#if multi.length > 0}
-      <div
-        class="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-lg border bg-popover p-1.5 shadow-lg"
-      >
-        <span class="px-1 text-xs text-muted-foreground">
-          {t("history.selected", { n: multi.length })}
-        </span>
-        <Button variant="outline" size="xs" onclick={() => openDialog("cherry-pick")}>
-          {t("history.cherryPick")}
-        </Button>
-        <Button
-          variant="outline"
-          size="xs"
-          disabled={!squashEligible}
-          title={squashEligible ? "" : t("history.squashNotEligible")}
-          onclick={() => openDialog("squash")}
+      <!-- positioning wrapper: the inner element owns the transition, so
+           fly's translateY never fights the -translate-x-1/2 centering -->
+      <div class="absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
+        <div
+          class="flex items-center gap-2 rounded-lg border bg-popover p-1.5 shadow-lg"
+          transition:fly={barFly}
         >
-          {t("history.squash")}
-        </Button>
-        <Button variant="outline" size="xs" onclick={() => openDialog("revert")}>
-          {t("history.revert")}
-        </Button>
-        <Button variant="ghost" size="icon-sm" onclick={() => (multi = [])}>
-          ✕
-        </Button>
+          <span class="px-1 text-xs text-muted-foreground">
+            {t("history.selected", { n: multi.length })}
+          </span>
+          <Button variant="outline" size="xs" onclick={() => openDialog("cherry-pick")}>
+            {t("history.cherryPick")}
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={!squashEligible}
+            title={squashEligible ? "" : t("history.squashNotEligible")}
+            onclick={() => openDialog("squash")}
+          >
+            {t("history.squash")}
+          </Button>
+          <Button variant="outline" size="xs" onclick={() => openDialog("revert")}>
+            {t("history.revert")}
+          </Button>
+          <Button variant="ghost" size="icon-sm" onclick={() => (multi = [])}>
+            ✕
+          </Button>
+        </div>
       </div>
     {/if}
   </div>

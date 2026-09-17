@@ -13,6 +13,7 @@
     "core:window:allow-internal-toggle-maximize",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-path",
     "clipboard-manager:allow-write-text",
     "dialog:default",
     "store:default"

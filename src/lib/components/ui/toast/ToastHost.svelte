@@ -1,3 +1,18 @@
+<script lang="ts" module>
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { browser } from "$app/environment";
+
+  // `tw-animate-css` `animate-out` is a CSS animation and cannot play at DOM
+  // removal time, so the exit is a Svelte transition: same 8px edge in and
+  // out, instead of vanishing in place. Reduced motion → opacity-led.
+  const reduceMotion =
+    browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const toastFly = reduceMotion
+    ? { y: 0, duration: 120, easing: cubicOut }
+    : { y: 8, duration: 200, easing: cubicOut };
+</script>
+
 <script lang="ts">
   import { toasts, removeToast } from "$lib/stores/toast";
   import CircleX from "@lucide/svelte/icons/circle-x";
@@ -21,11 +36,12 @@
   };
 </script>
 
-<div class="pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col gap-2">
+<div class="pointer-events-none fixed right-4 bottom-4 z-[100] flex flex-col gap-2">
   {#each $toasts as toast (toast.id)}
     {@const Icon = ICONS[toast.type] ?? Info}
     <div
-      class="pointer-events-auto flex max-w-md min-w-[300px] items-start gap-2.5 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg animate-in fade-in slide-in-from-bottom-2"
+      class="pointer-events-auto flex max-w-md min-w-[300px] items-start gap-2.5 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg"
+      transition:fly={toastFly}
       role="alert"
     >
       <Icon class="mt-0.5 size-4 shrink-0 {COLORS[toast.type] ?? COLORS.info}" />

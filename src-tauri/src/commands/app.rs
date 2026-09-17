@@ -36,3 +36,31 @@ pub fn app_check_git_path(path: String) -> Result<String, AppError> {
     }
     crate::core::compat::GitCapabilities::version_of(trimmed)
 }
+
+/// Open the platform terminal at `path` (P3 工具栏：在终端打开). OS
+/// integration rather than a git operation, so it lives at the app layer;
+/// the actual candidate logic + tests are in `core::terminal`.
+#[tauri::command]
+#[specta::specta]
+pub async fn app_open_terminal(path: String) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || crate::core::terminal::launch(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| AppError::internal(format!("terminal task join failed: {e}")))?
+        .map_err(AppError::from)
+}
+
+/// Open the system file manager AT `path`, entering the folder (P3 工具栏).
+/// Own implementation instead of the opener plugin: on Windows
+/// `plugin-opener::open_path` maps a directory to
+/// `SHOpenFolderAndSelectItems` — reveal/select in the PARENT window, not
+/// "enter" — and silently no-ops when that window already exists.
+#[tauri::command]
+#[specta::specta]
+pub async fn app_open_folder(path: String) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || {
+        crate::core::folder::open_in_file_manager(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("open folder task join failed: {e}")))?
+    .map_err(AppError::from)
+}

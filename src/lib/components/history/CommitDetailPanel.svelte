@@ -1,6 +1,7 @@
 <script lang="ts">
   // P5 提交详情面板: metadata + changed files (list/tree) + diff reuse
   // (DiffViewer, source=commit, read-only) + "restore this file version".
+  import { fade } from "svelte/transition";
   import { Button } from "$lib/components/ui/button";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
   import { Tree, type TreeNode } from "$lib/components/ui/tree";
@@ -416,7 +417,8 @@
 {#if fileMenu}
   <div
     id="file-row-menu"
-    class="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in zoom-in-95 duration-100"
+    class="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+    transition:fade={{ duration: 100 }}
     style={fileMenuStyle(fileMenu.x, fileMenu.y)}
   >
     <button

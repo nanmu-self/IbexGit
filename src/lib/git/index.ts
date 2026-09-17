@@ -397,6 +397,10 @@ export const app = {
   /** Validate a user-configured git executable; resolves to its version. */
   checkGitPath: (path: string) => wrap(commands.appCheckGitPath(path)),
   setLogLevel: (level: string) => wrap(commands.appSetLogLevel(level)),
+  /** Open the OS terminal at a directory (toolbar: open in terminal). */
+  openTerminal: (path: string) => wrap(commands.appOpenTerminal(path)),
+  /** Open the system file manager entering a directory (toolbar). */
+  openFolder: (path: string) => wrap(commands.appOpenFolder(path)),
 };
 
 /**

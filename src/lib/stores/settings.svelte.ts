@@ -56,6 +56,9 @@ class SettingsStore {
   recentFeatures = $state<string[]>([]);
   /** Custom git executable (P10）；empty = PATH "git". Requires restart. */
   gitPath = $state("");
+  /** 设置中心弹窗尺寸（自由拖拽握把）；0 = 使用默认尺寸。 */
+  settingsWidth = $state(0);
+  settingsHeight = $state(0);
 
   #store: Store | null = null;
 
@@ -99,6 +102,8 @@ class SettingsStore {
       this.logLevel = (await this.#store.get<string>("logLevel")) ?? "";
       this.recentFeatures = (await this.#store.get<string[]>("recentFeatures")) ?? [];
       this.gitPath = (await this.#store.get<string>("gitPath")) ?? "";
+      this.settingsWidth = (await this.#store.get<number>("settingsWidth")) ?? 0;
+      this.settingsHeight = (await this.#store.get<number>("settingsHeight")) ?? 0;
     } finally {
       setLocale(this.locale);
       this.ready = true;
@@ -201,6 +206,14 @@ class SettingsStore {
   async setGitPath(path: string): Promise<void> {
     this.gitPath = path;
     await this.#store?.set("gitPath", path);
+  }
+
+  /** 设置中心弹窗尺寸（0 = 复位为默认）。 */
+  async setSettingsSize(width: number, height: number): Promise<void> {
+    this.settingsWidth = width;
+    this.settingsHeight = height;
+    await this.#store?.set("settingsWidth", width);
+    await this.#store?.set("settingsHeight", height);
   }
 
   /** P10: MRU bookkeeping for the command palette. */

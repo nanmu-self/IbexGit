@@ -1,3 +1,17 @@
+<script lang="ts" module>
+  import { slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { browser } from "$app/environment";
+
+  // The operation banner is rare but high-stakes: collapse its height so the
+  // workspace list glides down instead of jumping 28px.
+  const reduceMotion =
+    browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const bannerCollapse = reduceMotion
+    ? { duration: 80, easing: cubicOut }
+    : { duration: 240, easing: cubicOut };
+</script>
+
 <script lang="ts">
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
@@ -496,16 +510,18 @@
 
 <div class="flex min-h-0 flex-1 flex-col">
   {#if active?.operation}
-    <OperationBanner
-      repoId={active.id}
-      operation={active.operation}
-      conflictCount={active.conflicts.length}
-      onchanged={() => void repos.refresh(active.id)}
-      onresolve={() => {
-        const first = active.conflicts[0];
-        if (first) repos.updateUi({ selected_file: { path: first.path, source: "worktree" } });
-      }}
-    />
+    <div transition:slide={bannerCollapse}>
+      <OperationBanner
+        repoId={active.id}
+        operation={active.operation}
+        conflictCount={active.conflicts.length}
+        onchanged={() => void repos.refresh(active.id)}
+        onresolve={() => {
+          const first = active.conflicts[0];
+          if (first) repos.updateUi({ selected_file: { path: first.path, source: "worktree" } });
+        }}
+      />
+    </div>
   {/if}
   <div class="flex min-h-0 flex-1">
   <!-- 文件列表 -->

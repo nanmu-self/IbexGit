@@ -282,6 +282,20 @@ export const commands = {
 	 *  (P10 设置中心：git 路径自定义). Returns the trimmed version string.
 	 */
 	appCheckGitPath: (path: string) => __TAURI_INVOKE<string>("app_check_git_path", { path }),
+	/**
+	 *  Open the platform terminal at `path` (P3 工具栏：在终端打开). OS
+	 *  integration rather than a git operation, so it lives at the app layer;
+	 *  the actual candidate logic + tests are in `core::terminal`.
+	 */
+	appOpenTerminal: (path: string) => __TAURI_INVOKE<null>("app_open_terminal", { path }),
+	/**
+	 *  Open the system file manager AT `path`, entering the folder (P3 工具栏).
+	 *  Own implementation instead of the opener plugin: on Windows
+	 *  `plugin-opener::open_path` maps a directory to
+	 *  `SHOpenFolderAndSelectItems` — reveal/select in the PARENT window, not
+	 *  "enter" — and silently no-ops when that window already exists.
+	 */
+	appOpenFolder: (path: string) => __TAURI_INVOKE<null>("app_open_folder", { path }),
 	aiConfigGet: () => __TAURI_INVOKE<AiConfigDto>("ai_config_get"),
 	aiConfigSet: (config: AiConfigDto) => __TAURI_INVOKE<AiConfigDto>("ai_config_set", { config }),
 	aiSetKey: (key: string) => __TAURI_INVOKE<null>("ai_set_key", { key }),

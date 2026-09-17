@@ -91,12 +91,14 @@ pub mod core {
     pub mod credential;
     pub mod engine;
     pub mod error;
+    pub mod folder;
     pub mod graph;
     pub mod proctree;
     pub mod recovery;
     pub mod repo;
     pub mod runner;
     pub mod task;
+    pub mod terminal;
     pub mod watcher;
     pub mod workspace;
 }
@@ -184,6 +186,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_commit_template,
             commands::app::app_set_log_level,
             commands::app::app_check_git_path,
+            commands::app::app_open_terminal,
+            commands::app::app_open_folder,
             commands::ai::ai_config_get,
             commands::ai::ai_config_set,
             commands::ai::ai_set_key,

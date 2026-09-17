@@ -147,7 +147,7 @@
         placeholder={t("palette.placeholder")}
         class="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
       />
-      <kbd class="rounded border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">Esc</kbd>
+      <!-- <kbd class="rounded border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">Esc</kbd> -->
     </div>
 
     <div class="max-h-80 overflow-y-auto p-1.5" role="listbox">
