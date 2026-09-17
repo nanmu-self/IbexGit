@@ -73,7 +73,7 @@
 
   {#if aiStore.msgOpen}
     <div
-      class="absolute top-full right-0 z-30 mt-1 w-[380px] space-y-2 rounded-md border bg-popover p-2.5 text-[12px] shadow-md"
+      class="absolute right-0 bottom-full z-30 mb-1 max-h-[min(420px,60vh)] w-[380px] space-y-2 overflow-y-auto rounded-md border bg-popover p-2.5 text-[12px] shadow-md"
       role="dialog"
       aria-label={t("ai.msg.title")}
     >

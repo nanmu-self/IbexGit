@@ -783,8 +783,11 @@
               </div>
               <label class="block space-y-1">
                 <span class="text-xs text-muted-foreground">{t("ai.settings.timeout")}</span>
+                <!-- value 必须与 option 的 __value 同为 number：Svelte 用
+                     Object.is(option.__value, value) 匹配选中项，传 String 会
+                     永远失配 → selectedIndex=-1 不回显 -->
                 <select
-                  value={String(aiCfg.timeout_secs)}
+                  value={aiCfg.timeout_secs}
                   class="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
                   onchange={(e) => aiPatch({ timeout_secs: Number(e.currentTarget.value) })}
                 >

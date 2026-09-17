@@ -53,6 +53,34 @@
   const CHAR_W = 7.5;
   const GUTTER_W = 100;
 
+  /**
+   * Display-column width of a line: fullwidth/CJK chars occupy ~2 mono
+   * cells and tabs advance to 8-col stops. Raw `.length` underestimates,
+   * which made long/CJK lines overflow their split half onto the sibling
+   * text (the char-interleaved "overlap").
+   */
+  function visualCols(s: string): number {
+    let cols = 0;
+    for (const ch of s) {
+      if (ch === "\t") {
+        cols += 8;
+        continue;
+      }
+      const cp = ch.codePointAt(0) ?? 0;
+      const wide =
+        (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+        (cp >= 0x2e80 && cp <= 0xa4cf) || // CJK radicals .. Yi
+        (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+        (cp >= 0xf900 && cp <= 0xfaff) || // CJK compat ideographs
+        (cp >= 0xfe30 && cp <= 0xfe4f) || // CJK compat forms
+        (cp >= 0xff00 && cp <= 0xff60) || // fullwidth forms
+        (cp >= 0xffe0 && cp <= 0xffe6) || // fullwidth signs
+        cp >= 0x20000; // CJK ext B+
+      cols += wide ? 2 : 1;
+    }
+    return cols;
+  }
+
   // ---------- view state ----------
   let scrollTop = $state(0);
   let viewportH = $state(0);
@@ -86,20 +114,26 @@
   });
   const offsets = $derived(computeOffsets(rows));
   const totalH = $derived(offsets[offsets.length - 1] ?? 0);
-  const maxLineLen = $derived.by(() => {
+  const maxLineCols = $derived.by(() => {
     let m = 40;
     for (const row of rows) {
-      if (row.t === "line") m = Math.max(m, row.line.content.length);
+      if (row.t === "line") m = Math.max(m, visualCols(row.line.content));
       else if (row.t === "pair") {
-        if (row.left) m = Math.max(m, row.left.content.length);
-        if (row.right) m = Math.max(m, row.right.content.length);
+        if (row.left) m = Math.max(m, visualCols(row.left.content));
+        if (row.right) m = Math.max(m, visualCols(row.right.content));
       }
     }
     return m;
   });
-  /** Inner width so horizontal scroll reaches the longest visible line. */
+  /**
+   * Inner width so horizontal scroll reaches every line. Split mode needs
+   * ~2× the longest line: each half must fit it on its own, otherwise
+   * pre-formatted text overflows into the sibling half and paints over it.
+   */
   const contentW = $derived(
-    Math.max(600, (maxLineLen + 4) * CHAR_W * (viewMode === "split" ? 0.55 : 1) + GUTTER_W),
+    viewMode === "split"
+      ? Math.max(600, (maxLineCols + 8) * CHAR_W * 2 + GUTTER_W)
+      : Math.max(600, (maxLineCols + 4) * CHAR_W + GUTTER_W),
   );
   const startIdx = $derived(Math.max(0, findIndexAt(offsets, scrollTop) - OVERSCAN));
   const endIdx = $derived(
@@ -566,7 +600,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="flex h-full font-mono text-xs leading-5">
       <div
-        class="min-w-0 flex-1 {lineBg(row.left?.kind ?? 'context')} {row.left &&
+        class="min-w-0 flex-1 overflow-hidden {lineBg(row.left?.kind ?? 'context')} {row.left &&
         (set?.has(`${row.hunkIndex}:${row.leftIndex}`) ?? false)
           ? 'ring-1 ring-inset ring-blue-400/60'
           : ''} {(ops.primary || ops.secondary) && row.file.lineOpsAllowed && row.left ? 'cursor-pointer' : ''}"
@@ -583,7 +617,7 @@
         </span>
       </div>
       <div
-        class="min-w-0 flex-1 border-l border-border/60 {lineBg(row.right?.kind ?? 'context')} {row.right &&
+        class="min-w-0 flex-1 overflow-hidden border-l border-border/60 {lineBg(row.right?.kind ?? 'context')} {row.right &&
         (set?.has(`${row.hunkIndex}:${row.rightIndex}`) ?? false)
           ? 'ring-1 ring-inset ring-blue-400/60'
           : ''} {(ops.primary || ops.secondary) && row.file.lineOpsAllowed && row.right ? 'cursor-pointer' : ''}"
