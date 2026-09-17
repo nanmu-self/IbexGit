@@ -175,6 +175,20 @@
   let template = $state<CommitTemplate | null>(null);
   let configLoading = $state(false);
 
+  // ---- git config 常用项编辑（写入全局配置）----
+  // blur 即时保存：非空 = set，空 = unset；与 general 区字体/缩进的交互一致。
+  const COMMON_CONFIG_KEYS = [
+    { key: "user.name", labelKey: "settings.gitconfig.userName", placeholder: "IbexGit" },
+    { key: "user.email", labelKey: "settings.gitconfig.userEmail", placeholder: "you@example.com" },
+    { key: "http.proxy", labelKey: "settings.gitconfig.httpProxy", placeholder: "http://127.0.0.1:7890" },
+    { key: "https.proxy", labelKey: "settings.gitconfig.httpsProxy", placeholder: "http://127.0.0.1:7890" },
+  ] as const;
+  let cfgEffective = $state<Record<string, string>>({});
+  let cfgDrafts = $state<Record<string, string>>(
+    Object.fromEntries(COMMON_CONFIG_KEYS.map((f) => [f.key, ""])),
+  );
+  let cfgSaving = $state<string | null>(null);
+
   // ---- AI (P11) ----
   let aiCfg = $state<AiConfigDto | null>(null);
   let aiKeyInput = $state("");
@@ -299,10 +313,43 @@
       globalConfig = g;
       gitignore = ig;
       localConfig = activeRepo ? await app.configLocal(activeRepo.id) : [];
+      syncCommonConfig(g);
     } catch (err) {
       normalizeError(err);
     } finally {
       configLoading = false;
+    }
+  }
+
+  /** 同名键以最后一次出现为准（git 语义），key 比较忽略大小写。 */
+  function syncCommonConfig(entries: ConfigEntry[]): void {
+    const eff: Record<string, string> = {};
+    for (const e of entries) {
+      const lower = e.key.toLowerCase();
+      if (COMMON_CONFIG_KEYS.some((f) => f.key === lower)) eff[lower] = e.value;
+    }
+    cfgEffective = eff;
+    // 保存中的字段不动草稿，避免 reload 覆盖用户正在输入的内容。
+    for (const f of COMMON_CONFIG_KEYS) {
+      if (cfgSaving !== f.key) cfgDrafts[f.key] = eff[f.key] ?? "";
+    }
+  }
+
+  async function saveCommonConfig(key: string): Promise<void> {
+    const draft = (cfgDrafts[key] ?? "").trim();
+    if (draft === (cfgEffective[key] ?? "")) return; // 未变化（含未设置过）
+    cfgSaving = key;
+    try {
+      await app.configSetGlobal(key, draft === "" ? null : draft);
+      cfgDrafts[key] = draft;
+      showToast("success", t("settings.gitconfig.saved"));
+      await loadConfig();
+    } catch (err) {
+      normalizeError(err);
+      await loadConfig();
+      cfgDrafts[key] = cfgEffective[key] ?? ""; // 回滚到真实值
+    } finally {
+      cfgSaving = null;
     }
   }
 
@@ -919,6 +966,25 @@
             {#if configLoading}<LoaderCircle class="size-3.5 animate-spin" />{/if}
           </div>
           <p class="text-[11px] text-muted-foreground">{t("settings.gitconfig.readonly")}</p>
+
+          <div class="space-y-1.5 rounded-md border p-3">
+            <span class="text-xs font-medium">{t("settings.gitconfig.common")}</span>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+              {#each COMMON_CONFIG_KEYS as f (f.key)}
+                <label class="block space-y-1">
+                  <span class="text-xs text-muted-foreground">{t(f.labelKey)}</span>
+                  <Input
+                    bind:value={cfgDrafts[f.key]}
+                    placeholder={f.placeholder}
+                    class="h-8 font-mono text-[12px]"
+                    disabled={cfgSaving === f.key}
+                    onchange={() => void saveCommonConfig(f.key)}
+                  />
+                </label>
+              {/each}
+            </div>
+            <p class="text-[11px] text-muted-foreground">{t("settings.gitconfig.commonHint")}</p>
+          </div>
 
           <div class="space-y-1.5">
             <h4 class="text-xs font-semibold text-muted-foreground">{t("settings.gitconfig.global")}</h4>

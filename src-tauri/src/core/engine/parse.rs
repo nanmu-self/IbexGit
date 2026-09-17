@@ -920,6 +920,21 @@ pub fn parse_config_list_z(output: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Validate a `git config` key before it reaches argv (P10 常用配置编辑).
+/// Accepts the common `section[.subsection].key` shape: ASCII alphanumerics
+/// plus `.`/`-`, at least one `.` (section + key), no leading `-`/`.` and no
+/// empty dot segments — defense against argument injection (`--unset` 等).
+pub fn config_key_valid(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && !key.starts_with(['-', '.'])
+        && !key.ends_with('.')
+        && !key.contains("..")
+        && key.contains('.')
+}
+
 /// Parse `git rev-list --left-right --count A...B` → `(left, right)`.
 pub fn parse_range_count(output: &str) -> (u32, u32) {
     let line = output.lines().next().unwrap_or("");
@@ -1891,6 +1906,40 @@ mod tests {
                 ("core.bare".to_string(), String::new()),
             ]
         );
+    }
+
+    // ---------- config key validation (P10 常用配置编辑) ----------
+
+    #[test]
+    fn config_key_accepts_common_shapes() {
+        for key in [
+            "user.name",
+            "user.email",
+            "http.proxy",
+            "https.proxy",
+            "remote.origin.url",
+            "remote.o-1.url", // subsection with digits/dashes
+        ] {
+            assert!(config_key_valid(key), "{key} should be valid");
+        }
+    }
+
+    #[test]
+    fn config_key_rejects_injection_and_malformed() {
+        for key in [
+            "",           // empty
+            "username",   // no dot → no section separator
+            "--unset",    // argument injection
+            "-user.name", // leading dash
+            ".user.name", // leading dot
+            "user.name.", // trailing dot
+            "user..name", // empty segment
+            "user name",  // whitespace
+            "user\nname", // control char
+            "usér.name",  // non-ASCII
+        ] {
+            assert!(!config_key_valid(key), "{key:?} should be rejected");
+        }
     }
 
     #[test]

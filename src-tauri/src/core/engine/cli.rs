@@ -1769,6 +1769,41 @@ impl engine::GitEngine for CliEngine {
             .collect())
     }
 
+    async fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<(), AppError> {
+        if !parse::config_key_valid(key) {
+            return Err(AppError::parse(format!("invalid config key: {key:?}")));
+        }
+        // `--` 隔离 positional 参数：key 已校验不以 `-` 开头，value 也可能是
+        // 任意字符串（如以 `-` 开头的代理地址）。
+        let res = match value {
+            Some(v) => {
+                self.run(
+                    ["config", "--global", "--", key, v],
+                    StdinMode::Null,
+                    None,
+                    None,
+                )
+                .await?
+            }
+            None => {
+                // exit 5 = key 本来就不存在 → 视为幂等成功。
+                let res = self
+                    .run(
+                        ["config", "--global", "--unset", "--", key],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                if res.exit_code == Some(5) {
+                    return Ok(());
+                }
+                res
+            }
+        };
+        self.ensure_success(&res)
+    }
+
     async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError> {
         // `--type=path` expands `~`; unset → exit 1 with empty output.
         let res = self

@@ -263,6 +263,12 @@ export const commands = {
 	gitConfigGlobal: () => __TAURI_INVOKE<ConfigEntry[]>("git_config_global"),
 	/**  List the repository-level git config (P10 设置中心 → Git 配置）。 */
 	gitConfigLocal: (id: RepoId_Deserialize) => __TAURI_INVOKE<ConfigEntry[]>("git_config_local", { id }),
+	/**
+	 *  Set/unset a user-level git config key (P10 设置中心 → 常用配置编辑）。
+	 *  全局作用域写 `~/.gitconfig`，不涉及仓库 index.lock；read_permit 仅作
+	 *  git 子进程全局并发上限使用。
+	 */
+	gitConfigSetGlobal: (key: string, value: string | null) => __TAURI_INVOKE<null>("git_config_set_global", { key, value }),
 	/**  Read the global gitignore (`core.excludesFile` or default path). */
 	gitGitignoreGlobal: () => __TAURI_INVOKE<{
 	/**  Resolved absolute path (display purpose). */

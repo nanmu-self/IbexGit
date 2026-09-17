@@ -833,6 +833,10 @@ pub trait GitEngine: Send + Sync {
     async fn config_global(&self) -> Result<Vec<ConfigEntry>, AppError>;
     /// List the repository-level config (`git config --list -z --local`).
     async fn config_local(&self, repo: &str) -> Result<Vec<ConfigEntry>, AppError>;
+    /// Set a user-level config key (`git config --global -- key value`);
+    /// `None` unsets it (unsetting a missing key is not an error). The key
+    /// is validated (`parse::config_key_valid`) before reaching argv.
+    async fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<(), AppError>;
     /// Read the global gitignore (`core.excludesFile`, else the default
     /// `~/.config/git/ignore`); `None` when neither file exists.
     async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError>;

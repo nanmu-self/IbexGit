@@ -73,6 +73,44 @@ fn engine() -> Arc<dyn GitEngine> {
     Arc::new(CliEngine::new(GitProcessRunner::new(60), "git"))
 }
 
+/// Build an engine whose `git` is a wrapper script that pins
+/// `GIT_CONFIG_GLOBAL` to a temp file (and disables the system config), so
+/// `config_set_global` tests never touch the real user config.
+fn isolated_engine() -> (Arc<dyn GitEngine>, PathBuf) {
+    let dir = temp_repo();
+    let cfg = dir.join("gitconfig");
+    std::fs::write(&cfg, "").unwrap();
+    let (ext, body) = if cfg!(windows) {
+        (
+            ".cmd",
+            format!(
+                "@echo off\r\nset GIT_CONFIG_GLOBAL={}\r\nset GIT_CONFIG_NOSYSTEM=1\r\ngit %*\r\n",
+                cfg.display()
+            ),
+        )
+    } else {
+        (
+            "",
+            format!(
+                "#!/bin/sh\nexport GIT_CONFIG_GLOBAL='{}'\nexport GIT_CONFIG_NOSYSTEM=1\nexec git \"$@\"\n",
+                cfg.display()
+            ),
+        )
+    };
+    let wrapper = dir.join(format!("git-wrap{ext}"));
+    std::fs::write(&wrapper, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let eng = Arc::new(CliEngine::new(
+        GitProcessRunner::new(60),
+        wrapper.display().to_string(),
+    ));
+    (eng, cfg)
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn config_local_lists_repo_entries() {
     let dir = temp_repo();
@@ -124,6 +162,61 @@ async fn config_global_is_readable() {
         assert!(!e.key.is_empty(), "key must not be empty");
         assert!(!e.key.contains('\n'), "key must not contain LF");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn config_set_global_writes_unsets_and_validates() {
+    let (eng, cfg) = isolated_engine();
+
+    // Set → the value lands in the isolated global file and reads back.
+    eng.config_set_global("user.name", Some("IbexGit Tester"))
+        .await
+        .unwrap();
+    eng.config_set_global("https.proxy", Some("http://127.0.0.1:7890"))
+        .await
+        .unwrap();
+    let entries = eng.config_global().await.unwrap();
+    let get = |k: &str| {
+        entries
+            .iter()
+            .find(|e| e.key == k)
+            .map(|e| e.value.clone())
+            .unwrap_or_else(|| panic!("{k} missing"))
+    };
+    assert_eq!(get("user.name"), "IbexGit Tester");
+    assert_eq!(get("https.proxy"), "http://127.0.0.1:7890");
+
+    // Overwrite: last value wins.
+    eng.config_set_global("user.name", Some("second"))
+        .await
+        .unwrap();
+    let entries = eng.config_global().await.unwrap();
+    assert_eq!(entries.iter().filter(|e| e.key == "user.name").count(), 1);
+    assert_eq!(
+        entries
+            .iter()
+            .find(|e| e.key == "user.name")
+            .map(|e| e.value.clone())
+            .unwrap(),
+        "second"
+    );
+
+    // Unset → gone; unset again (missing key, git exit 5) stays Ok.
+    eng.config_set_global("user.name", None).await.unwrap();
+    let entries = eng.config_global().await.unwrap();
+    assert!(entries.iter().all(|e| e.key != "user.name"));
+    eng.config_set_global("user.name", None).await.unwrap();
+
+    // Argument injection / malformed keys are rejected before argv.
+    for key in ["--unset", "user name", "username", ""] {
+        let r = eng.config_set_global(key, Some("x")).await;
+        assert!(
+            matches!(r, Err(ibexgit_lib::core::error::AppError::Parse { .. })),
+            "{key:?} should be a Parse error"
+        );
+    }
+
+    std::fs::remove_dir_all(cfg.parent().unwrap()).ok();
 }
 
 #[tokio::test(flavor = "multi_thread")]

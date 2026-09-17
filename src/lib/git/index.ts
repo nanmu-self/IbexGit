@@ -386,11 +386,14 @@ export const net = {
 };
 
 /**
- * P10 应用层：Git 配置查看器（只读）、提交模板、git 路径探测、日志级别。
+ * P10 应用层：Git 配置查看器、常用项编辑、提交模板、git 路径探测、日志级别。
  */
 export const app = {
   configGlobal: () => wrap(commands.gitConfigGlobal()),
   configLocal: (id: RepoId) => wrap(commands.gitConfigLocal(id)),
+  /** Write/unset a user-level config key (`value === null` → unset). */
+  configSetGlobal: (key: string, value: string | null) =>
+    wrap(commands.gitConfigSetGlobal(key, value)),
   gitignoreGlobal: () => wrap(commands.gitGitignoreGlobal()),
   /** Resolved `commit.template` (path + content), or null when unset. */
   commitTemplate: (id: RepoId) => wrap(commands.gitCommitTemplate(id)),

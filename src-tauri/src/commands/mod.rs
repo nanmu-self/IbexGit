@@ -1649,6 +1649,23 @@ pub async fn git_config_local(
     repos.engine().config_local(&root).await
 }
 
+/// Set/unset a user-level git config key (P10 设置中心 → 常用配置编辑）。
+/// 全局作用域写 `~/.gitconfig`，不涉及仓库 index.lock；read_permit 仅作
+/// git 子进程全局并发上限使用。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_config_set_global(
+    key: String,
+    value: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let _permit = repos.read_permit().await?;
+    repos
+        .engine()
+        .config_set_global(&key, value.as_deref())
+        .await
+}
+
 /// Read the global gitignore (`core.excludesFile` or default path).
 #[tauri::command]
 #[specta::specta]

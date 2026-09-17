@@ -828,6 +828,9 @@ mod tests {
         async fn config_local(&self, _: &str) -> Result<Vec<ConfigEntry>, AppError> {
             Err(err("config_local"))
         }
+        async fn config_set_global(&self, _: &str, _: Option<&str>) -> Result<(), AppError> {
+            Err(err("config_set_global"))
+        }
         async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError> {
             Err(err("global_gitignore"))
         }
