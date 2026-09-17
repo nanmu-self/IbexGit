@@ -245,8 +245,12 @@
     aiTesting = true;
     aiTestResult = null;
     try {
-      await ai.configSet(aiCfg); // 测试前先落盘，保证测的是表单当前值
-      if (aiKeyInput.trim()) await ai.setKey(aiKeyInput.trim());
+      // 先落密钥再落配置，has_key 随返回值刷新（清除/占位提示同步）。
+      if (aiKeyInput.trim()) {
+        await ai.setKey(aiKeyInput.trim());
+        aiKeyInput = "";
+      }
+      aiCfg = await ai.configSet(aiCfg);
       aiTestResult = await ai.testConnection();
     } catch (err) {
       normalizeError(err);
@@ -779,15 +783,18 @@
               </div>
               <label class="block space-y-1">
                 <span class="text-xs text-muted-foreground">{t("ai.settings.timeout")}</span>
-                <Input
-                  type="number"
-                  min="5"
-                  max="600"
-                  value={aiCfg.timeout_secs}
-                  class="h-8 w-28"
-                  onchange={(e) =>
-                    aiPatch({ timeout_secs: Math.min(600, Math.max(5, Number(e.currentTarget.value) || 60)) })}
-                />
+                <select
+                  value={String(aiCfg.timeout_secs)}
+                  class="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
+                  onchange={(e) => aiPatch({ timeout_secs: Number(e.currentTarget.value) })}
+                >
+                  {#if ![30, 60, 120, 300, 600].includes(aiCfg.timeout_secs)}
+                    <option value={aiCfg.timeout_secs}>{aiCfg.timeout_secs}</option>
+                  {/if}
+                  {#each [30, 60, 120, 300, 600] as s (s)}
+                    <option value={s}>{s}</option>
+                  {/each}
+                </select>
               </label>
             </div>
 
