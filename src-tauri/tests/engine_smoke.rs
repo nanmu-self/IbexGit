@@ -16,6 +16,12 @@ fn temp_repo() -> PathBuf {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos()
+            * 1000
+            + {
+                use std::sync::atomic::Ordering;
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                N.fetch_add(1, Ordering::Relaxed) as u128
+            }
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
