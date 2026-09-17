@@ -457,6 +457,35 @@ pub struct CommitTemplate {
     pub content: String,
 }
 
+// ---- P11: AI 报告采集（log + numstat） ----
+
+/// One file's line-count stats within a commit (`git log --numstat`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct NumstatFile {
+    pub path: String,
+    /// Pre-rename path (`git log --numstat -z` rename layout).
+    pub orig_path: Option<String>,
+    pub additions: u32,
+    pub deletions: u32,
+    pub binary: bool,
+}
+
+/// One commit with per-file stats — the AI report collector's unit.
+/// 上下文只含 message/author/日期/numstat（ADR-013：默认不发 diff）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct NumstatCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub email: String,
+    /// Author date, ISO 8601 (`%aI`).
+    pub date: String,
+    pub subject: String,
+    /// Source repo label (filled by the collector; empty from the engine).
+    pub repo: String,
+    pub files: Vec<NumstatFile>,
+}
+
 // =====================
 // GitEngine trait
 // =====================
@@ -810,6 +839,21 @@ pub trait GitEngine: Send + Sync {
     /// Read the commit message template (`commit.template`, merged config;
     /// relative paths resolve against the repo root, `~` is expanded).
     async fn commit_template(&self, repo: &str) -> Result<Option<CommitTemplate>, AppError>;
+
+    // ---- P11: AI 报告采集（Log 家族变体，只读） ----
+
+    /// Commits with per-file line stats for the AI report collector
+    /// (`git log --all --numstat -z` with `--since/--until/--author`).
+    /// `--all` covers work on any branch; merge commits carry metadata but
+    /// no stats. Newest first.
+    async fn log_numstat(
+        &self,
+        repo: &str,
+        since: Option<&str>,
+        until: Option<&str>,
+        author: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<NumstatCommit>, AppError>;
 }
 
 pub mod cli;

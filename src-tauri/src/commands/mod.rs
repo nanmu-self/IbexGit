@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
+pub mod ai;
 pub mod app;
 pub mod net;
 pub mod workspace;

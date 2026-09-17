@@ -6,7 +6,7 @@
 use super::{
     BackupRef, BlameCommit, BlameLine, BlameResult, BranchInfo, CommitFileStat, CommitInfo,
     DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffModel, DiffSource, FileCommit, FileStatus,
-    IndexEntry, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+    IndexEntry, NumstatCommit, NumstatFile, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
 };
 use crate::core::error::AppError;
 
@@ -232,6 +232,106 @@ pub fn parse_numstat_paths(raw: &str) -> Vec<String> {
         }
     }
     out
+}
+
+// =====================
+// log --numstat -z (P11 AI 报告采集)
+// =====================
+
+/// Parse `git log --all --numstat -z --format=%x1e%H%x1f%an%x1f%ae%x1f%aI%x1f%s`
+/// into commit records with per-file stats.
+///
+/// Byte layout (verified on git 2.54):
+/// ```text
+/// \x1e<hash>\x1f<author>\x1f<email>\x1f<date>\x1f<subject>\0
+/// <add>\t<del>\t<path>\0                      (ordinary)
+/// <add>\t<del>\t\0<origPath>\0<path>\0        (rename/copy: path slot empty)
+/// -\t-\t<path>\0                              (binary)
+/// ```
+/// The header is NUL-terminated (the `-z` mode terminator), followed by an
+/// LF, then the NUL-separated numstat records; empty commits have nothing
+/// after the header. `\x1e` (record separator) opens each commit; `\x1f`
+/// (unit separator) delimits header fields. NUL/`\x1e` cannot occur in
+/// commit messages; an `\x1f` inside a subject is tolerated (joined back).
+pub fn parse_log_numstat(raw: &str) -> Vec<NumstatCommit> {
+    let mut out = Vec::new();
+    for record in raw.split('\x1e') {
+        if record.is_empty() {
+            continue;
+        }
+        let Some(nul) = record.find('\0') else {
+            continue; // truncated tail record
+        };
+        let mut fields = record[..nul].split('\x1f');
+        let hash = fields.next().unwrap_or("").to_string();
+        if hash.is_empty() {
+            continue;
+        }
+        let author = fields.next().unwrap_or("").to_string();
+        let email = fields.next().unwrap_or("").to_string();
+        let date = fields.next().unwrap_or("").to_string();
+        // Subject is the last field; re-join if it contained \x1f.
+        let subject = fields.collect::<Vec<_>>().join("\x1f");
+        let files = parse_numstat_section(&record[nul + 1..]);
+        out.push(NumstatCommit {
+            short_hash: hash.chars().take(7).collect(),
+            hash,
+            author,
+            email,
+            date,
+            subject,
+            repo: String::new(),
+            files,
+        });
+    }
+    out
+}
+
+/// numstat 记录段：NUL 分隔的 token 流。普通记录 `<a>\t<r>\t<path>`；
+/// rename 记录 path 槽为空，后两个 token 依次是 orig 与 new path。
+fn parse_numstat_section(raw: &str) -> Vec<NumstatFile> {
+    let raw = raw.trim_start_matches(['\n', '\r']);
+    let mut files = Vec::new();
+    let tokens: Vec<&str> = raw.split('\0').collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        i += 1;
+        if tok.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = tok.split('\t').collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        let binary = fields[0] == "-";
+        let additions = fields[0].parse().unwrap_or(0);
+        let deletions = fields[1].parse().unwrap_or(0);
+        if fields[2].is_empty() {
+            // Rename layout: `<a>\t<r>\t` + `\0<orig>\0<path>\0`。
+            let orig = tokens.get(i).copied().unwrap_or("");
+            let path = tokens.get(i + 1).copied().unwrap_or("");
+            i += 2;
+            if !path.is_empty() {
+                files.push(NumstatFile {
+                    path: path.to_string(),
+                    orig_path: (!orig.is_empty()).then(|| orig.to_string()),
+                    additions,
+                    deletions,
+                    binary,
+                });
+            }
+        } else {
+            files.push(NumstatFile {
+                path: fields[2].to_string(),
+                orig_path: None,
+                additions,
+                deletions,
+                binary,
+            });
+        }
+    }
+    files
 }
 
 // =====================
@@ -1098,6 +1198,70 @@ pub fn parse_blame(output: &str) -> BlameResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------- log --numstat (P11 AI 报告采集) ----------
+
+    /// 与真实 git 输出字节一致的 fixture（含 binary / rename / 空提交）。
+    const NUMSTAT_FIXTURE: &str = concat!(
+        "\x1eb9771711aa88f5b6c441f3de51b3818ee395c48\x1fA\x1fa@x.com\x1f2026-09-17T09:21:42+08:00\x1fbinary\0\n",
+        "-\t-\tbin.dat\0",
+        "\x1e79d1cb4b5e28fa7b65addbc191b838ade7c8f0be\x1fA\x1fa@x.com\x1f2026-09-17T09:21:42+08:00\x1frename\0\n",
+        "0\t0\t\0a.txt\0b.txt\0",
+        "\x1e2eff30d5739d660e4234bed7bc3a4e15fc584ca1\x1fA\x1fa@x.com\x1f2026-09-17T09:21:42+08:00\x1fadd a.txt\0\n",
+        "1\t0\ta.txt\0",
+        "\x1efbcc88bca339d7f904775fb6f7441e116e2227\x1fA\x1fa@x.com\x1f2026-09-17T09:21:42+08:00\x1fempty commit\0",
+    );
+
+    #[test]
+    fn log_numstat_binary_rename_and_empty() {
+        let out = parse_log_numstat(NUMSTAT_FIXTURE);
+        assert_eq!(out.len(), 4);
+        // newest first (input order preserved)
+        let binary = &out[0];
+        assert_eq!(binary.subject, "binary");
+        assert_eq!(binary.short_hash, "b977171");
+        assert_eq!(binary.files.len(), 1);
+        assert!(binary.files[0].binary);
+        assert_eq!(binary.files[0].path, "bin.dat");
+
+        let rename = &out[1];
+        assert_eq!(rename.files.len(), 1);
+        assert_eq!(rename.files[0].orig_path.as_deref(), Some("a.txt"));
+        assert_eq!(rename.files[0].path, "b.txt");
+        assert_eq!(
+            (rename.files[0].additions, rename.files[0].deletions),
+            (0, 0)
+        );
+
+        let add = &out[2];
+        assert_eq!(add.files.len(), 1);
+        assert_eq!((add.files[0].additions, add.files[0].deletions), (1, 0));
+
+        let empty = &out[3];
+        assert_eq!(empty.subject, "empty commit");
+        assert!(empty.files.is_empty());
+        // header fields round-trip
+        assert_eq!(empty.author, "A");
+        assert_eq!(empty.email, "a@x.com");
+        assert_eq!(empty.date, "2026-09-17T09:21:42+08:00");
+    }
+
+    #[test]
+    fn log_numstat_empty_and_truncated_input() {
+        assert!(parse_log_numstat("").is_empty());
+        // Truncated tail (no header NUL) is skipped, complete records kept.
+        let raw = "\x1eabc\x1fA\x1fa@x\x1f2026-01-01T00:00:00+00:00\x1fs1\0\n1\t0\tf\0\x1etrunc";
+        let out = parse_log_numstat(raw);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].subject, "s1");
+    }
+
+    #[test]
+    fn log_numstat_subject_with_unit_separator_is_rejoined() {
+        let raw = "\x1eabc\x1fA\x1fa@x\x1f2026-01-01T00:00:00+00:00\x1ftitle\x1fpart\0\n1\t0\tf\0";
+        let out = parse_log_numstat(raw);
+        assert_eq!(out[0].subject, "title\x1fpart");
+    }
 
     // ---------- status ----------
 

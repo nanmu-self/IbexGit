@@ -1,5 +1,9 @@
 import { commands, type RepoId } from "./bindings";
+import { t } from "$lib/i18n";
 import type {
+  AiConfigDto,
+  AiPreview,
+  AiReportRequest,
   CloneRequest,
   CredentialReply,
   GraphFilter,
@@ -18,6 +22,10 @@ import type { RepoMeta, RepoUiState } from "./bindings";
 export { commands };
 
 export type {
+  AiConfigDto,
+  AiEvent,
+  AiPreview,
+  AiReportRequest,
   AppError,
   BackupRef,
   BlameCommit,
@@ -107,6 +115,18 @@ function humanize(code: string, e: Record<string, unknown>): string {
       return "Credential prompt cancelled";
     case "diff_model_expired":
       return "Diff expired (repository changed) — please retry";
+    case "ai_disabled":
+      return t("ai.error.disabled");
+    case "ai_config":
+      return `${t("ai.error.config")}: ${str(e.message) ?? ""}`.trim();
+    case "ai_network":
+      return `${t("ai.error.network")} (${str(e.message) ?? ""})`;
+    case "ai_auth":
+      return `${t("ai.error.auth")} (${str(e.message) ?? ""})`;
+    case "ai_rate_limit":
+      return t("ai.error.rateLimit");
+    case "ai_provider":
+      return `${t("ai.error.provider")} (${str(e.message) ?? ""})`;
     case "parse":
       return str(e.message) || "Failed to parse git output";
     case "not_implemented":
@@ -377,6 +397,29 @@ export const app = {
   /** Validate a user-configured git executable; resolves to its version. */
   checkGitPath: (path: string) => wrap(commands.appCheckGitPath(path)),
   setLogLevel: (level: string) => wrap(commands.appSetLogLevel(level)),
+};
+
+/**
+ * P11 AI 助手：配置（key 不出 Rust，只回 has_key）、发送前预览、
+ * 生成任务（Task 化 + AiEvent 流式）、取消、导出。
+ */
+export const ai = {
+  configGet: () => wrap(commands.aiConfigGet()),
+  configSet: (config: AiConfigDto) => wrap(commands.aiConfigSet(config)),
+  /** Key 只写不读；成功后前端只保留 has_key 状态。 */
+  setKey: (key: string) => wrap(commands.aiSetKey(key)),
+  deleteKey: () => wrap(commands.aiDeleteKey()),
+  testConnection: () => wrap(commands.aiTestConnection()),
+  previewCommitMessage: (id: RepoId) => wrap(commands.aiPreviewCommitMessage(id)),
+  previewReport: (request: AiReportRequest) => wrap(commands.aiPreviewReport(request)),
+  /** Resolves to a taskId; progress arrives via onAiEvent. */
+  generateCommitMessage: (id: RepoId, language: string) =>
+    wrap(commands.aiGenerateCommitMessage(id, language)),
+  generateReport: (request: AiReportRequest) =>
+    wrap(commands.aiGenerateReport(request)),
+  cancel: (taskId: number) => wrap(commands.aiCancel(taskId)),
+  exportMarkdown: (path: string, content: string) =>
+    wrap(commands.aiExportMarkdown(path, content)),
 };
 
 /**

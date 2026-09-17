@@ -1,8 +1,8 @@
-import { events, type RepoChanged, type AppOpenPaths, type CloneEvent, type CredentialPrompt } from "./bindings";
+import { events, type RepoChanged, type AppOpenPaths, type CloneEvent, type CredentialPrompt, type AiEvent } from "./bindings";
 
 export type { RepoChanged } from "./bindings";
 export type { UnlistenFn } from "@tauri-apps/api/event";
-export type { CloneEvent, CredentialPrompt } from "./bindings";
+export type { CloneEvent, CredentialPrompt, AiEvent } from "./bindings";
 
 /**
  * Subscribe to repository change events (state invalidation system,
@@ -35,6 +35,14 @@ export function onCloneEvent(
   handler: (payload: CloneEvent) => void
 ): Promise<() => void> {
   return events.cloneEvent.listen((e) => handler(e.payload));
+}
+
+/**
+ * P11 AI 生成事件（AiEvent）：`ai_generate_*` 后台任务推送，
+ * phase = status | delta | done | cancelled | failed。
+ */
+export function onAiEvent(handler: (payload: AiEvent) => void): Promise<() => void> {
+  return events.aiEvent.listen((e) => handler(e.payload));
 }
 
 /**

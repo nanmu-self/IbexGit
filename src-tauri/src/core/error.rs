@@ -53,6 +53,43 @@ pub enum AppError {
     NotImplemented {
         feature: String,
     },
+
+    // ---- P11 AI（ADR-013）：失败降级与明确报错，不阻塞提交流程 ----
+    /// AI 功能未启用（默认 opt-in 关闭，设置中开启）。
+    AiDisabled,
+
+    /// 配置不完整（未配模型 / Base URL / 密钥）或无效。
+    #[serde(rename_all = "snake_case")]
+    AiConfig {
+        message: String,
+    },
+
+    /// 网络层失败：DNS / 连接 / 空闲超时（断网、Ollama 未启动、代理故障）。
+    #[serde(rename_all = "snake_case")]
+    AiNetwork {
+        message: String,
+    },
+
+    /// 认证失败（HTTP 401/403）：key 缺失或无效。
+    #[serde(rename_all = "snake_case")]
+    AiAuth {
+        status: u32,
+        message: String,
+    },
+
+    /// 额度 / 频率限制（HTTP 429）。
+    #[serde(rename_all = "snake_case")]
+    AiRateLimit {
+        status: u32,
+        message: String,
+    },
+
+    /// 其他 Provider HTTP 错误（5xx、4xx 未细分）。
+    #[serde(rename_all = "snake_case")]
+    AiProvider {
+        status: u32,
+        message: String,
+    },
 }
 
 impl fmt::Display for AppError {
@@ -70,6 +107,18 @@ impl fmt::Display for AppError {
             Self::Parse { message } => write!(f, "Parse error: {}", message),
             Self::Internal { message } => write!(f, "Internal error: {}", message),
             Self::NotImplemented { feature } => write!(f, "Not implemented: {}", feature),
+            Self::AiDisabled => write!(f, "AI assistant is disabled (enable it in Settings → AI)"),
+            Self::AiConfig { message } => write!(f, "AI configuration error: {}", message),
+            Self::AiNetwork { message } => write!(f, "AI network error: {}", message),
+            Self::AiAuth { status, message } => {
+                write!(f, "AI authentication failed ({}): {}", status, message)
+            }
+            Self::AiRateLimit { status, message } => {
+                write!(f, "AI rate limited ({}): {}", status, message)
+            }
+            Self::AiProvider { status, message } => {
+                write!(f, "AI provider error ({}): {}", status, message)
+            }
         }
     }
 }
@@ -145,6 +194,18 @@ impl AppError {
     pub fn not_implemented(feature: impl Into<String>) -> Self {
         Self::NotImplemented {
             feature: feature.into(),
+        }
+    }
+
+    pub fn ai_config(message: impl Into<String>) -> Self {
+        Self::AiConfig {
+            message: message.into(),
+        }
+    }
+
+    pub fn ai_network(message: impl Into<String>) -> Self {
+        Self::AiNetwork {
+            message: message.into(),
         }
     }
 }

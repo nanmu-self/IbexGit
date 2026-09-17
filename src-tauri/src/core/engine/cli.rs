@@ -1,6 +1,6 @@
 use crate::core::engine::{
     self, conflict, parse, CloneOptions, CommitTemplate, ConfigEntry, DiffModel, DiffOptions,
-    DiffSource, FileContent, GitignoreFile,
+    DiffSource, FileContent, GitignoreFile, NumstatCommit,
 };
 use crate::core::error::AppError;
 use crate::core::runner::{CancelToken, GitProcessRunner, ProcessResult, StdinMode};
@@ -1832,6 +1832,50 @@ impl engine::GitEngine for CliEngine {
             path: path.display().to_string(),
             content: String::from_utf8_lossy(&bytes).into_owned(),
         }))
+    }
+
+    // ---- P11: AI 报告采集（Log 家族变体，只读） ----
+
+    async fn log_numstat(
+        &self,
+        repo: &str,
+        since: Option<&str>,
+        until: Option<&str>,
+        author: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<NumstatCommit>, AppError> {
+        // --all：日报/周报覆盖所有分支上的工作；合并提交只有元信息、无 numstat
+        //（git 对 merge 默认不输出 stat）。-z：路径 raw UTF-8、rename 布局可掌。
+        let mut args = vec![
+            "-C".to_string(),
+            repo.to_string(),
+            "log".to_string(),
+            "--all".to_string(),
+            "--no-color".to_string(),
+            "-z".to_string(),
+            "--numstat".to_string(),
+            "--format=%x1e%H%x1f%an%x1f%ae%x1f%aI%x1f%s".to_string(),
+        ];
+        if let Some(s) = since {
+            args.push("--since".to_string());
+            args.push(s.to_string());
+        }
+        if let Some(u) = until {
+            args.push("--until".to_string());
+            args.push(u.to_string());
+        }
+        if let Some(a) = author {
+            args.push("--author".to_string());
+            args.push(a.to_string());
+        }
+        if limit > 0 {
+            args.push("-n".to_string());
+            args.push(limit.to_string());
+        }
+        let args_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let res = self.run(&args_refs, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_log_numstat(&res.stdout))
     }
 
     async fn clone_repo(

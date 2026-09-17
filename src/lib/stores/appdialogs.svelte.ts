@@ -11,6 +11,7 @@ export type SettingsSection =
   | "git"
   | "network"
   | "credentials"
+  | "ai"
   | "tools"
   | "gitconfig"
   | "advanced";
@@ -21,6 +22,8 @@ class AppDialogsStore {
   settingsSection = $state<SettingsSection>("general");
   shortcutsOpen = $state(false);
   aboutOpen = $state(false);
+  /** P11 日报/周报对话框。 */
+  aiReportOpen = $state(false);
 
   openPalette(): void {
     this.paletteOpen = true;
@@ -37,6 +40,10 @@ class AppDialogsStore {
 
   openAbout(): void {
     this.aboutOpen = true;
+  }
+
+  openAiReport(): void {
+    this.aiReportOpen = true;
   }
 }
 

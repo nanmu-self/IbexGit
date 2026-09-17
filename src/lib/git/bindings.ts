@@ -282,6 +282,19 @@ export const commands = {
 	 *  (P10 设置中心：git 路径自定义). Returns the trimmed version string.
 	 */
 	appCheckGitPath: (path: string) => __TAURI_INVOKE<string>("app_check_git_path", { path }),
+	aiConfigGet: () => __TAURI_INVOKE<AiConfigDto>("ai_config_get"),
+	aiConfigSet: (config: AiConfigDto) => __TAURI_INVOKE<AiConfigDto>("ai_config_set", { config }),
+	aiSetKey: (key: string) => __TAURI_INVOKE<null>("ai_set_key", { key }),
+	aiDeleteKey: () => __TAURI_INVOKE<null>("ai_delete_key"),
+	/**  连通性测试：用当前配置发一个最小请求，返回 provider 标签 + 模型应答。 */
+	aiTestConnection: () => __TAURI_INVOKE<string>("ai_test_connection"),
+	aiPreviewCommitMessage: (repoId: RepoId_Deserialize) => __TAURI_INVOKE<AiPreview>("ai_preview_commit_message", { repoId }),
+	aiPreviewReport: (request: AiReportRequest_Deserialize) => __TAURI_INVOKE<AiPreview>("ai_preview_report", { request }),
+	aiGenerateCommitMessage: (repoId: RepoId_Deserialize, language: string) => __TAURI_INVOKE<number>("ai_generate_commit_message", { repoId, language }),
+	aiGenerateReport: (request: AiReportRequest_Deserialize) => __TAURI_INVOKE<number>("ai_generate_report", { request }),
+	aiCancel: (taskId: number) => __TAURI_INVOKE<null>("ai_cancel", { taskId }),
+	/**  导出报告为 .md（路径来自前端 save 对话框，内容为已生成的文本）。 */
+	aiExportMarkdown: (path: string, content: string) => __TAURI_INVOKE<null>("ai_export_markdown", { path, content }),
 	recoveryList: (id: RepoId_Deserialize) => __TAURI_INVOKE<RecoveryEntry[]>("recovery_list", { id }),
 	recoveryRestore: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_restore", { id, snapshotId }),
 	recoveryDelete: (id: RepoId_Deserialize, snapshotId: string) => __TAURI_INVOKE<null>("recovery_delete", { id, snapshotId }),
@@ -323,6 +336,7 @@ export const commands = {
 
 /** Events */
 export const events = {
+	aiEvent: makeEvent<AiEvent>("ai-event"),
 	appOpenPaths: makeEvent<AppOpenPaths>("app-open-paths"),
 	cloneEvent: makeEvent<CloneEvent>("clone-event"),
 	credentialPrompt: makeEvent<CredentialPrompt>("credential-prompt"),
@@ -330,6 +344,72 @@ export const events = {
 };
 
 /* Types */
+/**  前端可见的配置视图（非敏感；`has_key` 只是存在性）。 */
+export type AiConfigDto = {
+	enabled: boolean,
+	provider: ProviderKind,
+	base_url: string,
+	model: string,
+	timeout_secs: number,
+	conventional: boolean,
+	custom_auth: string,
+	exclude_patterns: string[],
+	excluded_repos: string[],
+	has_key: boolean,
+};
+
+/**  生成任务事件（与 CloneEvent 同构的事件流）。 */
+export type AiEvent = {
+	task_id: number,
+	/**  `status` | `delta` | `done` | `cancelled` | `failed` */
+	phase: string,
+	text: string | null,
+	message: string | null,
+	error: AppError | null,
+};
+
+/**  发送前预览（ADR-013 隐私红线：先看再发）。 */
+export type AiPreview = {
+	/**  `commit_message` | `report` */
+	kind: string,
+	provider: string,
+	/**  文件清单（提交消息）或各仓库提交数（报告）。 */
+	items: string[],
+	commits: number,
+	chars: number,
+	excluded: number,
+	truncated: boolean,
+	/**  map-reduce 批次（1 = 单次请求）。 */
+	batches: number,
+};
+
+/**  日报/周报生成请求。 */
+export type AiReportRequest = AiReportRequest_Serialize | AiReportRequest_Deserialize;
+
+/**  日报/周报生成请求。 */
+export type AiReportRequest_Deserialize = {
+	/**  `daily` | `weekly` */
+	kind: string,
+	/**  author email 过滤；空 = 全部成员。 */
+	author: string | null,
+	/**  聚合的仓库（当前 + 手动勾选，PLAN P11 跨仓库 v1）。 */
+	repo_ids: RepoId_Deserialize[],
+	/**  输出语言（`zh-CN` / `en`，跟随前端 locale）。 */
+	language: string,
+};
+
+/**  日报/周报生成请求。 */
+export type AiReportRequest_Serialize = {
+	/**  `daily` | `weekly` */
+	kind: string,
+	/**  author email 过滤；空 = 全部成员。 */
+	author: string | null,
+	/**  聚合的仓库（当前 + 手动勾选，PLAN P11 跨仓库 v1）。 */
+	repo_ids: RepoId_Serialize[],
+	/**  输出语言（`zh-CN` / `en`，跟随前端 locale）。 */
+	language: string,
+};
+
 /**  Application-wide error type. */
 export type AppError = { code: "io"; source: string; detail: string | null } | { code: "git_command"; command: string; stderr: string; stdout: string; detail: string | null } | { code: "git_version_too_old"; found: string; required: string } | { code: "invalid_repo"; path: string } | { code: "operation_cancelled" } | { code: "credential_cancelled" } | 
 /**
@@ -337,7 +417,19 @@ export type AppError = { code: "io"; source: string; detail: string | null } | {
  *  (invalidated by a watcher event or evicted). The UI must re-fetch
  *  the diff and retry (PLAN P4: 同源保证 — 不重建，宁可拒绝).
  */
-{ code: "diff_model_expired" } | { code: "parse"; message: string } | { code: "internal"; message: string } | { code: "not_implemented"; feature: string };
+{ code: "diff_model_expired" } | { code: "parse"; message: string } | { code: "internal"; message: string } | { code: "not_implemented"; feature: string } | 
+/**  AI 功能未启用（默认 opt-in 关闭，设置中开启）。 */
+{ code: "ai_disabled" } | 
+/**  配置不完整（未配模型 / Base URL / 密钥）或无效。 */
+{ code: "ai_config"; message: string } | 
+/**  网络层失败：DNS / 连接 / 空闲超时（断网、Ollama 未启动、代理故障）。 */
+{ code: "ai_network"; message: string } | 
+/**  认证失败（HTTP 401/403）：key 缺失或无效。 */
+{ code: "ai_auth"; status: number; message: string } | 
+/**  额度 / 频率限制（HTTP 429）。 */
+{ code: "ai_rate_limit"; status: number; message: string } | 
+/**  其他 Provider HTTP 错误（5xx、4xx 未细分）。 */
+{ code: "ai_provider"; status: number; message: string };
 
 /**
  *  Emitted to the frontend when a second app instance was launched with
@@ -930,6 +1022,21 @@ export type OperationState = {
 	/**  `MERGE_MSG` (merge/cherry-pick/revert) for the commit prefill. */
 	message: string | null,
 };
+
+/**
+ *  Provider 类型矩阵（ADR-013 决策 4）：一个 OpenAI 兼容客户端覆盖
+ *  OpenAI / Ollama / DeepSeek / Qwen / Moonshot / vLLM / LM Studio；
+ *  Anthropic Messages API；自定义 HTTP（OpenAI 兼容 wire format + 完整 URL）。
+ */
+export type ProviderKind = 
+/**  本地离线选项（设置页置顶，隐私红线：数据不出本机）。 */
+"ollama" | 
+/**  OpenAI 及一切兼容端点。 */
+"open_ai_compatible" | 
+/**  Anthropic Messages API。 */
+"anthropic" | 
+/**  自定义 HTTP：`base_url` 填**完整**端点 URL，请求体为 OpenAI 兼容格式。 */
+"custom";
 
 export type PullResult = {
 	success: boolean,

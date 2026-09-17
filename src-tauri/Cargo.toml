@@ -42,6 +42,16 @@ getrandom = "0.3"
 bitflags = "2"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+# AI Provider 管线（P11，ADR-013）：rustls 避免 OpenSSL 跨平台编译问题；
+# stream 供 SSE 流式解析；默认继承环境代理（reqwest 内建 env proxy 读取）。
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls",
+  "stream",
+  "json",
+  "http2",
+  "charset",
+] }
+futures-util = { version = "0.3", default-features = false }
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
@@ -73,3 +83,4 @@ strip = true
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "macros", "rt"] }
 tauri = { version = "2", features = ["test"] }
+wiremock = "0.6"

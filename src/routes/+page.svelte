@@ -12,6 +12,8 @@
   import FileInspectDialog from "$lib/components/file/FileInspectDialog.svelte";
   import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
   import NetDialogsHost from "$lib/components/credential/NetDialogsHost.svelte";
+  import ReportDialog from "$lib/components/ai/ReportDialog.svelte";
+  import { wireAiEvents } from "$lib/stores/ai.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
   import { Button } from "$lib/components/ui/button";
@@ -27,6 +29,9 @@
   let restored = $state(false);
   /** PanelResizer drag state: Sidebar drops its width transition while true. */
   let sidebarResizing = $state(false);
+
+  // P11: AI 生成事件订阅（幂等，全局一份）。
+  wireAiEvents();
 
   // Session restore (P2 acceptance): reopen last repos once settings are in.
   $effect(() => {
@@ -119,5 +124,6 @@
     <RefsDialogsHost />
     <NetDialogsHost />
     <FileInspectDialog />
+    <ReportDialog />
   </div>
 {/if}

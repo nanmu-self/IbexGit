@@ -325,6 +325,18 @@ export const FEATURES: Feature[] = [
     keywords: "remote add manage url",
     run: refAction({ kind: "addRemote" }),
   },
+  {
+    id: "ai.report",
+    labelKey: "ai.reportFeature",
+    section: "repository",
+    group: 5,
+    order: 0,
+    needsRepo: true,
+    keywords: "ai report daily weekly summary 日报 周报",
+    run: () => {
+      if (needsActiveRepo()) appDialogs.openAiReport();
+    },
+  },
 
   // ---- Help ----
   {

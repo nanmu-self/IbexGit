@@ -481,8 +481,8 @@ mod tests {
     use super::*;
     use crate::core::engine::{
         BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, CommitTemplate,
-        ConfigEntry, DiffModel, DiffSource, FileCommit, GitignoreFile, IndexEntry, PullResult,
-        RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        ConfigEntry, DiffModel, DiffSource, FileCommit, GitignoreFile, IndexEntry, NumstatCommit,
+        PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -833,6 +833,16 @@ mod tests {
         }
         async fn commit_template(&self, _: &str) -> Result<Option<CommitTemplate>, AppError> {
             Err(err("commit_template"))
+        }
+        async fn log_numstat(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: u32,
+        ) -> Result<Vec<NumstatCommit>, AppError> {
+            Err(err("log_numstat"))
         }
     }
 

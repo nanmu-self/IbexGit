@@ -70,7 +70,7 @@ impl SharedNetConfig {
         f(&mut cfg);
     }
 
-    fn snapshot(&self) -> NetSpawnConfig {
+    pub fn snapshot(&self) -> NetSpawnConfig {
         self.0.read().unwrap().clone()
     }
 }

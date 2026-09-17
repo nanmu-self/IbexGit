@@ -7,6 +7,7 @@
   import Plus from "@lucide/svelte/icons/plus";
   import X from "@lucide/svelte/icons/x";
   import Users from "@lucide/svelte/icons/users";
+  import CommitMessagePanel from "$lib/components/ai/CommitMessagePanel.svelte";
 
   let {
     stagedCount,
@@ -130,6 +131,11 @@
   const bodyOver = $derived(
     description.split("\n").some((l) => l.length > 72),
   );
+
+  /** P11: AI 生成的完整消息 → 拆入摘要/详情（插入后可继续编辑）。 */
+  function insertAiMessage(full: string): void {
+    loadMessage(full);
+  }
 </script>
 
 <div class="space-y-2 border-t bg-background p-2.5">
@@ -184,6 +190,9 @@
         <Users class="size-3" />
         {t("commit.trailers")}
       </button>
+      {#if repoReady}
+        <CommitMessagePanel {stagedCount} oninsert={insertAiMessage} />
+      {/if}
     {/if}
     <div class="ml-auto flex items-center gap-4">
       {#if mode === "normal"}

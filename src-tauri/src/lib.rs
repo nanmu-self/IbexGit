@@ -86,6 +86,7 @@ fn store_get_string(dir: &std::path::Path, key: &str) -> Option<String> {
 
 pub mod commands;
 pub mod core {
+    pub mod ai;
     pub mod compat;
     pub mod credential;
     pub mod engine;
@@ -183,6 +184,17 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_commit_template,
             commands::app::app_set_log_level,
             commands::app::app_check_git_path,
+            commands::ai::ai_config_get,
+            commands::ai::ai_config_set,
+            commands::ai::ai_set_key,
+            commands::ai::ai_delete_key,
+            commands::ai::ai_test_connection,
+            commands::ai::ai_preview_commit_message,
+            commands::ai::ai_preview_report,
+            commands::ai::ai_generate_commit_message,
+            commands::ai::ai_generate_report,
+            commands::ai::ai_cancel,
+            commands::ai::ai_export_markdown,
             commands::recovery_list,
             commands::recovery_restore,
             commands::recovery_delete,
@@ -210,6 +222,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::workspace::AppOpenPaths,
             commands::net::CloneEvent,
             core::credential::CredentialPrompt,
+            commands::ai::AiEvent,
         ])
 }
 
@@ -371,13 +384,24 @@ pub fn run() {
             app.manage(git_caps);
 
             // Git engine stack: runner → cli engine → repo manager.
-            let runner = crate::core::runner::GitProcessRunner::with_net_config(120, net_config);
+            let runner =
+                crate::core::runner::GitProcessRunner::with_net_config(120, net_config.clone());
             let engine: std::sync::Arc<dyn crate::core::engine::GitEngine> =
                 std::sync::Arc::new(crate::core::engine::CliEngine::new(runner, &git_path));
             app.manage(crate::core::repo::RepoManager::new(engine));
 
             // Clone task registry (P7): taskId → CancelToken.
             app.manage(crate::commands::net::CloneTasks::default());
+
+            // AI 生成任务注册表（P11）：taskId → CancelToken。
+            app.manage(crate::commands::ai::AiTasks::default());
+
+            // AI 状态（P11，ADR-013）：{appData}/ai/config.json + keyring 密钥
+            // + 共享网络配置（代理继承 P7）。
+            app.manage(crate::core::ai::AiState::new(
+                data_dir.clone(),
+                net_config.clone(),
+            ));
 
             // State invalidation system (PLAN §4.3):
             // fs event → classify → debounce(300ms, cap 1s) → invalidate caches
