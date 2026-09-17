@@ -135,7 +135,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-w-3xl">
+  <Dialog.Content class="sm:max-w-3xl">
     <Dialog.Header>
       <Dialog.Title>{t("refs.compare.title")}</Dialog.Title>
       <Dialog.Description>{t("refs.compare.desc")}</Dialog.Description>

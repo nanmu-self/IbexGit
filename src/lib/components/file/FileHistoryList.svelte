@@ -249,8 +249,9 @@
     onCommit={(w) => void settings.setFileHistoryListWidth(w)}
   />
 
-  <!-- diff preview -->
-  <div class="min-w-0 flex-1">
+  <!-- diff preview。min-w 兜底：列表宽度是持久化的用户数据，若被残留在
+       异常大的值，也不能把预览挤成竖排占位文案。 -->
+  <div class="min-w-64 flex-1">
     {#if selected}
       <DiffViewer
         model={diffModel}

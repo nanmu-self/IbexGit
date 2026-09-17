@@ -39,7 +39,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="flex h-[80vh] max-w-3xl flex-col">
+  <Dialog.Content class="flex h-[80vh] sm:max-w-3xl flex-col">
     <Dialog.Header>
       <Dialog.Title>{t("refs.stashDiff.title")}</Dialog.Title>
       <Dialog.Description>

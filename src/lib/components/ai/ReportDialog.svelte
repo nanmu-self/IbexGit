@@ -131,7 +131,9 @@
 </script>
 
 <Dialog.Root bind:open={appDialogs.aiReportOpen}>
-  <Dialog.Content class="flex max-h-[80vh] w-[720px] max-w-[92vw] flex-col gap-3 overflow-hidden">
+  <Dialog.Content
+    class="flex max-h-[80vh] w-[720px] sm:max-w-[92vw] flex-col gap-3 overflow-hidden"
+  >
     <Dialog.Header class="pb-0">
       <Dialog.Title class="flex items-center gap-2">
         <CalendarDays class="size-4" />

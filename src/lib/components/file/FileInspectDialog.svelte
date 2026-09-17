@@ -21,7 +21,11 @@
 </script>
 
 <Dialog.Root bind:open={fileView.open}>
-  <Dialog.Content class="flex h-[88vh] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+  <!-- sm:max-w-* （而非 max-w-*）：基类自带的 sm:max-w-sm 处于媒体查询中，
+       桌面端视口恒 ≥640px，普通 max-w-* 会被它按级联覆盖，弹窗被钉在 384px。 -->
+  <Dialog.Content
+    class="flex h-[88vh] max-w-[calc(100vw-2rem)] sm:max-w-6xl flex-col gap-0 overflow-hidden p-0"
+  >
     <div class="flex items-center gap-2 border-b py-2.5 pr-12 pl-4">
       <div class="flex min-w-0 flex-1 flex-col">
         <Dialog.Title class="truncate font-mono text-sm font-medium" title={fileView.path ?? ""}>
