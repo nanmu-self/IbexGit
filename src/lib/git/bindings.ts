@@ -451,7 +451,22 @@ export type AiReportRequest_Serialize = {
 };
 
 /**  Application-wide error type. */
-export type AppError = { code: "io"; source: string; detail: string | null } | { code: "git_command"; command: string; stderr: string; stdout: string; detail: string | null } | { code: "git_version_too_old"; found: string; required: string } | { code: "invalid_repo"; path: string } | { code: "operation_cancelled" } | { code: "credential_cancelled" } | 
+export type AppError = { code: "io"; source: string; detail: string | null } | { code: "git_command"; command: string; stderr: string; stdout: string; detail: string | null } | 
+/**
+ *  git refused a worktree-mutating operation (merge/checkout/rebase/…)
+ *  because uncommitted local changes (or untracked files) would be
+ *  overwritten. Classified from stderr by `parse_dirty_worktree` so the
+ *  UI can show a friendly dialog instead of raw stderr.
+ */
+{ code: "dirty_worktree"; 
+/**  Operation git refused, as git names it (`merge`/`checkout`/…). */
+operation: string; 
+/**  Conflicting paths; empty when git doesn't list any. */
+files: string[]; 
+/**  Blocked paths are untracked files (stash without -u won't clear them). */
+untracked: boolean; 
+/**  Raw stderr, surfaced by the UI's "show command output" affordance. */
+stderr: string } | { code: "git_version_too_old"; found: string; required: string } | { code: "invalid_repo"; path: string } | { code: "operation_cancelled" } | { code: "credential_cancelled" } | 
 /**
  *  The cached DiffModel referenced by a line-level operation is gone
  *  (invalidated by a watcher event or evicted). The UI must re-fetch

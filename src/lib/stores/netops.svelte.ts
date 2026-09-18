@@ -7,6 +7,7 @@
  */
 import { git, normalizeError } from "$lib/git";
 import { showToast } from "$lib/stores/toast";
+import { giterr } from "$lib/stores/giterr.svelte";
 import { t } from "$lib/i18n";
 import { repos } from "$lib/stores/repos.svelte";
 import type { RepoId } from "$lib/git/bindings";
@@ -46,7 +47,12 @@ export async function conflictEntered(id: RepoId): Promise<boolean> {
   return false;
 }
 
-function runOp(id: RepoId, kind: NetOpKind, op: () => Promise<unknown>): Promise<void> {
+function runOp(
+  id: RepoId,
+  kind: NetOpKind,
+  op: () => Promise<unknown>,
+  onError?: (err: ReturnType<typeof normalizeError>) => void
+): Promise<void> {
   if (netops.busy[id]) return Promise.resolve();
   setBusy(id, kind);
   return (async () => {
@@ -54,6 +60,7 @@ function runOp(id: RepoId, kind: NetOpKind, op: () => Promise<unknown>): Promise
       await op();
     } catch (e) {
       const err = normalizeError(e);
+      onError?.(err);
       // P7 取消语义：凭据框取消 / 用户取消 → “已取消”（非错误样式）。
       if (err.code === "credential_cancelled" || err.code === "operation_cancelled") {
         showToast("info", t("netops.cancelled"));
@@ -80,15 +87,28 @@ export function runPull(
   branch: string | null,
   mode: "merge" | "rebase" | "ff_only" | null
 ): Promise<void> {
-  return runOp(id, "pull", async () => {
-    const res = await git.pull(id, remote, branch, mode);
-    await repos.refresh(id);
-    if (res.success) {
-      showToast("success", t("netops.pullDone"));
-    } else if (!(await conflictEntered(id))) {
-      showToast("error", res.message || t("netops.pullFailed"));
+  return runOp(
+    id,
+    "pull",
+    async () => {
+      const res = await git.pull(id, remote, branch, mode);
+      await repos.refresh(id);
+      if (res.success) {
+        showToast("success", t("netops.pullDone"));
+      } else if (!(await conflictEntered(id))) {
+        showToast("error", res.message || t("netops.pullFailed"));
+      }
+    },
+    (err) => {
+      // 脏工作区拒绝 → 对话框提供“暂存并重试”（重跑同参数的 pull）。
+      if (err.code === "dirty_worktree") {
+        giterr.retry = () => {
+          giterr.close();
+          return runPull(id, remote, branch, mode);
+        };
+      }
     }
-  });
+  );
 }
 
 /** Push; surfaces the outcome via toast. */

@@ -40,6 +40,19 @@ fn expand_home(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// 友好错误分类：把已知的高频 stderr 形态映射为结构化 AppError
+/// （当前：脏工作区拒绝，merge/checkout/pull/rebase 均会命中）。
+/// 未识别的形态返回 None，调用方维持原有 git_command 错误。
+fn classify_failure(res: &ProcessResult) -> Option<AppError> {
+    let d = parse::parse_dirty_worktree(&res.stderr)?;
+    Some(AppError::dirty_worktree(
+        d.operation,
+        d.files,
+        d.untracked,
+        res.stderr.clone(),
+    ))
+}
+
 /// 网络操作（fetch/pull/push/clone）失败时：stderr 含取消标记 →
 /// `CredentialCancelled`（用户在凭据框点了取消，而非认证失败；设计文档 §5）。
 fn ensure_success_net(res: &ProcessResult) -> Result<(), AppError> {
@@ -52,11 +65,13 @@ fn ensure_success_net(res: &ProcessResult) -> Result<(), AppError> {
     }
     match res.exit_code {
         Some(0) => Ok(()),
-        Some(code) => Err(AppError::git_command(
-            format!("git exited with code {}", code),
-            res.stderr.clone(),
-            res.stdout.clone(),
-        )),
+        Some(code) => Err(classify_failure(res).unwrap_or_else(|| {
+            AppError::git_command(
+                format!("git exited with code {}", code),
+                res.stderr.clone(),
+                res.stdout.clone(),
+            )
+        })),
         None => Err(AppError::internal("git process terminated by signal")),
     }
 }
@@ -147,11 +162,13 @@ impl CliEngine {
     fn ensure_success(&self, res: &ProcessResult) -> Result<(), AppError> {
         match res.exit_code {
             Some(0) => Ok(()),
-            Some(code) => Err(AppError::git_command(
-                format!("git exited with code {}", code),
-                res.stderr.clone(),
-                res.stdout.clone(),
-            )),
+            Some(code) => Err(classify_failure(res).unwrap_or_else(|| {
+                AppError::git_command(
+                    format!("git exited with code {}", code),
+                    res.stderr.clone(),
+                    res.stdout.clone(),
+                )
+            })),
             None => Err(AppError::internal("git process terminated by signal")),
         }
     }
@@ -1371,6 +1388,13 @@ impl engine::GitEngine for CliEngine {
                 .contains(crate::core::credential::CREDENTIAL_CANCELLED_MARKER)
         {
             return Err(AppError::CredentialCancelled);
+        }
+        // 脏工作区拒绝以结构化错误浮出（前端友好对话框），不折叠进
+        // success=false —— 与凭据取消同理，属于“需要用户决策”的失败。
+        if res.exit_code != Some(0) {
+            if let Some(err) = classify_failure(&res) {
+                return Err(err);
+            }
         }
         let success = res.exit_code == Some(0);
         let combined = format!("{}{}", res.stdout, res.stderr);

@@ -12,6 +12,7 @@
   import FileInspectDialog from "$lib/components/file/FileInspectDialog.svelte";
   import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
   import NetDialogsHost from "$lib/components/credential/NetDialogsHost.svelte";
+  import GitErrorDialog from "$lib/components/giterror/GitErrorDialog.svelte";
   import ReportDialog from "$lib/components/ai/ReportDialog.svelte";
   import { wireAiEvents } from "$lib/stores/ai.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
@@ -123,6 +124,7 @@
     <StatusBar />
     <RefsDialogsHost />
     <NetDialogsHost />
+    <GitErrorDialog />
     <FileInspectDialog />
     <ReportDialog />
   </div>

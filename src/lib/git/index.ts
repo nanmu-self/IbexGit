@@ -12,6 +12,7 @@ import type {
 } from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
+import { giterr } from "$lib/stores/giterr.svelte";
 import type { RepoMeta, RepoUiState } from "./bindings";
 
 // =====================
@@ -90,8 +91,15 @@ export type {
 } from "./bindings";
 
 /**
+ * Error codes worth a modal dialog instead of a toast: they need a user
+ * decision (e.g. dirty worktree → commit/stash), not just awareness.
+ */
+const DIALOG_CODES = new Set(["dirty_worktree"]);
+
+/**
  * Unified error pipeline: tauri-specta commands reject with the serialized
- * `AppError` (serde `tag = "code"`); normalize it and surface a toast.
+ * `AppError` (serde `tag = "code"`); normalize it and surface a toast (or,
+ * for dialog-worthy refusals, the friendly error dialog).
  */
 export function normalizeError(raw: unknown): AppError {
   if (typeof raw === "string") {
@@ -100,9 +108,21 @@ export function normalizeError(raw: unknown): AppError {
   const e = (raw ?? {}) as Record<string, unknown>;
   const code = typeof e.code === "string" ? e.code : "internal";
   const message = humanize(code, e);
-  const detail = typeof e.detail === "string" ? e.detail : null;
+  // Structured variants carry their own raw output (stderr); avoid duplicating
+  // it when the humanized message is already the stderr (git_command).
+  const stderr = typeof e.stderr === "string" && e.stderr.length > 0 ? e.stderr : null;
+  const detail =
+    stderr && stderr !== message
+      ? stderr
+      : typeof e.detail === "string" && e.detail.length > 0
+        ? e.detail
+        : null;
   const appError: AppError = { code, message, detail };
-  addToast(appError);
+  if (DIALOG_CODES.has(code)) {
+    giterr.openFromError(appError, e);
+  } else {
+    addToast(appError);
+  }
   return appError;
 }
 
@@ -112,6 +132,8 @@ function humanize(code: string, e: Record<string, unknown>): string {
       return str(e.source) || "I/O error";
     case "git_command":
       return str(e.stderr) || `git failed: ${str(e.command) || "?"}`;
+    case "dirty_worktree":
+      return t("giterr.title");
     case "git_version_too_old":
       return `Git ${str(e.found)} is too old (need ${str(e.required)})`;
     case "invalid_repo":

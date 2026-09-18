@@ -2343,3 +2343,175 @@ mod p9_file_trace_tests {
         assert_eq!(iso_from_ts_tz("0", "xxxxx"), "1970-01-01T00:00:00+00:00");
     }
 }
+
+// =====================
+// stderr failure classification: the dirty-worktree family
+// =====================
+
+/// Structured reason for a refused worktree-mutating operation: git aborted
+/// because uncommitted (or untracked) local content would be overwritten.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirtyWorktree {
+    /// Operation git refused, as printed by git itself:
+    /// `merge` | `checkout` | `switch` | `pull` | `rebase`.
+    pub operation: String,
+    /// Paths git listed as conflicting; empty when git names none
+    /// (e.g. `cannot pull with rebase: You have unstaged changes.`).
+    pub files: Vec<String>,
+    /// True when the blocked paths are *untracked* files
+    /// (`The following untracked working tree files would be overwritten…`).
+    /// A plain `git stash` does not clear untracked files, so the UI must
+    /// not offer stash-and-retry for this shape.
+    pub untracked: bool,
+}
+
+/// Marker common to both the tracked and untracked overwrite refusals.
+const OVERWRITTEN_MARKER: &str = "would be overwritten by ";
+
+/// Recognize the "your local changes would be overwritten" family in git's
+/// stderr and extract the refused operation + conflicting paths.
+///
+/// Covered shapes (git always runs under `LC_ALL=C.UTF-8`, see runner, so
+/// the messages are reliably English):
+/// - `error: Your local changes to the following files would be overwritten
+///    by <op>:` + indented path list + `Please commit your changes or stash
+///    them before you ….` (merge / checkout / switch / pull)
+/// - `error: The following untracked working tree files would be overwritten
+///    by <op>:` + path list (same tail)
+/// - `error: cannot pull with rebase: You have unstaged changes.`
+/// - `error: cannot pull with rebase: Your index contains uncommitted changes.`
+/// - `error: cannot rebase: You have unstaged changes.`
+///
+/// Returns `None` for anything else (caller keeps the raw stderr path).
+pub fn parse_dirty_worktree(stderr: &str) -> Option<DirtyWorktree> {
+    if let Some(pos) = stderr.find(OVERWRITTEN_MARKER) {
+        let rest = &stderr[pos + OVERWRITTEN_MARKER.len()..];
+        let end = rest.find(':')?;
+        let operation = rest[..end].trim().to_string();
+        if operation.is_empty() {
+            return None;
+        }
+        let untracked = stderr[..pos].contains("untracked working tree files");
+        let files: Vec<String> = rest[end + 1..]
+            .lines()
+            .map(|l| l.trim())
+            .skip_while(|l| l.is_empty())
+            .take_while(|l| !l.is_empty() && !l.starts_with("Please "))
+            .filter(|l| !l.starts_with("error:"))
+            .map(|l| l.to_string())
+            .collect();
+        if !files.is_empty() {
+            return Some(DirtyWorktree {
+                operation,
+                files,
+                untracked,
+            });
+        }
+    }
+    // Rebase-family refusals name no files, only the cause.
+    const REBASE_REFUSALS: [(&str, &str); 4] = [
+        (
+            "cannot pull with rebase: You have unstaged changes.",
+            "pull",
+        ),
+        (
+            "cannot pull with rebase: Your index contains uncommitted changes.",
+            "pull",
+        ),
+        ("cannot rebase: You have unstaged changes.", "rebase"),
+        (
+            "cannot rebase: Your index contains uncommitted changes.",
+            "rebase",
+        ),
+    ];
+    for (needle, operation) in REBASE_REFUSALS {
+        if stderr.contains(needle) {
+            return Some(DirtyWorktree {
+                operation: operation.to_string(),
+                files: Vec::new(),
+                untracked: false,
+            });
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod dirty_worktree_tests {
+    use super::parse_dirty_worktree;
+
+    /// Real-world shape (codeup.aliyun.com pull refused by a dirty vue file).
+    #[test]
+    fn pull_merge_with_file_list() {
+        let stderr = "From codeup.aliyun.com:64264d90eafb57df57532d6c/saas/hs-saas-tms-web\n\
+                      * branch            dev        -> FETCH_HEAD\n\
+                      error: Your local changes to the following files would be overwritten by merge:\n\
+                      \tsrc/views/cms/customsbroker/declarationhead.vue\n\
+                      Please commit your changes or stash them before you merge.\n\
+                      Aborting";
+        let d = parse_dirty_worktree(stderr).expect("classified");
+        assert_eq!(d.operation, "merge");
+        assert!(!d.untracked);
+        assert_eq!(
+            d.files,
+            vec!["src/views/cms/customsbroker/declarationhead.vue"]
+        );
+    }
+
+    #[test]
+    fn checkout_multiple_files() {
+        let stderr =
+            "error: Your local changes to the following files would be overwritten by checkout:\n\
+                      \tsrc/a.ts\n\
+                      \tsrc/b.rs\n\
+                      Please commit your changes or stash them before you switch branches.\n\
+                      Aborting";
+        let d = parse_dirty_worktree(stderr).expect("classified");
+        assert_eq!(d.operation, "checkout");
+        assert_eq!(d.files, vec!["src/a.ts", "src/b.rs"]);
+    }
+
+    #[test]
+    fn untracked_variant_is_flagged() {
+        let stderr =
+            "error: The following untracked working tree files would be overwritten by merge:\n\
+                      \tconfig/local.json\n\
+                      Please move or remove them before you merge.\n\
+                      Aborting";
+        let d = parse_dirty_worktree(stderr).expect("classified");
+        assert_eq!(d.operation, "merge");
+        assert!(d.untracked);
+        assert_eq!(d.files, vec!["config/local.json"]);
+    }
+
+    #[test]
+    fn rebase_refusal_without_file_list() {
+        let d = parse_dirty_worktree(
+            "error: cannot pull with rebase: You have unstaged changes.\nerror: Please commit or stash them.",
+        )
+        .expect("classified");
+        assert_eq!(d.operation, "pull");
+        assert!(d.files.is_empty());
+
+        let d =
+            parse_dirty_worktree("error: cannot rebase: Your index contains uncommitted changes.")
+                .expect("classified");
+        assert_eq!(d.operation, "rebase");
+        assert!(d.files.is_empty());
+    }
+
+    #[test]
+    fn unrelated_stderr_is_none() {
+        assert!(parse_dirty_worktree("fatal: couldn't find remote ref dev").is_none());
+        assert!(parse_dirty_worktree("").is_none());
+        assert!(parse_dirty_worktree(
+            "error: Your local changes to the following files would be overwritten by merge:\nPlease commit"
+        )
+        .is_none());
+        // Not a refusal we translate: keep raw stderr.
+        assert!(
+            parse_dirty_worktree("error: pathspec 'x' did not match any file(s) known to git")
+                .is_none()
+        );
+    }
+}

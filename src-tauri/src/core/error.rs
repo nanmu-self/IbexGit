@@ -19,6 +19,22 @@ pub enum AppError {
         detail: Option<String>,
     },
 
+    /// git refused a worktree-mutating operation (merge/checkout/rebase/…)
+    /// because uncommitted local changes (or untracked files) would be
+    /// overwritten. Classified from stderr by `parse_dirty_worktree` so the
+    /// UI can show a friendly dialog instead of raw stderr.
+    #[serde(rename_all = "snake_case")]
+    DirtyWorktree {
+        /// Operation git refused, as git names it (`merge`/`checkout`/…).
+        operation: String,
+        /// Conflicting paths; empty when git doesn't list any.
+        files: Vec<String>,
+        /// Blocked paths are untracked files (stash without -u won't clear them).
+        untracked: bool,
+        /// Raw stderr, surfaced by the UI's "show command output" affordance.
+        stderr: String,
+    },
+
     #[serde(rename_all = "snake_case")]
     GitVersionTooOld {
         found: String,
@@ -97,6 +113,19 @@ impl fmt::Display for AppError {
         match self {
             Self::Io { source, .. } => write!(f, "IO error: {}", source),
             Self::GitCommand { command, .. } => write!(f, "Git command failed: {}", command),
+            Self::DirtyWorktree {
+                operation, files, ..
+            } => {
+                if files.is_empty() {
+                    write!(f, "You have uncommitted changes; {operation} refused")
+                } else {
+                    write!(
+                        f,
+                        "Local changes to {} file(s) would be overwritten by {operation}",
+                        files.len()
+                    )
+                }
+            }
             Self::GitVersionTooOld { found, required } => {
                 write!(f, "Git version too old: {}, required: {}", found, required)
             }
@@ -176,6 +205,20 @@ impl AppError {
             stderr: stderr.into(),
             stdout: stdout.into(),
             detail: Some(detail.into()),
+        }
+    }
+
+    pub fn dirty_worktree(
+        operation: impl Into<String>,
+        files: Vec<String>,
+        untracked: bool,
+        stderr: impl Into<String>,
+    ) -> Self {
+        Self::DirtyWorktree {
+            operation: operation.into(),
+            files,
+            untracked,
+            stderr: stderr.into(),
         }
     }
 
