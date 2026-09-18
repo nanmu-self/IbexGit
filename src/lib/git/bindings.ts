@@ -352,6 +352,12 @@ export const commands = {
 	knownHostsList: () => __TAURI_INVOKE<KnownHost[]>("known_hosts_list"),
 	knownHostsRemove: (host: string) => __TAURI_INVOKE<null>("known_hosts_remove", { host }),
 	appSetNetConfig: (config: NetConfig) => __TAURI_INVOKE<null>("app_set_net_config", { config }),
+	/**  列出 `~/.ssh` 下可识别的成对密钥（目录不存在 = 空列表）。 */
+	sshKeyList: () => __TAURI_INVOKE<SshKeyInfo[]>("ssh_key_list"),
+	/**  生成密钥对（Ed25519 / RSA），可选口令加密私钥。 */
+	sshKeyGenerate: (req: SshKeyGenerateRequest) => __TAURI_INVOKE<SshKeyInfo>("ssh_key_generate", { req }),
+	/**  删除密钥（私钥 + `.pub`；路径必须位于 `~/.ssh` 内）。 */
+	sshKeyDelete: (path: string) => __TAURI_INVOKE<null>("ssh_key_delete", { path }),
 };
 
 /** Events */
@@ -1248,6 +1254,37 @@ export type SelectedFile = {
 	path: string,
 	/**  `worktree` or `staged` — which diff to show for the file. */
 	source: string,
+};
+
+/**  生成算法（specta：`{ kind: "ed25519" } | { kind: "rsa"; bits: number }`）。 */
+export type SshKeyAlgorithm = { kind: "ed25519" } | { kind: "rsa"; bits: number };
+
+/**  生成参数。 */
+export type SshKeyGenerateRequest = {
+	algorithm: SshKeyAlgorithm,
+	/**  公钥注释（追加在 `.pub` 行尾；空 = 不写注释）。 */
+	comment: string | null,
+	/**  私钥口令；空 / None = 不加密。 */
+	passphrase: string | null,
+	/**  文件名（相对 `~/.ssh`）；None / 空 = 按算法自动命名，占用则追加序号。 */
+	file_name: string | null,
+};
+
+/**  密钥条目（列表页）。 */
+export type SshKeyInfo = {
+	/**  `.pub` 路径。 */
+	public_path: string,
+	/**  私钥路径；None = 目录里只有公钥（不能设为活动密钥）。 */
+	private_path: string | null,
+	algorithm: string,
+	bits: number,
+	/**  `SHA256:<base64>`。 */
+	fingerprint: string,
+	comment: string,
+	/**  私钥是否用口令加密。 */
+	encrypted: boolean,
+	/**  单行 openssh 公钥文本（复制给 Git 托管平台用）。 */
+	public_key: string,
 };
 
 export type StashEntry = {

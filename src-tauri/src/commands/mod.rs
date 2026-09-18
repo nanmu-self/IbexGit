@@ -18,6 +18,7 @@ use tauri::State;
 pub mod ai;
 pub mod app;
 pub mod net;
+pub mod ssh;
 pub mod workspace;
 
 /// Return the detected git capabilities as JSON.

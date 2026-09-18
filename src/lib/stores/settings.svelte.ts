@@ -208,6 +208,20 @@ class SettingsStore {
     await this.#store?.set("gitPath", path);
   }
 
+  /**
+   * 设置活动 SSH 私钥（空 = 清除）；立即下发 runner（GIT_SSH_COMMAND 注入）。
+   * 仅改 sshKeyPath，代理设置保持当前值。
+   */
+  async setSshKeyPath(path: string): Promise<void> {
+    this.sshKeyPath = path;
+    await this.#store?.set("sshKeyPath", path);
+    await commands.appSetNetConfig({
+      proxy_mode: this.proxyMode,
+      proxy_url: this.proxyUrl || null,
+      ssh_key_path: path || null,
+    });
+  }
+
   /** 设置中心弹窗尺寸（0 = 复位为默认）。 */
   async setSettingsSize(width: number, height: number): Promise<void> {
     this.settingsWidth = width;

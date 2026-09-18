@@ -1,4 +1,4 @@
-import { commands, type RepoId } from "./bindings";
+import { commands, type RepoId, type SshKeyGenerateRequest } from "./bindings";
 import { t } from "$lib/i18n";
 import type {
   AiConfigDto,
@@ -78,6 +78,9 @@ export type {
   RepoUiState,
   ResetUndo,
   SelectedFile,
+  SshKeyAlgorithm,
+  SshKeyGenerateRequest,
+  SshKeyInfo,
   StashEntry,
   TagInfo,
 } from "./bindings";
@@ -380,6 +383,11 @@ export const net = {
   // ---- SSH host key 信任库 ----
   knownHostsList: () => wrap(commands.knownHostsList()),
   knownHostsRemove: (host: string) => wrap(commands.knownHostsRemove(host)),
+
+  // ---- SSH 密钥管理（~/.ssh 列出/生成/删除，设置中心） ----
+  sshKeyList: () => wrap(commands.sshKeyList()),
+  sshKeyGenerate: (req: SshKeyGenerateRequest) => wrap(commands.sshKeyGenerate(req)),
+  sshKeyDelete: (path: string) => wrap(commands.sshKeyDelete(path)),
 
   // ---- 代理 / SSH 配置（runner spawn 时统一注入） ----
   setNetConfig: (config: NetConfig) => wrap(commands.appSetNetConfig(config)),

@@ -42,6 +42,11 @@ tokio = { version = "1", features = ["full"] }
 # keyutils（纯 Rust 零系统依赖；Secret Service 需 libdbus，待需要时再评估）。
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
 getrandom = "0.3"
+# SSH 密钥管理（设置中心）：~/.ssh 密钥列出/生成/删除。生成走纯 Rust
+# （ssh-key crate），不依赖外部 ssh-keygen 是否在 PATH；加密用 bcrypt-pbkdf。
+ssh-key = { version = "0.6", features = ["ed25519", "rsa", "encryption"] }
+# ssh-key 0.6 依赖 rand_core 0.6，rand 必须停在 0.8（0.9 对应 rand_core 0.9）。
+rand = "0.8"
 bitflags = "2"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

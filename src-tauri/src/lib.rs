@@ -97,6 +97,7 @@ pub mod core {
     pub mod recovery;
     pub mod repo;
     pub mod runner;
+    pub mod sshkeys;
     pub mod task;
     pub mod terminal;
     pub mod watcher;
@@ -221,6 +222,9 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::net::known_hosts_list,
             commands::net::known_hosts_remove,
             commands::net::app_set_net_config,
+            commands::ssh::ssh_key_list,
+            commands::ssh::ssh_key_generate,
+            commands::ssh::ssh_key_delete,
         ])
         .events(tauri_specta::collect_events![
             core::watcher::RepoChanged,
