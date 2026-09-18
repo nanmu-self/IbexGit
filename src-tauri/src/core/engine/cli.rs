@@ -1804,6 +1804,71 @@ impl engine::GitEngine for CliEngine {
         self.ensure_success(&res)
     }
 
+    async fn config_merged(&self, repo: &str) -> Result<Vec<ConfigEntry>, AppError> {
+        let res = self
+            .run(
+                ["-C", repo, "config", "--list", "-z"],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        self.ensure_success(&res)?;
+        Ok(parse::parse_config_list_z(&res.stdout)
+            .into_iter()
+            .map(|(key, value)| ConfigEntry { key, value })
+            .collect())
+    }
+
+    async fn config_set_local(
+        &self,
+        repo: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), AppError> {
+        if !parse::config_key_valid(key) {
+            return Err(AppError::parse(format!("invalid config key: {key:?}")));
+        }
+        // `--` 隔离 positional 参数（key 已校验不以 `-` 开头，value 任意）；
+        // `--replace-all`/`--unset-all`：同名键多行时全量替换/移除。
+        let res = match value {
+            Some(v) => {
+                self.run(
+                    [
+                        "-C",
+                        repo,
+                        "config",
+                        "--local",
+                        "--replace-all",
+                        "--",
+                        key,
+                        v,
+                    ],
+                    StdinMode::Null,
+                    None,
+                    None,
+                )
+                .await?
+            }
+            None => {
+                // exit 5 = key 本来就不存在 → 视为幂等成功。
+                let res = self
+                    .run(
+                        ["-C", repo, "config", "--local", "--unset-all", "--", key],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                if res.exit_code == Some(5) {
+                    return Ok(());
+                }
+                res
+            }
+        };
+        self.ensure_success(&res)
+    }
+
     async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError> {
         // `--type=path` expands `~`; unset → exit 1 with empty output.
         let res = self

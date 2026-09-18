@@ -1667,6 +1667,84 @@ pub async fn git_config_set_global(
         .await
 }
 
+// =====================
+// P10: 仓库级常用配置（仓库设置对话框，写入 .git/config）
+// =====================
+
+/// The common repo-level config keys surfaced by the per-repo settings
+/// dialog（身份 / 代理 / 拉取推送 / 换行）。Frontend renders them in this
+/// order; `git_repo_config_values` resolves exactly these keys.
+const REPO_CONFIG_KEYS: &[&str] = &[
+    "user.name",
+    "user.email",
+    "http.proxy",
+    "https.proxy",
+    "core.autocrlf",
+    "pull.rebase",
+    "fetch.prune",
+    "push.autoSetupRemote",
+];
+
+/// Resolve the common repo config keys: repo-local value + effective
+/// (merged) value for each（P10 仓库设置）。两次 `git config --list -z`
+/// 读完后在命令层拼装 DTO，engine 保持通用。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_repo_config_values(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::RepoConfigValue>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let root = resolve(&repos, id).await?;
+    // 同名键以最后一次出现为准（parse::config_last_wins，git --get 语义）。
+    let local = crate::core::engine::parse::config_last_wins(
+        repos
+            .engine()
+            .config_local(&root)
+            .await?
+            .into_iter()
+            .map(|e| (e.key, e.value))
+            .collect(),
+    );
+    let merged = crate::core::engine::parse::config_last_wins(
+        repos
+            .engine()
+            .config_merged(&root)
+            .await?
+            .into_iter()
+            .map(|e| (e.key, e.value))
+            .collect(),
+    );
+    Ok(REPO_CONFIG_KEYS
+        .iter()
+        .map(|&key| crate::core::engine::RepoConfigValue {
+            key: key.to_string(),
+            local: local.get(key).cloned(),
+            effective: merged.get(key).cloned(),
+        })
+        .collect())
+}
+
+/// Set/unset a repository-local config key (`value === None` → unset；
+/// P10 仓库设置）。写 `.git/config`（config.lock）而非 index.lock，但
+/// 变更类操作按红线统一持有 per-repo WriteGate。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_repo_config_set(
+    id: RepoId,
+    key: String,
+    value: Option<String>,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let root = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .config_set_local(&root, &key, value.as_deref())
+        .await
+}
+
 /// Read the global gitignore (`core.excludesFile` or default path).
 #[tauri::command]
 #[specta::specta]

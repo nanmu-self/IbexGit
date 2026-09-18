@@ -457,6 +457,18 @@ pub struct CommitTemplate {
     pub content: String,
 }
 
+/// One common config key resolved for a repository (P10 仓库设置): the
+/// repo-local value (`.git/config`) and the effective value git would use
+/// (merged system + global + local). `local == None` 意味着继承上层作用域。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RepoConfigValue {
+    pub key: String,
+    /// Value written in the repo-local config; `None` = no local override.
+    pub local: Option<String>,
+    /// Effective value after merging all scopes; `None` = not set anywhere.
+    pub effective: Option<String>,
+}
+
 // ---- P11: AI 报告采集（log + numstat） ----
 
 /// One file's line-count stats within a commit (`git log --numstat`).
@@ -833,10 +845,23 @@ pub trait GitEngine: Send + Sync {
     async fn config_global(&self) -> Result<Vec<ConfigEntry>, AppError>;
     /// List the repository-level config (`git config --list -z --local`).
     async fn config_local(&self, repo: &str) -> Result<Vec<ConfigEntry>, AppError>;
+    /// List the effective (system + global + local) config for a repository
+    /// (`git config --list -z`, no scope flag = merged).
+    async fn config_merged(&self, repo: &str) -> Result<Vec<ConfigEntry>, AppError>;
     /// Set a user-level config key (`git config --global -- key value`);
     /// `None` unsets it (unsetting a missing key is not an error). The key
     /// is validated (`parse::config_key_valid`) before reaching argv.
     async fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<(), AppError>;
+    /// Set/unset a repository-local config key (`git config --local ...`);
+    /// `None` unsets it. `--replace-all`/`--unset-all` 语义：同名键多行时
+    /// 全量替换/移除，unset 不存在的键视为幂等成功。Key is validated
+    /// (`parse::config_key_valid`) before reaching argv.
+    async fn config_set_local(
+        &self,
+        repo: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), AppError>;
     /// Read the global gitignore (`core.excludesFile`, else the default
     /// `~/.config/git/ignore`); `None` when neither file exists.
     async fn global_gitignore(&self) -> Result<Option<GitignoreFile>, AppError>;

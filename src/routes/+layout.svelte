@@ -3,7 +3,9 @@
   import ToastHost from "$lib/components/ui/toast/ToastHost.svelte";
   import CommandPalette from "$lib/components/palette/CommandPalette.svelte";
   import SettingsDialog from "$lib/components/settings/SettingsDialog.svelte";
+import RepoSettingsDialog from "$lib/components/settings/RepoSettingsDialog.svelte";
   import { settings } from "$lib/stores/settings.svelte";
+import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { repos } from "$lib/stores/repos.svelte";
   import { initKeyboard } from "$lib/keyboard";
   import { t } from "$lib/i18n";
@@ -95,3 +97,7 @@
 <ToastHost />
 <CommandPalette />
 <SettingsDialog />
+<RepoSettingsDialog
+  bind:open={appDialogs.repoSettingsOpen}
+  repoId={appDialogs.repoSettingsRepoId}
+/>

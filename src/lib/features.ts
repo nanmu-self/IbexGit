@@ -326,6 +326,18 @@ export const FEATURES: Feature[] = [
     run: refAction({ kind: "addRemote" }),
   },
   {
+    id: "repo.settings",
+    labelKey: "menu.repo.settings",
+    section: "repository",
+    group: 4,
+    order: 1,
+    needsRepo: true,
+    keywords: "config user email proxy settings gitconfig 仓库设置",
+    run: () => {
+      if (needsActiveRepo()) appDialogs.openRepoSettings();
+    },
+  },
+  {
     id: "ai.report",
     labelKey: "ai.reportFeature",
     section: "repository",

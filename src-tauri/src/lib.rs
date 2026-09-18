@@ -184,6 +184,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_config_global,
             commands::git_config_local,
             commands::git_config_set_global,
+            commands::git_repo_config_values,
+            commands::git_repo_config_set,
             commands::git_gitignore_global,
             commands::git_commit_template,
             commands::app::app_set_log_level,

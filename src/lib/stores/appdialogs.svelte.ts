@@ -6,6 +6,8 @@
  * Svelte 5 runes: plain `$state` module object（同 netdialogs 模式）.
  */
 
+import type { RepoId } from "$lib/git/bindings";
+
 export type SettingsSection =
   | "general"
   | "git"
@@ -24,6 +26,9 @@ class AppDialogsStore {
   aboutOpen = $state(false);
   /** P11 日报/周报对话框。 */
   aiReportOpen = $state(false);
+  /** 仓库级常用配置（.git/config）对话框；null = 当前活动仓库。 */
+  repoSettingsOpen = $state(false);
+  repoSettingsRepoId = $state<RepoId | null>(null);
 
   openPalette(): void {
     this.paletteOpen = true;
@@ -44,6 +49,12 @@ class AppDialogsStore {
 
   openAiReport(): void {
     this.aiReportOpen = true;
+  }
+
+  /** 仓库设置；`repoId` 为空时取当前活动仓库（菜单/命令面板入口）。 */
+  openRepoSettings(repoId: RepoId | null = null): void {
+    this.repoSettingsRepoId = repoId;
+    this.repoSettingsOpen = true;
   }
 }
 

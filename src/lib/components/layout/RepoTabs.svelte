@@ -2,6 +2,7 @@
   import * as ContextMenu from "$lib/components/ui/context-menu";
   import { t } from "$lib/i18n";
   import { repos, samePath, REPOS_TAB_ID } from "$lib/stores/repos.svelte";
+import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { BOOKMARKS, bookmarkColor } from "$lib/bookmarks";
   import X from "@lucide/svelte/icons/x";
   import Plus from "@lucide/svelte/icons/plus";
@@ -129,6 +130,10 @@
               {/if}
             </ContextMenu.SubContent>
           </ContextMenu.Sub>
+          <ContextMenu.Separator />
+          <ContextMenu.Item onSelect={() => appDialogs.openRepoSettings(tab.id)}>
+            {t("menu.repo.settings")}
+          </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={() => void repos.close(tab.id)}>
             {t("tabs.close")}

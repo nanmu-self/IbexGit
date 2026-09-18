@@ -269,6 +269,18 @@ export const commands = {
 	 *  git 子进程全局并发上限使用。
 	 */
 	gitConfigSetGlobal: (key: string, value: string | null) => __TAURI_INVOKE<null>("git_config_set_global", { key, value }),
+	/**
+	 *  Resolve the common repo config keys: repo-local value + effective
+	 *  (merged) value for each（P10 仓库设置）。两次 `git config --list -z`
+	 *  读完后在命令层拼装 DTO，engine 保持通用。
+	 */
+	gitRepoConfigValues: (id: RepoId_Deserialize) => __TAURI_INVOKE<RepoConfigValue[]>("git_repo_config_values", { id }),
+	/**
+	 *  Set/unset a repository-local config key (`value === None` → unset；
+	 *  P10 仓库设置）。写 `.git/config`（config.lock）而非 index.lock，但
+	 *  变更类操作按红线统一持有 per-repo WriteGate。
+	 */
+	gitRepoConfigSet: (id: RepoId_Deserialize, key: string, value: string | null) => __TAURI_INVOKE<null>("git_repo_config_set", { id, key, value }),
 	/**  Read the global gitignore (`core.excludesFile` or default path). */
 	gitGitignoreGlobal: () => __TAURI_INVOKE<{
 	/**  Resolved absolute path (display purpose). */
@@ -1139,6 +1151,19 @@ export type RepoChanged_Serialize = {
 	repoId: RepoId_Serialize,
 	kinds: string[],
 	generation: number,
+};
+
+/**
+ *  One common config key resolved for a repository (P10 仓库设置): the
+ *  repo-local value (`.git/config`) and the effective value git would use
+ *  (merged system + global + local). `local == None` 意味着继承上层作用域。
+ */
+export type RepoConfigValue = {
+	key: string,
+	/**  Value written in the repo-local config; `None` = no local override. */
+	local: string | null,
+	/**  Effective value after merging all scopes; `None` = not set anywhere. */
+	effective: string | null,
 };
 
 /**  A named repository group (flat, v1 — no nesting; PLAN P3.5). */

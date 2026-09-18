@@ -72,6 +72,7 @@ export type {
   RecoveryEntry,
   ReflogEntry,
   RemoteInfo,
+  RepoConfigValue,
   RepoGroup,
   RepoId,
   RepoMeta,
@@ -394,7 +395,8 @@ export const net = {
 };
 
 /**
- * P10 应用层：Git 配置查看器、常用项编辑、提交模板、git 路径探测、日志级别。
+ * P10 应用层：Git 配置查看器、常用项编辑、仓库级常用配置、提交模板、
+ * git 路径探测、日志级别。
  */
 export const app = {
   configGlobal: () => wrap(commands.gitConfigGlobal()),
@@ -402,6 +404,11 @@ export const app = {
   /** Write/unset a user-level config key (`value === null` → unset). */
   configSetGlobal: (key: string, value: string | null) =>
     wrap(commands.gitConfigSetGlobal(key, value)),
+  /** Common repo config keys with local + effective values（仓库设置）。 */
+  repoConfigValues: (id: RepoId) => wrap(commands.gitRepoConfigValues(id)),
+  /** Write/unset a repo-local config key (`value === null` → unset). */
+  repoConfigSet: (id: RepoId, key: string, value: string | null) =>
+    wrap(commands.gitRepoConfigSet(id, key, value)),
   gitignoreGlobal: () => wrap(commands.gitGitignoreGlobal()),
   /** Resolved `commit.template` (path + content), or null when unset. */
   commitTemplate: (id: RepoId) => wrap(commands.gitCommitTemplate(id)),

@@ -935,6 +935,16 @@ pub fn config_key_valid(key: &str) -> bool {
         && key.contains('.')
 }
 
+/// Collapse a parsed config list into a `key → value` map with git's
+/// "last occurrence wins" semantics (P10 仓库设置): `git config --get`
+/// returns the last value of a multi-valued key, so the effective view of
+/// `--list` output must too.
+pub fn config_last_wins(
+    entries: Vec<(String, String)>,
+) -> std::collections::HashMap<String, String> {
+    entries.into_iter().collect()
+}
+
 /// Parse `git rev-list --left-right --count A...B` → `(left, right)`.
 pub fn parse_range_count(output: &str) -> (u32, u32) {
     let line = output.lines().next().unwrap_or("");
@@ -1940,6 +1950,20 @@ mod tests {
         ] {
             assert!(!config_key_valid(key), "{key:?} should be rejected");
         }
+    }
+
+    #[test]
+    fn config_last_wins_takes_final_occurrence() {
+        let entries = vec![
+            ("user.name".to_string(), "first".to_string()),
+            ("http.proxy".to_string(), "p1".to_string()),
+            ("user.name".to_string(), "second".to_string()),
+        ];
+        let m = config_last_wins(entries);
+        assert_eq!(m.get("user.name").map(String::as_str), Some("second"));
+        assert_eq!(m.get("http.proxy").map(String::as_str), Some("p1"));
+        assert!(!m.contains_key("absent"));
+        assert!(config_last_wins(Vec::new()).is_empty());
     }
 
     #[test]
