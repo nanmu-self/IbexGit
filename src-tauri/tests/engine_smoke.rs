@@ -146,3 +146,92 @@ async fn status_stage_commit_log_smoke_loop() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = StdinMode::Null; // keep import used if assertions change
 }
+
+/// 固定 committer 日期的提交（统计分桶的确定性来源）。
+fn git_commit_at(dir: &PathBuf, name: &str, email: &str, date: &str, msg: &str) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            &format!("user.name={name}"),
+            "-c",
+            &format!("user.email={email}"),
+            "commit",
+            "-m",
+            msg,
+        ])
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .output()
+        .expect("git available");
+    assert!(
+        out.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn commit_stats_empty_repo_and_two_authors() {
+    let engine = CliEngine::new(GitProcessRunner::new(60), "git");
+
+    // 1. unborn repo: stats is an empty set, not an error
+    let dir = temp_repo();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    let path = dir.display().to_string();
+    let empty = engine
+        .commit_stats(&path, "HEAD")
+        .await
+        .expect("stats empty");
+    assert_eq!(empty.total, 0);
+    assert!(empty.contributors.is_empty());
+    assert!(empty.months.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // 2. two authors across three months (fixed committer dates)
+    let dir = temp_repo();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    let path = dir.display().to_string();
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "."]);
+    git_commit_at(
+        &dir,
+        "Alice",
+        "alice@x",
+        "2026-01-10T10:00:00+08:00",
+        "s: c1",
+    );
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    git(&dir, &["add", "."]);
+    git_commit_at(&dir, "Bob", "bob@x", "2026-01-20T10:00:00+08:00", "s: c2");
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    git(&dir, &["add", "."]);
+    git_commit_at(
+        &dir,
+        "Alice",
+        "alice@x",
+        "2026-03-05T10:00:00+08:00",
+        "s: c3",
+    );
+
+    let dto = engine.commit_stats(&path, "main").await.expect("stats");
+    assert_eq!(dto.total, 3);
+    assert_eq!(dto.contributors.len(), 2);
+    assert_eq!(dto.contributors[0].name, "Alice");
+    assert_eq!(dto.contributors[0].count, 2);
+    assert_eq!(dto.contributors[1].email, "bob@x");
+    assert_eq!(dto.contributors[1].count, 1);
+
+    // 月轴从首个提交月铺起、零填充；历史提交不进当前周期的桶。
+    assert_eq!(dto.months[0].key, "2026-01");
+    assert_eq!(dto.months[0].count, 2);
+    assert_eq!(dto.months[1].key, "2026-02");
+    assert_eq!(dto.months[1].count, 0);
+    assert_eq!(dto.months[2].key, "2026-03");
+    assert_eq!(dto.months[2].count, 1);
+    assert!(dto.months.len() >= 3);
+    assert!(dto.today_hours.iter().all(|b| b.count == 0));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

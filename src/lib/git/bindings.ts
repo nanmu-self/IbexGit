@@ -39,6 +39,8 @@ export const commands = {
 	/**  Append paths to `.gitignore` (right-click "ignore" action). */
 	gitIgnorePaths: (id: RepoId_Deserialize, paths: string[]) => __TAURI_INVOKE<null>("git_ignore_paths", { id, paths }),
 	gitLog: (id: RepoId_Deserialize, limit: number, offset: number, paths: string[] | null) => __TAURI_INVOKE<CommitInfo[]>("git_log", { id, limit, offset, paths }),
+	/**  提交统计（stats 对话框）：一次 log，四套桶 + 贡献者表，只读。 */
+	gitCommitStats: (id: RepoId_Deserialize, rev: string) => __TAURI_INVOKE<CommitStatsDto>("git_commit_stats", { id, rev }),
 	/**
 	 *  First page of the commit graph (GraphQuery → GraphCache → GraphLayout;
 	 *  the frontend renders SVG). Returns the loaded rows (≤ 500).
@@ -613,6 +615,22 @@ export type CommitResult = {
 	message: string,
 };
 
+/**  一次 `commit_stats` 命令的全部结果：一次 log，四套桶 + 贡献者表。 */
+export type CommitStatsDto = {
+	/**  非 merge 提交总数（`--no-merges`，与 GitHub contribution 口径一致）。 */
+	total: number,
+	/**  按提交数降序（并列时按名字、email）。 */
+	contributors: ContributorStat[],
+	/**  全历史按月：从首个提交月到当前月，含中间空月（横轴可滚动）。 */
+	months: StatBucket[],
+	/**  本月按天：1 号到今天。 */
+	month_days: StatBucket[],
+	/**  本周按天：ISO 周一到今天。 */
+	week_days: StatBucket[],
+	/**  本日按小时：00 点到当前小时。 */
+	today_hours: StatBucket[],
+};
+
 /**
  *  The commit message template (`commit.template`), resolved to an absolute
  *  path and read (P10 提交辅助).
@@ -733,6 +751,13 @@ export type ConflictType =
  *  worktree — choose-side only.
  */
 "directory_file";
+
+/**  一位贡献者（按 email 聚合；显示名取最新一次提交所用名字）。 */
+export type ContributorStat = {
+	name: string,
+	email: string,
+	count: number,
+};
 
 /**  凭据管理页条目（凭据索引，不含机密）。 */
 export type CredentialEntry = CredentialEntry_Serialize | CredentialEntry_Deserialize;
@@ -1318,6 +1343,15 @@ export type StashEntry = {
 	message: string,
 	branch: string | null,
 	date: string,
+};
+
+/**
+ *  一个时间桶。`key` 是规范键（月 `2026-08`、日 `2026-08-05`、小时 `14`，
+ *  均为零填充定宽、本地时区），显示格式由前端负责。
+ */
+export type StatBucket = {
+	key: string,
+	count: number,
 };
 
 export type TagInfo = {

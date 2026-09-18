@@ -50,6 +50,8 @@
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import BarChart3 from "@lucide/svelte/icons/bar-chart-3";
+  import StatsDialog from "$lib/components/stats/StatsDialog.svelte";
 
   const ROW_H = 28;
 
@@ -59,6 +61,7 @@
   let complete = $state(false);
   let loading = $state(false);
   let loadingMore = $state(false);
+  let statsOpen = $state(false);
 
   // ---- selection ----
   /** Single selection → detail panel. */
@@ -401,6 +404,14 @@
       >
         <SlidersHorizontal class="size-4" />
       </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title={t("stats.title")}
+        onclick={() => (statsOpen = true)}
+      >
+        <BarChart3 class="size-4" />
+      </Button>
       {#if loading}
         <LoaderCircle class="size-4 animate-spin text-muted-foreground" />
       {/if}
@@ -639,4 +650,7 @@
     ontag={ctxTag}
     oncherrypick={ctxCherry}
   />
+
+  <!-- commit statistics (P12) -->
+  <StatsDialog bind:open={statsOpen} repoId={active.id} />
 {/if}

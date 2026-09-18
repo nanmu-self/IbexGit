@@ -480,9 +480,9 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::core::engine::{
-        BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, CommitTemplate,
-        ConfigEntry, DiffModel, DiffSource, FileCommit, GitignoreFile, IndexEntry, NumstatCommit,
-        PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, CommitStatsDto,
+        CommitTemplate, ConfigEntry, DiffModel, DiffSource, FileCommit, GitignoreFile, IndexEntry,
+        NumstatCommit, PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -857,6 +857,10 @@ mod tests {
             _: u32,
         ) -> Result<Vec<NumstatCommit>, AppError> {
             Err(err("log_numstat"))
+        }
+
+        async fn commit_stats(&self, _: &str, _: &str) -> Result<CommitStatsDto, AppError> {
+            Err(err("commit_stats"))
         }
     }
 

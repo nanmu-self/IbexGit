@@ -125,6 +125,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_head_message,
             commands::git_ignore_paths,
             commands::git_log,
+            commands::git_commit_stats,
             commands::git_graph,
             commands::git_graph_more,
             commands::git_commit_detail,

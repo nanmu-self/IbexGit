@@ -1,6 +1,6 @@
 use crate::core::engine::{
-    self, conflict, parse, CloneOptions, CommitTemplate, ConfigEntry, DiffModel, DiffOptions,
-    DiffSource, FileContent, GitignoreFile, NumstatCommit,
+    self, conflict, parse, stats, CloneOptions, CommitTemplate, ConfigEntry, DiffModel,
+    DiffOptions, DiffSource, FileContent, GitignoreFile, NumstatCommit,
 };
 use crate::core::error::AppError;
 use crate::core::runner::{CancelToken, GitProcessRunner, ProcessResult, StdinMode};
@@ -1976,6 +1976,42 @@ impl engine::GitEngine for CliEngine {
         let res = self.run(&args_refs, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)?;
         Ok(parse::parse_log_numstat(&res.stdout))
+    }
+
+    async fn commit_stats(
+        &self,
+        repo: &str,
+        rev: &str,
+    ) -> Result<engine::CommitStatsDto, AppError> {
+        // 只取作者与 committer 时间（%ct，unix 秒），聚合在 stats.rs：
+        // 记录以 \x1e 开头、字段以 \x1f 分隔；--no-merges 对齐 GitHub 口径。
+        let args = [
+            "-C",
+            repo,
+            "log",
+            "--no-color",
+            "--no-merges",
+            rev,
+            "--format=%x1e%an%x1f%ae%x1f%ct",
+        ];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        if res.exit_code != Some(0) {
+            // 无提交仓库（unborn HEAD）→ 空集而非错误；rev 真无效则照常报错。
+            let head = self
+                .run(
+                    ["-C", repo, "rev-parse", "--verify", "--quiet", "HEAD"],
+                    StdinMode::Null,
+                    None,
+                    None,
+                )
+                .await?;
+            if head.exit_code != Some(0) {
+                return Ok(stats::aggregate_stats(&[], chrono::Local::now()));
+            }
+            self.ensure_success(&res)?;
+        }
+        let points = stats::parse_stats_log(&res.stdout);
+        Ok(stats::aggregate_stats(&points, chrono::Local::now()))
     }
 
     async fn clone_repo(

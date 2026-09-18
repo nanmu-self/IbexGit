@@ -89,7 +89,17 @@
             disabled={!active || netBusy}
             onclick={() => requestRefAction({ kind: "pull" })}
           >
-            <ArrowDownToLine class="size-4" />
+            <span class="relative">
+              <ArrowDownToLine class="size-4" />
+              <!-- 待拉取数（behind upstream），随每次 refresh 更新 -->
+              {#if active && active.behind > 0}
+                <span
+                  class="absolute -top-1.5 -right-2.5 flex min-w-3.5 justify-center rounded-full bg-primary px-1 text-[9px] leading-[14px] font-semibold text-primary-foreground tabular-nums"
+                >
+                  {active.behind > 99 ? "99+" : active.behind}
+                </span>
+              {/if}
+            </span>
             {t("toolbar.pull")}
           </Button>
         {/snippet}

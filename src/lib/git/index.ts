@@ -39,12 +39,14 @@ export type {
   CommitFileStat,
   CommitInfo,
   CommitResult,
+  CommitStatsDto,
   CommitTemplate,
   ConfigEntry,
   ConflictBlock,
   ConflictModel,
   ConflictSummary,
   ConflictType,
+  ContributorStat,
   CredentialEntry,
   CredentialPrompt,
   CredentialReply,
@@ -79,6 +81,7 @@ export type {
   RepoUiState,
   ResetUndo,
   SelectedFile,
+  StatBucket,
   SshKeyAlgorithm,
   SshKeyGenerateRequest,
   SshKeyInfo,
@@ -177,6 +180,10 @@ export const git = {
     wrap(commands.gitIgnorePaths(id, paths)),
   log: (id: RepoId, limit = 200, offset = 0, paths?: string[]) =>
     wrap(commands.gitLog(id, limit, offset, paths ?? null)),
+  /** Commit statistics for a branch (stats dialog): one log, four bucket
+   *  sets (all-time by month / this month by day / this week by day /
+   *  today by hour) + per-email contributor counts. */
+  commitStats: (id: RepoId, rev: string) => wrap(commands.gitCommitStats(id, rev)),
   diff: (
     id: RepoId,
     source: "worktree" | "staged" | "commit" | "stash",

@@ -6,6 +6,7 @@ use std::sync::Arc;
 pub mod conflict;
 pub mod parse;
 pub mod patch;
+pub mod stats;
 pub mod untracked;
 
 pub use crate::core::graph::{GraphEdge, GraphPage, GraphRow};
@@ -883,10 +884,20 @@ pub trait GitEngine: Send + Sync {
         author: Option<&str>,
         limit: u32,
     ) -> Result<Vec<NumstatCommit>, AppError>;
+
+    // ---- 提交统计（只读，stats 对话框） ----
+
+    /// Per-branch commit statistics (`git log --no-merges`, one call, four
+    /// bucket sets: all-time by month / this month by day / this week by
+    /// day / today by hour, all in the local timezone) + per-email
+    /// contributor counts. Aggregation lives in [`stats::aggregate_stats`]
+    /// with an injected `Local::now()`.
+    async fn commit_stats(&self, repo: &str, rev: &str) -> Result<CommitStatsDto, AppError>;
 }
 
 pub mod cli;
 pub use cli::CliEngine;
+pub use stats::{CommitStatsDto, ContributorStat, StatBucket};
 
 /// Clone 参数（P7 克隆对话框）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]

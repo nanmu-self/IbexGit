@@ -272,6 +272,19 @@ pub async fn git_log(
     repos.engine().log(&path, limit, offset, paths).await
 }
 
+/// 提交统计（stats 对话框）：一次 log，四套桶 + 贡献者表，只读。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_commit_stats(
+    id: RepoId,
+    rev: String,
+    repos: State<'_, RepoManager>,
+) -> Result<crate::core::engine::CommitStatsDto, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().commit_stats(&path, &rev).await
+}
+
 // =====================
 // Diff (P4: 管线分层 + 行级操作)
 // =====================
