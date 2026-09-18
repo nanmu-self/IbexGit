@@ -34,7 +34,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-w-md">
+  <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>{title}</Dialog.Title>
       {#if description}

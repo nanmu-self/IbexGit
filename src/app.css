@@ -92,6 +92,32 @@
   }
 }
 
+/* ===================== scrollbars =====================
+ * Slim scrollbars for WebView2/Chromium & WKWebView: drop the classic
+ * arrow buttons and track chrome so compact lists (dialogs, dropdowns)
+ * don't get dominated by a chunky native scrollbar. Do NOT also set the
+ * standard `scrollbar-width`/`scrollbar-color` — Chromium 121+ then
+ * ignores these ::-webkit rules. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* ===================== P8 conflict editor (CodeMirror) ===================== */
 .cm-conflict-host .cm-editor {
   height: 100%;
