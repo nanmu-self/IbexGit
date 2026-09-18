@@ -128,16 +128,23 @@
 
 <header
   data-tauri-drag-region
-  class="flex h-9 shrink-0 items-center gap-0.5 border-b bg-background px-2 text-[13px] select-none"
+  class="relative flex h-9 shrink-0 items-center gap-0.5 border-b bg-background px-2 text-[13px] select-none"
 >
   {#if platform === "macos"}
     <!-- 原生红绿灯由系统绘制（tauri.macos.conf.json: decorations + Overlay），此处仅占位避免与菜单重叠 -->
     <div class="w-[70px] shrink-0" aria-hidden="true"></div>
   {/if}
 
-  <div data-tauri-drag-region class="mr-3 flex items-center gap-1.5 pl-1 font-semibold">
+  <div data-tauri-drag-region class="mr-3 flex items-center pl-1">
     <img data-tauri-drag-region src="/logo.svg" alt="" draggable="false" class="size-8" />
-    <span data-tauri-drag-region>{t("app.name")}</span>
+  </div>
+
+  <!-- 应用名：绝对定位水平居中，不受左右两侧内容宽度影响 -->
+  <div
+    data-tauri-drag-region
+    class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-semibold"
+  >
+    {t("app.name")}
   </div>
 
   <!-- 文件 -->

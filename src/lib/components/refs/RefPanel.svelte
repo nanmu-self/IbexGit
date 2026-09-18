@@ -468,7 +468,7 @@
             <span class="w-9 shrink-0 font-mono text-[10px] leading-4 text-muted-foreground">
               {entry.short_hash}
             </span>
-            <span class="ml-2 flex-1 truncate text-xs">{entry.message}</span>
+            <span class="ml-1 flex-1 truncate text-xs">{entry.message}</span>
           </div></li>
         {:else}
           <li class="px-2 py-1 text-xs text-muted-foreground">{t("refs.reflog.none")}</li>

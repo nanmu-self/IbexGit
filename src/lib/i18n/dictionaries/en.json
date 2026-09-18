@@ -224,7 +224,7 @@
   "recovery.fileCount": "{n} file(s)",
   "dialog.checkout.title": "Checkout Branch",
   "dialog.about.title": "About IbexGit",
-  "dialog.about.desc": "{name} v{version} — local-first Git graphical client. Progress: P2 app skeleton.",
+  "dialog.about.desc": "{name} v{version} — local-first Git graphical client.",
   "dialog.shortcuts.title": "Keyboard Shortcuts",
   "shortcut.repo.open": "Open local repository",
   "shortcut.repo.refresh": "Refresh current repository",

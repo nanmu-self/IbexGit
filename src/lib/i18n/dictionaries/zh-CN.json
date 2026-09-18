@@ -224,7 +224,7 @@
   "recovery.fileCount": "{n} 个文件",
   "dialog.checkout.title": "检出分支",
   "dialog.about.title": "关于 IbexGit",
-  "dialog.about.desc": "{name} v{version} — 本地优先的 Git 图形客户端。当前进度：P2 应用骨架。",
+  "dialog.about.desc": "{name} v{version} — 本地优先的 Git 图形客户端。",
   "dialog.shortcuts.title": "键盘快捷键",
   "shortcut.repo.open": "打开本地仓库",
   "shortcut.repo.refresh": "刷新当前仓库",
