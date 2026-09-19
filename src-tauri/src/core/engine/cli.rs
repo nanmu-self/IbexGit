@@ -1371,7 +1371,12 @@ impl engine::GitEngine for CliEngine {
         match mode {
             Some("rebase") => args.push("--rebase".to_string()),
             Some("ff_only") => args.push("--ff-only".to_string()),
-            _ => {}
+            // 默认 = merge。新版本 git（≥ 2.51 及 Apple 构建）在
+            // pull.rebase 未配置且分支分叉时会直接 fatal（"Need to specify
+            // how to reconcile divergent branches"），必须显式传
+            // --no-rebase 锁定语义；同时不受用户全局 pull.rebase 干扰。
+            // 该 flag 自 Git 2.27 起可用，远低于最低支持版本 2.40。
+            _ => args.push("--no-rebase".to_string()),
         }
         if let Some(r) = remote {
             args.push(r.to_string());
@@ -2169,7 +2174,7 @@ fn safe_join(root: &str, rel: &str) -> Result<PathBuf, AppError> {
 #[allow(clippy::permissions_set_readonly_false)] // Windows: the intended API
 fn clear_readonly(path: &Path) {
     if let Ok(meta) = std::fs::metadata(path) {
-        let perms = meta.permissions();
+        let mut perms = meta.permissions();
         if perms.readonly() {
             #[cfg(windows)]
             {
@@ -2180,7 +2185,8 @@ fn clear_readonly(path: &Path) {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(path, perms.set_mode(0o644));
+                perms.set_mode(0o644);
+                let _ = std::fs::set_permissions(path, perms);
             }
         }
     }

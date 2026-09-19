@@ -12,6 +12,9 @@ use ssh_key::private::{KeypairData, RsaKeypair};
 use ssh_key::{Algorithm, LineEnding, PrivateKey as SshPrivateKey, PublicKey as SshPublicKey};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// 生成算法（specta：`{ kind: "ed25519" } | { kind: "rsa"; bits: number }`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]

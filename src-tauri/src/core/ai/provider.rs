@@ -607,6 +607,9 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
+            // std::net 创建的是阻塞 socket；tokio 1.47+ 在 macOS (kqueue)
+            // 上注册阻塞 fd 会 panic（tokio-rs/tokio#7172），必须先转非阻塞。
+            listener.set_nonblocking(true).unwrap();
             let listener = tokio::net::TcpListener::from_std(listener).unwrap();
             let (stream, _) = listener.accept().await.unwrap();
             let mut stream = stream;

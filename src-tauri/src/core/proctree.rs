@@ -29,6 +29,7 @@ enum KillKind {
     ProcessGroup(i32),
     /// No tree mechanism available (unknown platform, or the Windows job
     /// assignment was refused) — fall back to killing the direct child only.
+    #[cfg(not(unix))]
     Direct,
 }
 
@@ -88,6 +89,7 @@ impl TreeChild {
                 }
                 let _ = self.child.start_kill();
             }
+            #[cfg(not(unix))]
             KillKind::Direct => {
                 let _ = self.child.start_kill();
             }
@@ -452,7 +454,7 @@ mod unix_tests {
         cmd.arg("-c")
             .arg("sleep 30 & sleep 30; wait")
             .stdin(std::process::Stdio::null());
-        let mut tree = TreeChild::spawn(&mut cmd).expect("spawn sh");
+        let mut tree = TreeChild::spawn(&mut cmd).await.expect("spawn sh");
         let pid = tree.id().expect("pid");
         assert!(matches!(tree.kill, KillKind::ProcessGroup(_)));
 
@@ -471,6 +473,15 @@ mod unix_tests {
         let status = tree.wait().await.expect("wait sh");
         assert!(!status.success(), "SIGKILLed sh must not exit cleanly");
 
+        // SIGKILL 送达是即时的，但收尸不是：孙进程被 init/launchd 回收前
+        // 是 zombie，`kill(pid, 0)` 仍会成功（系统高负载时窗口明显变大）。
+        // 轮询等它们全部消失，而不是在 race window 里硬断言。
+        for _ in 0..100 {
+            if children.iter().all(|&p| !pid_alive(p)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         for p in children {
             assert!(
                 !pid_alive(p),

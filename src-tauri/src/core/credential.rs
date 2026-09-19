@@ -1374,11 +1374,6 @@ mod unix {
     }
 }
 
-#[cfg(unix)]
-fn unix_socket_path() -> PathBuf {
-    unix::socket_path()
-}
-
 // =====================
 // 测试
 // =====================

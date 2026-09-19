@@ -172,6 +172,13 @@ impl RepoWatcher {
         worktree: PathBuf,
         tx: mpsc::UnboundedSender<EventKinds>,
     ) -> Result<Self, AppError> {
+        // notify 的 fsevent 后端（macOS）在 watch 时会解析符号链接，上报的
+        // 事件路径是 canonical 形式（如 `/var/...` → `/private/var/...`）；
+        // inotify/windows 后端则按传入路径上报。这里统一把两个根路径
+        // canonicalize，保证下方 classify_event 的 strip_prefix/starts_with
+        // 在所有平台上都能与事件路径对齐。
+        let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
+        let worktree = worktree.canonicalize().unwrap_or(worktree);
         let git_for_cb = git_dir.clone();
         let wt_for_cb = worktree.clone();
         let mut watcher =
