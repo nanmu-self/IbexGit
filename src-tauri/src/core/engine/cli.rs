@@ -2177,17 +2177,13 @@ fn clear_readonly(path: &Path) {
         let mut perms = meta.permissions();
         if perms.readonly() {
             #[cfg(windows)]
-            {
-                let mut p = perms;
-                p.set_readonly(false);
-                let _ = std::fs::set_permissions(path, p);
-            }
+            perms.set_readonly(false);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 perms.set_mode(0o644);
-                let _ = std::fs::set_permissions(path, perms);
             }
+            let _ = std::fs::set_permissions(path, perms);
         }
     }
 }
