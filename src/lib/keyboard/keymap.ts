@@ -39,7 +39,6 @@ export const keymap = {
   "repo.stash": { mod: true, alt: true, key: "s" },
   "repo.newBranch": { mod: true, alt: true, key: "b" },
   "repo.newTag": { mod: true, alt: true, key: "t" },
-  "repo.reveal": { mod: true, alt: true, key: "r" },
   "view.toggleSidebar": { mod: true, key: "b" },
   "view.toggleTheme": {
     mod: true,

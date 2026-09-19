@@ -18,7 +18,6 @@ import { showToast } from "$lib/stores/toast";
 import { t } from "$lib/i18n";
 import { emitAction, onAction, type ActionId } from "$lib/keyboard";
 import { pickRepo } from "$lib/repo-picker";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 export type FeatureSection = "file" | "view" | "repository" | "help";
 
@@ -59,12 +58,6 @@ function stashAll(): void {
     .catch((e) => normalizeError(e));
 }
 
-function revealRepo(): void {
-  const path = repos.active?.path;
-  if (!path) return;
-  revealItemInDir(path).catch((e) => normalizeError(e));
-}
-
 export const FEATURES: Feature[] = [
   // ---- File ----
   {
@@ -97,17 +90,6 @@ export const FEATURES: Feature[] = [
     needsRepo: false,
     keywords: "init empty repository",
     run: () => netDialogs.openNewRepo(),
-  },
-  {
-    id: "repo.reveal",
-    labelKey: "menu.file.reveal",
-    section: "file",
-    group: 1,
-    order: 0,
-    needsRepo: true,
-    shortcut: "repo.reveal",
-    keywords: "explorer finder show",
-    run: revealRepo,
   },
   {
     id: "app.settings",
