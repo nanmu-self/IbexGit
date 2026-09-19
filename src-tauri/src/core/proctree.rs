@@ -136,12 +136,17 @@ impl TreeChild {
     #[cfg(windows)]
     async fn spawn_windows(cmd: &mut Command) -> io::Result<Self> {
         const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        // GUI 子系统（release `windows_subsystem = "windows"`）没有控制台可
+        // 继承，缺此标志时每个 git.exe 都会新建一个 conhost——即用户看到的
+        // "黑窗口一闪而过"。子进程（ssh / hooks / credential helper）继承
+        // 该隐藏控制台，同样不弹窗；与管道 stdio、Job Object 均兼容。
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
         // The job is created up-front so a spawn failure never leaves a
         // half-initialized kill mechanism behind.
         let job = JobHandle::create()?;
 
-        cmd.creation_flags(CREATE_SUSPENDED);
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
         let mut child = cmd.spawn()?;
         let Some(pid) = child.id() else {
             let _ = child.start_kill();

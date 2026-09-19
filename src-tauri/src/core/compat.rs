@@ -2,6 +2,20 @@ use crate::core::error::AppError;
 use regex::Regex;
 use std::process::Command;
 
+/// Windows GUI 子系统（release 包）下 spawn 控制台程序（git）必须加
+/// `CREATE_NO_WINDOW`，否则每次调用都新建 conhost、闪黑窗；dev 态有终端
+/// 控制台可继承，两种形态下无条件设置均正确。
+#[cfg(windows)]
+fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+/// 非 Windows 平台无控制台分配问题，no-op。
+#[cfg(not(windows))]
+fn no_window(_cmd: &mut Command) {}
+
 bitflags::bitflags! {
     /// Git capability flags derived from `git --version` and feature probing.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, serde::Serialize, serde::Deserialize)]
@@ -75,8 +89,10 @@ impl GitCapabilities {
     /// Detect capabilities from the current `git --version` output.
     /// Minimum supported version is 2.40.0.
     pub fn detect() -> Result<Self, AppError> {
-        let output = Command::new("git")
-            .arg("--version")
+        let mut cmd = Command::new("git");
+        cmd.arg("--version");
+        no_window(&mut cmd);
+        let output = cmd
             .output()
             .map_err(|e| AppError::io_with_detail("git --version", e.to_string()))?;
 
@@ -140,8 +156,10 @@ impl GitCapabilities {
     /// git 路径的连通性测试）。Runs `<program> --version` and returns the
     /// trimmed output (e.g. "git version 2.54.0.windows.1").
     pub fn version_of(program: &str) -> Result<String, AppError> {
-        let output = Command::new(program)
-            .arg("--version")
+        let mut cmd = Command::new(program);
+        cmd.arg("--version");
+        no_window(&mut cmd);
+        let output = cmd
             .output()
             .map_err(|e| AppError::io_with_detail(program, e.to_string()))?;
         if !output.status.success() {
