@@ -71,6 +71,7 @@ export type {
   NetConfig,
   OperationKind,
   OperationState,
+  PeriodStats,
   RecentRepo,
   RecoveryEntry,
   ReflogEntry,

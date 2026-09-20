@@ -630,12 +630,16 @@ export type CommitResult = {
 	message: string,
 };
 
-/**  一次 `commit_stats` 命令的全部结果：一次 log，四套桶 + 贡献者表。 */
+/**  一次 `commit_stats` 命令的全部结果：一次 log，四个周期 + 四套桶。 */
 export type CommitStatsDto = {
-	/**  非 merge 提交总数（`--no-merges`，与 GitHub contribution 口径一致）。 */
-	total: number,
-	/**  按提交数降序（并列时按名字、email）。 */
-	contributors: ContributorStat[],
+	/**  全期（总览）。 */
+	all: PeriodStats,
+	/**  本月（1 号 → 今天，含未来小时偏差之外的当月提交）。 */
+	month: PeriodStats,
+	/**  本周（ISO 周一 → 今天）。 */
+	week: PeriodStats,
+	/**  本日（00 点 → 当前小时）。 */
+	today: PeriodStats,
 	/**  全历史按月：从首个提交月到当前月，含中间空月（横轴可滚动）。 */
 	months: StatBucket[],
 	/**  本月按天：1 号到今天。 */
@@ -1099,6 +1103,15 @@ export type OperationState = {
 	total: number | null,
 	/**  `MERGE_MSG` (merge/cherry-pick/revert) for the commit prefill. */
 	message: string | null,
+};
+
+/**
+ *  一个时间周期的合计：贡献者表（按提交数降序）+ 总数。
+ *  总览用全期；本月/本周/本日的口径与对应桶轴完全一致。
+ */
+export type PeriodStats = {
+	total: number,
+	contributors: ContributorStat[],
 };
 
 /**

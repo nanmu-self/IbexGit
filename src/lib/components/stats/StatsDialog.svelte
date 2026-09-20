@@ -53,6 +53,20 @@
             : data.today_hours,
   );
 
+  /** 当前 tab 对应周期的合计（贡献者表 + 总数），与图表桶轴同口径。 */
+  const period = $derived(
+    !data
+      ? null
+      : tab === "overview"
+        ? data.all
+        : tab === "month"
+          ? data.month
+          : tab === "week"
+            ? data.week
+            : data.today,
+  );
+  const contributors = $derived(period?.contributors ?? []);
+
   /** 规范桶键 → 展示标签：月 `2026-08`→`2026/08`，日取 `MM/DD`，小时加 `:00`。 */
   function formatBucketLabel(key: string): string {
     if (tab === "overview") return key.replace("-", "/");
@@ -171,7 +185,7 @@
         </DropdownMenu.Root>
 
         <div class="min-h-0 flex-1 overflow-y-auto rounded-md border">
-          {#each data?.contributors ?? [] as c (c.email)}
+          {#each contributors as c (c.email)}
             <div
               class="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs"
             >
@@ -197,7 +211,7 @@
           <div class="flex flex-1 items-center justify-center">
             <LoaderCircle class="size-5 animate-spin text-muted-foreground" />
           </div>
-        {:else if !data || data.total === 0}
+        {:else if !data || data.all.total === 0}
           <EmptyState
             icon={GitBranch}
             title={t("stats.empty")}
@@ -218,8 +232,8 @@
     <div
       class="flex items-center justify-between border-t pt-2 text-xs text-muted-foreground"
     >
-      <span>{t("stats.contributorsN", { n: data?.contributors.length ?? 0 })}</span>
-      <span>{t("stats.commitsN", { n: data?.total ?? 0 })}</span>
+      <span>{t("stats.contributorsN", { n: contributors.length })}</span>
+      <span>{t("stats.commitsN", { n: period?.total ?? 0 })}</span>
     </div>
   </Dialog.Content>
 </Dialog.Root>

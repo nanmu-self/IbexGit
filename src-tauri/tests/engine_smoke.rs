@@ -184,8 +184,8 @@ async fn commit_stats_empty_repo_and_two_authors() {
         .commit_stats(&path, "HEAD")
         .await
         .expect("stats empty");
-    assert_eq!(empty.total, 0);
-    assert!(empty.contributors.is_empty());
+    assert_eq!(empty.all.total, 0);
+    assert!(empty.all.contributors.is_empty());
     assert!(empty.months.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 
@@ -216,12 +216,16 @@ async fn commit_stats_empty_repo_and_two_authors() {
     );
 
     let dto = engine.commit_stats(&path, "main").await.expect("stats");
-    assert_eq!(dto.total, 3);
-    assert_eq!(dto.contributors.len(), 2);
-    assert_eq!(dto.contributors[0].name, "Alice");
-    assert_eq!(dto.contributors[0].count, 2);
-    assert_eq!(dto.contributors[1].email, "bob@x");
-    assert_eq!(dto.contributors[1].count, 1);
+    assert_eq!(dto.all.total, 3);
+    assert_eq!(dto.all.contributors.len(), 2);
+    assert_eq!(dto.all.contributors[0].name, "Alice");
+    assert_eq!(dto.all.contributors[0].count, 2);
+    assert_eq!(dto.all.contributors[1].email, "bob@x");
+    assert_eq!(dto.all.contributors[1].count, 1);
+    // 固定提交日期全在过去：当前周期（本月/本周/本日）合计为 0。
+    assert_eq!(dto.month.total, 0);
+    assert_eq!(dto.week.total, 0);
+    assert_eq!(dto.today.total, 0);
 
     // 月轴从首个提交月铺起、零填充；历史提交不进当前周期的桶。
     assert_eq!(dto.months[0].key, "2026-01");

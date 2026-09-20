@@ -57,13 +57,25 @@ pub struct StatBucket {
     pub count: u32,
 }
 
-/// 一次 `commit_stats` 命令的全部结果：一次 log，四套桶 + 贡献者表。
+/// 一个时间周期的合计：贡献者表（按提交数降序）+ 总数。
+/// 总览用全期；本月/本周/本日的口径与对应桶轴完全一致。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PeriodStats {
+    pub total: u32,
+    pub contributors: Vec<ContributorStat>,
+}
+
+/// 一次 `commit_stats` 命令的全部结果：一次 log，四个周期 + 四套桶。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct CommitStatsDto {
-    /// 非 merge 提交总数（`--no-merges`，与 GitHub contribution 口径一致）。
-    pub total: u32,
-    /// 按提交数降序（并列时按名字、email）。
-    pub contributors: Vec<ContributorStat>,
+    /// 全期（总览）。
+    pub all: PeriodStats,
+    /// 本月（1 号 → 今天，含未来小时偏差之外的当月提交）。
+    pub month: PeriodStats,
+    /// 本周（ISO 周一 → 今天）。
+    pub week: PeriodStats,
+    /// 本日（00 点 → 当前小时）。
+    pub today: PeriodStats,
     /// 全历史按月：从首个提交月到当前月，含中间空月（横轴可滚动）。
     pub months: Vec<StatBucket>,
     /// 本月按天：1 号到今天。
@@ -91,45 +103,13 @@ pub fn aggregate_stats<Tz: TimeZone>(
     points: &[RawStatCommit],
     now: DateTime<Tz>,
 ) -> CommitStatsDto {
-    // 贡献者：按 email 聚合（同一人改名并到一处；同名不同邮箱按 GitHub
-    // 口径分开）。
-    let mut counts: HashMap<&str, u32> = HashMap::new();
-    let mut names: HashMap<&str, &str> = HashMap::new();
-    for p in points {
-        *counts.entry(p.email.as_str()).or_insert(0) += 1;
-        names.entry(p.email.as_str()).or_insert(p.name.as_str());
-    }
-    let mut contributors: Vec<ContributorStat> = counts
-        .into_iter()
-        .map(|(email, count)| ContributorStat {
-            name: names[email].to_string(),
-            email: email.to_string(),
-            count,
-        })
-        .collect();
-    contributors.sort_by(|a, b| {
-        b.count
-            .cmp(&a.count)
-            .then_with(|| a.name.cmp(&b.name))
-            .then_with(|| a.email.cmp(&b.email))
-    });
-
-    let tz = now.timezone();
-    let today = now.date_naive();
-    let month_start = today.with_day(1).expect("day 1 is always valid");
-    let week_start = today - Duration::days(now.weekday().num_days_from_monday() as i64);
-
-    let mut months: HashMap<String, u32> = HashMap::new();
-    let mut month_days: HashMap<String, u32> = HashMap::new();
-    let mut week_days: HashMap<String, u32> = HashMap::new();
-    let mut today_hours: HashMap<String, u32> = HashMap::new();
-    let mut first_commit_day: Option<NaiveDate> = None;
-
-    // 空分支（无任何非 merge 提交）：四套桶全空，前端直接走空态。
+    // 空分支（无任何非 merge 提交）：周期与桶全空，前端直接走空态。
     if points.is_empty() {
         return CommitStatsDto {
-            total: 0,
-            contributors,
+            all: PeriodStats::default(),
+            month: PeriodStats::default(),
+            week: PeriodStats::default(),
+            today: PeriodStats::default(),
             months: Vec::new(),
             month_days: Vec::new(),
             week_days: Vec::new(),
@@ -137,21 +117,43 @@ pub fn aggregate_stats<Tz: TimeZone>(
         };
     }
 
+    let tz = now.timezone();
+    let today = now.date_naive();
+    let month_start = today.with_day(1).expect("day 1 is always valid");
+    let week_start = today - Duration::days(now.weekday().num_days_from_monday() as i64);
+
+    // 贡献者按 email 聚合（同一人改名并到一处；同名不同邮箱按 GitHub
+    // 口径分开），四个周期各一套；周期口径与对应桶轴完全一致。
+    let mut all = ContribAcc::new();
+    let mut month = ContribAcc::new();
+    let mut week = ContribAcc::new();
+    let mut today_acc = ContribAcc::new();
+
+    let mut months: HashMap<String, u32> = HashMap::new();
+    let mut month_days: HashMap<String, u32> = HashMap::new();
+    let mut week_days: HashMap<String, u32> = HashMap::new();
+    let mut today_hours: HashMap<String, u32> = HashMap::new();
+    let mut first_commit_day: Option<NaiveDate> = None;
+
     for p in points {
         let Some(dt) = tz.timestamp_opt(p.ts, 0).single() else {
             continue;
         };
         let d = dt.date_naive();
         first_commit_day = Some(first_commit_day.map_or(d, |min| min.min(d)));
+        all.add(p);
         *months.entry(month_key(d)).or_insert(0) += 1;
-        // 未来时间戳（时钟偏差）只进月轴，不进"当前周期"的桶。
+        // 未来时间戳（时钟偏差）只进月轴/全期，不进"当前周期"。
         if d >= month_start && d <= today {
+            month.add(p);
             *month_days.entry(day_key(d)).or_insert(0) += 1;
         }
         if d >= week_start && d <= today {
+            week.add(p);
             *week_days.entry(day_key(d)).or_insert(0) += 1;
         }
         if d == today && dt.hour() <= now.hour() {
+            today_acc.add(p);
             *today_hours.entry(format!("{:02}", dt.hour())).or_insert(0) += 1;
         }
     }
@@ -196,12 +198,60 @@ pub fn aggregate_stats<Tz: TimeZone>(
     }
 
     CommitStatsDto {
-        total: points.len() as u32,
-        contributors,
+        all: all.finish(),
+        month: month.finish(),
+        week: week.finish(),
+        today: today_acc.finish(),
         months: month_buckets,
         month_days: fill_days(month_start, &month_days),
         week_days: fill_days(week_start, &week_days),
         today_hours: today_hour_buckets,
+    }
+}
+
+/// 单个周期的贡献者累计器：按 email 计数，显示名取最新一次提交用的
+/// 名字（git log 新→旧，首次出现即最新）。
+struct ContribAcc<'a> {
+    counts: HashMap<&'a str, u32>,
+    names: HashMap<&'a str, &'a str>,
+}
+
+impl<'a> ContribAcc<'a> {
+    fn new() -> Self {
+        Self {
+            counts: HashMap::new(),
+            names: HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, p: &'a RawStatCommit) {
+        *self.counts.entry(p.email.as_str()).or_insert(0) += 1;
+        self.names
+            .entry(p.email.as_str())
+            .or_insert(p.name.as_str());
+    }
+
+    /// 按提交数降序（并列时按名字、email）。
+    fn finish(self) -> PeriodStats {
+        let mut contributors: Vec<ContributorStat> = self
+            .counts
+            .into_iter()
+            .map(|(email, count)| ContributorStat {
+                name: self.names[email].to_string(),
+                email: email.to_string(),
+                count,
+            })
+            .collect();
+        contributors.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.email.cmp(&b.email))
+        });
+        PeriodStats {
+            total: contributors.iter().map(|c| c.count).sum(),
+            contributors,
+        }
     }
 }
 
@@ -271,12 +321,12 @@ mod tests {
             .single()
             .unwrap();
         let dto = aggregate_stats(&points, now);
-        assert_eq!(dto.total, 3);
-        assert_eq!(dto.contributors.len(), 2);
-        assert_eq!(dto.contributors[0].name, "A One");
-        assert_eq!(dto.contributors[0].email, "a@x");
-        assert_eq!(dto.contributors[0].count, 2);
-        assert_eq!(dto.contributors[1].count, 1);
+        assert_eq!(dto.all.total, 3);
+        assert_eq!(dto.all.contributors.len(), 2);
+        assert_eq!(dto.all.contributors[0].name, "A One");
+        assert_eq!(dto.all.contributors[0].email, "a@x");
+        assert_eq!(dto.all.contributors[0].count, 2);
+        assert_eq!(dto.all.contributors[1].count, 1);
     }
 
     #[test]
@@ -334,7 +384,14 @@ mod tests {
         assert_eq!(dto.today_hours[0].count, 0);
         assert_eq!(dto.today_hours[14].key, "14");
         assert_eq!(dto.today_hours[14].count, 1);
-        assert_eq!(dto.total, 4);
+
+        // 周期口径与对应桶轴一致：全期 4，本月/本周 2，本日 1。
+        assert_eq!(dto.all.total, 4);
+        assert_eq!(dto.month.total, 2);
+        assert_eq!(dto.week.total, 2);
+        assert_eq!(dto.today.total, 1);
+        assert_eq!(dto.today.contributors.len(), 1);
+        assert_eq!(dto.today.contributors[0].email, "a@x");
     }
 
     #[test]
@@ -361,6 +418,11 @@ mod tests {
         assert_eq!(dto.month_days.last().unwrap().count, 1);
         assert!(dto.today_hours.iter().all(|b| b.count == 0));
         assert_eq!(dto.today_hours.last().unwrap().key, "14");
+        // 周期口径：未来小时的提交按天计仍在本周/本月，但不在本日。
+        assert_eq!(dto.all.total, 2);
+        assert_eq!(dto.month.total, 1);
+        assert_eq!(dto.week.total, 1);
+        assert_eq!(dto.today.total, 0);
         // 本周从 8-31 起：8-30（周日）的提交不在本周；但 9-03 的
         // 未来小时提交按天计仍在本周/本月。
         assert_eq!(dto.week_days.last().unwrap().count, 1);
@@ -378,8 +440,11 @@ mod tests {
             .single()
             .unwrap();
         let dto = aggregate_stats(&[], now);
-        assert_eq!(dto.total, 0);
-        assert!(dto.contributors.is_empty());
+        assert_eq!(dto.all.total, 0);
+        assert!(dto.all.contributors.is_empty());
+        assert_eq!(dto.month.total, 0);
+        assert_eq!(dto.week.total, 0);
+        assert_eq!(dto.today.total, 0);
         assert!(dto.months.is_empty());
         assert!(dto.month_days.is_empty());
         assert!(dto.week_days.is_empty());
