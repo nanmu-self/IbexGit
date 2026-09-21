@@ -716,6 +716,8 @@
   "settings.ssh.deleteKey": "Delete",
   "settings.ssh.activeHint": "The active private key is used for all SSH remotes (path can also be set on the Network page); passphrase-protected keys prompt for unlock on use.",
   "settings.ssh.generated": "Key {name} generated — add the public key to your Git host to start using it",
+  "settings.ssh.generatedActive": "Key {name} generated and set as active",
+  "settings.ssh.autoPicked": "Auto-enabled the only SSH key found: {name} (changeable in Settings)",
   "settings.ssh.deleted": "Deleted {name}",
   "settings.ssh.copied": "Public key copied",
   "settings.ssh.activeSet": "Set as active key",

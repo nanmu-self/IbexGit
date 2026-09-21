@@ -365,7 +365,14 @@
         file_name: genFileName.trim() || null,
       });
       genOpen = false;
-      showToast("success", t("settings.ssh.generated", { name: keyFileName(info) }));
+      // 首把密钥自动设为活动：未指定过密钥时生成即启用（此刻意图最明确，
+      // 已有指定则不覆盖；活动密钥可随时在列表一键切换/撤销）。
+      if (!settings.sshKeyPath && info.private_path) {
+        await settings.setSshKeyPath(info.private_path);
+        showToast("success", t("settings.ssh.generatedActive", { name: keyFileName(info) }));
+      } else {
+        showToast("success", t("settings.ssh.generated", { name: keyFileName(info) }));
+      }
       await loadSshKeys();
     } catch (err) {
       normalizeError(err);

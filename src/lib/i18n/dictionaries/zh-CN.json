@@ -716,6 +716,8 @@
   "settings.ssh.deleteKey": "删除",
   "settings.ssh.activeHint": "“设为活动”的私钥用于所有 SSH 远程操作（也可在「网络」页手动填写路径）；带口令的密钥在使用时会弹出解锁框。",
   "settings.ssh.generated": "密钥 {name} 已生成，把公钥添加到 Git 托管平台即可使用",
+  "settings.ssh.generatedActive": "密钥 {name} 已生成并设为活动密钥",
+  "settings.ssh.autoPicked": "已自动启用检测到的唯一 SSH 密钥：{name}（可在设置中更改）",
   "settings.ssh.deleted": "已删除 {name}",
   "settings.ssh.copied": "公钥已复制",
   "settings.ssh.activeSet": "已设为活动密钥",

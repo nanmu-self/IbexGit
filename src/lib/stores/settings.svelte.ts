@@ -5,7 +5,8 @@
  */
 import { load, type Store } from "@tauri-apps/plugin-store";
 import { commands } from "$lib/git/bindings";
-import { setLocale, type Locale } from "$lib/i18n";
+import { setLocale, t, type Locale } from "$lib/i18n";
+import { showToast } from "$lib/stores/toast";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -115,7 +116,26 @@ class SettingsStore {
           ssh_key_path: this.sshKeyPath || null,
         })
         .catch(() => {});
+      // 唯一密钥自动启用（未指定时）；失败不阻断启动。
+      this.#autoPickSshKey().catch(() => {});
     }
+  }
+
+  /**
+   * 启动兜底：未指定 SSH 密钥且 ~/.ssh 恰好只有一把可用私钥时自动启用。
+   * 仅在无歧义（唯一候选）时生效：多密钥时选哪把都是猜测，且注入
+   * `-i + IdentitiesOnly` 会屏蔽其余钥匙，宁缺毋滥。toast 提示、设置页
+   * 可改；探测/写入失败静默跳过。
+   */
+  async #autoPickSshKey(): Promise<void> {
+    if (this.sshKeyPath) return;
+    const keys = await commands.sshKeyList();
+    const usable = keys.filter((k) => k.private_path);
+    if (usable.length !== 1) return;
+    const path = usable[0].private_path!;
+    await this.setSshKeyPath(path);
+    const name = path.split(/[\\/]/).pop() ?? path;
+    showToast("info", t("settings.ssh.autoPicked", { name }));
   }
 
   async setTheme(theme: ThemeMode): Promise<void> {
