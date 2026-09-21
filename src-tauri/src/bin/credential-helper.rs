@@ -2,7 +2,9 @@
 //!
 //! 单二进制两种模式（argv 分流）：
 //! - **credential 模式**：`credential-helper credential <get|store|erase>`
-//!   由 git 以 `-c credential.helper="<path> ibexgit-credential"` 派生，
+//!   或 `credential-helper ibexgit-credential <get|store|erase>`（后者是
+//!   spawn_injection 注入 `-c credential.helper="<path> ibexgit-credential"`
+//!   时 git 实际派生的形式：静态标记 + 追加操作名）。
 //!   stdin 是 git credential 协议请求，`get` 时 stdout 输出协议应答。
 //! - **askpass 模式**：`credential-helper <提示文本>`
 //!   由 `GIT_ASKPASS` / `SSH_ASKPASS` 直接 exec（argv[1] = 提示文本），
@@ -37,7 +39,10 @@ const IO_TIMEOUT: Duration = Duration::from_secs(330);
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("credential") => credential_mode(args.get(1).map(String::as_str)),
+        // credential 模式：静态标记 + 操作名（两种标记都认，见模块注释）。
+        Some("credential") | Some("ibexgit-credential") => {
+            credential_mode(args.get(1).map(String::as_str))
+        }
         // 其余（argv[0] = 提示文本）→ askpass
         Some(_) => askpass_mode(&args[0]),
         None => ExitCode::from(2),

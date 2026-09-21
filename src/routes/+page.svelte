@@ -123,9 +123,12 @@
     </div>
     <StatusBar />
     <RefsDialogsHost />
-    <NetDialogsHost />
     <GitErrorDialog />
     <FileInspectDialog />
     <ReportDialog />
   </div>
 {/if}
+
+<!-- 全局网络对话框（克隆 / 新建仓库 / 凭据）：Portal 渲染，
+     必须始终挂载 —— 欢迎页（无仓库 Tab）也要能打开克隆/新建。 -->
+<NetDialogsHost />

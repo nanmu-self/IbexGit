@@ -5,7 +5,7 @@ use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::watch;
 use tokio::time::timeout;
@@ -435,28 +435,34 @@ impl GitProcessRunner {
             }
         }
 
-        // P7 流式 stderr：逐行转发 + 累积（替代 wait_with_output 的 stderr 收集）。
+        // P7 流式 stderr：按块读取，遇 `\n` / `\r` 即切段转发 + 累积
+        // （替代 wait_with_output 的 stderr 收集）。
+        //
+        // 不能用 read_until(b'\n')：git 的 --progress 行更新以 `\r` 结尾、
+        // 不写 `\n`（`\n` 只在阶段 done 时出现），按行等 `\n` 会把整个
+        // 下载阶段的进度积攒到 EOF 才转发 —— 前端全程收不到进度，表现为
+        // “卡住”。不完整段按字节保留到下一块，多字节 UTF-8 不会被截断。
         let stderr_task = stderr_forward.map(|fwd| {
             let pipe = child.take_stderr();
             tokio::spawn(async move {
                 let mut collected: Vec<u8> = Vec::new();
                 if let Some(pipe) = pipe {
                     let mut reader = tokio::io::BufReader::new(pipe);
-                    let mut buf = Vec::new();
+                    let mut pending: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 8192];
                     loop {
-                        buf.clear();
-                        match reader.read_until(b'\n', &mut buf).await {
+                        match reader.read(&mut chunk).await {
                             Ok(0) | Err(_) => break,
-                            Ok(_) => {}
-                        }
-                        collected.extend_from_slice(&buf);
-                        let chunk = String::from_utf8_lossy(&buf);
-                        for seg in chunk.split('\r') {
-                            let seg = seg.trim_end_matches('\n');
-                            if !seg.is_empty() {
-                                fwd(seg.to_string());
+                            Ok(n) => {
+                                collected.extend_from_slice(&chunk[..n]);
+                                forward_complete_segments(&mut pending, &chunk[..n], &mut |s| {
+                                    fwd(s);
+                                });
                             }
                         }
+                    }
+                    if !pending.is_empty() {
+                        fwd(String::from_utf8_lossy(&pending).into_owned());
                     }
                 }
                 collected
@@ -523,6 +529,23 @@ impl GitProcessRunner {
 
 fn decode(output: io::Result<process::Output>) -> Result<process::Output, RunnerError> {
     output.map_err(|e| RunnerError::Io(e.to_string()))
+}
+
+/// 把一个读入块并入 `pending`，将其中所有完整段（以 `\n` 或 `\r` 结尾）
+/// 经 `fwd` 转发；无终止符的尾部留待下一块，多字节 UTF-8 因此不会被
+/// 截断。空段（如 `\r\n` 的 `\r` 后、连续分隔符之间）不转发。
+fn forward_complete_segments<F: FnMut(String)>(pending: &mut Vec<u8>, chunk: &[u8], fwd: &mut F) {
+    pending.extend_from_slice(chunk);
+    let mut start = 0;
+    for (i, b) in pending.iter().enumerate() {
+        if *b == b'\n' || *b == b'\r' {
+            if i > start {
+                fwd(String::from_utf8_lossy(&pending[start..i]).into_owned());
+            }
+            start = i + 1;
+        }
+    }
+    pending.drain(..start);
 }
 
 #[cfg(test)]
@@ -683,5 +706,55 @@ mod tests {
             .expect("clone must observe cancellation")
             .unwrap();
         assert!(b.is_cancelled());
+    }
+
+    // ---- forward_complete_segments（clone --progress 流式切段）----
+
+    #[test]
+    fn segments_forward_on_cr_without_newline() {
+        // git --progress 的真实形态：\r 结尾、无 \n。必须在收到块的当下
+        // 就转发，而不是等 \n/EOF —— 否则整个下载阶段进度为空。
+        let mut pending: Vec<u8> = Vec::new();
+        let mut out: Vec<String> = Vec::new();
+        forward_complete_segments(
+            &mut pending,
+            b"Cloning into 'x'...\nReceiving objects:  0% (1/273)\rReceiving objects:   8%",
+            &mut |s| out.push(s),
+        );
+        forward_complete_segments(&mut pending, b" (23/273)\r", &mut |s| out.push(s));
+        assert_eq!(
+            out,
+            vec![
+                "Cloning into 'x'...",
+                "Receiving objects:  0% (1/273)",
+                "Receiving objects:   8% (23/273)",
+            ]
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn crlf_yields_single_segment_no_empties() {
+        let mut pending: Vec<u8> = Vec::new();
+        let mut out: Vec<String> = Vec::new();
+        forward_complete_segments(&mut pending, b"a\r\n\r\nb", &mut |s| out.push(s));
+        assert_eq!(out, vec!["a"]);
+        assert_eq!(pending, b"b");
+    }
+
+    #[test]
+    fn multibyte_utf8_split_across_chunks_survives() {
+        // 中文目的路径横跨两个读块：字节级缓冲保证不产生 U+FFFD。
+        let mut pending: Vec<u8> = Vec::new();
+        let mut out: Vec<String> = Vec::new();
+        let line = format!("Cloning into '{}'...", "仓库目录");
+        let bytes = line.as_bytes();
+        let mid = bytes.len() / 2; // 必落在某个多字节序列中间
+        forward_complete_segments(&mut pending, &bytes[..mid], &mut |s| out.push(s));
+        forward_complete_segments(&mut pending, &bytes[mid..], &mut |s| out.push(s));
+        assert!(out.is_empty(), "no terminator yet");
+        assert_eq!(String::from_utf8_lossy(&pending), line);
+        forward_complete_segments(&mut pending, b"\n", &mut |s| out.push(s));
+        assert_eq!(out, vec![line]);
     }
 }

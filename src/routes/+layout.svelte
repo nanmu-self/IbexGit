@@ -8,6 +8,7 @@ import RepoSettingsDialog from "$lib/components/settings/RepoSettingsDialog.svel
 import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { repos } from "$lib/stores/repos.svelte";
   import { initKeyboard } from "$lib/keyboard";
+  import { installFrontendLogging } from "$lib/logging";
   import { t } from "$lib/i18n";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
 
@@ -21,6 +22,9 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
 
   // Global keyboard dispatcher (keymap single source, PLAN §4.9).
   $effect(() => initKeyboard());
+
+  // 前端错误捕获 → 文件日志（幂等，见 src/lib/logging.ts）。
+  $effect(() => installFrontendLogging());
 
   // Theme: resolve 'system' against the OS preference.
   $effect(() => {

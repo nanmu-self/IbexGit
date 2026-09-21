@@ -298,6 +298,13 @@ export const commands = {
 	/**  Adjust the tracing filter at runtime (P10 高级：日志级别）。 */
 	appSetLogLevel: (level: string) => __TAURI_INVOKE<null>("app_set_log_level", { level }),
 	/**
+	 *  记录一条前端日志（window.onerror / unhandledrejection / console 转发，
+	 *  见 `src/lib/logging.ts`），落进与 Rust 侧相同的 tracing 管线，
+	 *  target 固定为 `frontend` 以便区分来源。前端调用方已做限流与
+	 *  截断，这里再做一次 char 边界截断兜底。
+	 */
+	appLog: (level: FrontendLogLevel, message: string) => __TAURI_INVOKE<null>("app_log", { level, message }),
+	/**
 	 *  Run `<path> --version` to validate a user-configured git executable
 	 *  (P10 设置中心：git 路径自定义). Returns the trimmed version string.
 	 */
@@ -950,6 +957,9 @@ export type FileStatus_Serialize = {
 	skipped: boolean,
 	conflict: boolean,
 };
+
+/**  前端（webview）日志级别。serde 小写，前端拿到的是字面量联合类型。 */
+export type FrontendLogLevel = "error" | "warn" | "info";
 
 /**
  *  The global gitignore file (`core.excludesFile` or the platform default

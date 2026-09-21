@@ -39,6 +39,21 @@ class NetDialogsStore {
     this.cloneOpen = true;
   }
 
+  /**
+   * 注册克隆任务并重放早到的事件。
+   *
+   * `git_clone` 返回 taskId 与后端 spawn 任务首推 `start` 事件之间存在
+   * IPC 竞态：事件可能先于 `submit()` 设置 activeTask 到达，直接丢查
+   * 会连 start / 首行进度一起吞掉。此处先缓存早到事件，注册后按
+   * task_id 匹配重放。
+   */
+  registerTask(task: CloneTask): void {
+    this.activeTask = task;
+    for (const ev of earlyCloneEvents.splice(0)) {
+      if (ev.task_id === task.taskId) applyCloneEvent(task, ev);
+    }
+  }
+
   openNewRepo(): void {
     this.newRepoOpen = true;
   }
@@ -66,6 +81,10 @@ export const netDialogs = new NetDialogsStore();
 
 let wired = false;
 
+/** 任务注册前到达的克隆事件（竞态缓冲，registerTask 时重放）。 */
+const earlyCloneEvents: CloneEvent[] = [];
+const EARLY_EVENT_CAP = 200;
+
 export function wireNetEvents(): void {
   if (wired) return;
   wired = true;
@@ -80,7 +99,16 @@ export function wireNetEvents(): void {
 
 function handleCloneEvent(ev: CloneEvent): void {
   const task = netDialogs.activeTask;
-  if (!task || task.taskId !== ev.task_id) return;
+  if (!task) {
+    // 任务尚未注册（命令返回与事件到达竞态）：缓存待重放。
+    if (earlyCloneEvents.length < EARLY_EVENT_CAP) earlyCloneEvents.push(ev);
+    return;
+  }
+  applyCloneEvent(task, ev);
+}
+
+function applyCloneEvent(task: CloneTask, ev: CloneEvent): void {
+  if (task.taskId !== ev.task_id) return;
   switch (ev.phase) {
     case "start":
     case "progress":

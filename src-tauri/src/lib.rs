@@ -50,7 +50,8 @@ fn init_tracing(filter: &str, log_dir: Option<std::path::PathBuf>) -> commands::
         tracing_subscriber::reload::Layer::new(tracing_subscriber::EnvFilter::new(filter));
 
     let file_layer = log_dir.map(|dir| {
-        let appender = tracing_appender::rolling::daily(dir.join("logs"), "ibexgit.log");
+        let appender =
+            tracing_appender::rolling::daily(dir.join("logs"), crate::core::logs::LOG_FILE_PREFIX);
         let (writer, guard) = tracing_appender::non_blocking(appender);
         std::mem::forget(guard); // worker runs for the app lifetime
         tracing_subscriber::fmt::layer()
@@ -70,6 +71,22 @@ fn init_tracing(filter: &str, log_dir: Option<std::path::PathBuf>) -> commands::
             .init(),
     }
     filter_handle
+}
+
+/// 启动时一次性的日志保留清理：删除保留窗口之外的旧日期文件
+/// （`core::logs::prune_old_logs`，默认保 14 天）。best-effort，
+/// 失败只记日志不影响启动。
+fn prune_stale_logs(identifier: &str) {
+    let Some(data_dir) = app_data_dir_guess(identifier) else {
+        return;
+    };
+    let dir = data_dir.join("logs");
+    let today = chrono::Utc::now().date_naive();
+    match crate::core::logs::prune_old_logs(&dir, today, crate::core::logs::LOG_KEEP_DAYS) {
+        Ok(0) => {}
+        Ok(n) => tracing::debug!(removed = n, "pruned expired log files"),
+        Err(e) => tracing::warn!(error = %e, "log retention cleanup failed"),
+    }
 }
 
 /// Read one string value from the frontend settings store
@@ -93,6 +110,7 @@ pub mod core {
     pub mod error;
     pub mod folder;
     pub mod graph;
+    pub mod logs;
     pub mod proctree;
     pub mod recovery;
     pub mod repo;
@@ -190,6 +208,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_gitignore_global,
             commands::git_commit_template,
             commands::app::app_set_log_level,
+            commands::app::app_log,
             commands::app::app_check_git_path,
             commands::app::app_open_terminal,
             commands::app::app_open_folder,
@@ -243,6 +262,7 @@ pub fn run() {
     // Initialize tracing with an env-based filter.
     let filter = std::env::var("IBEXGIT_LOG").unwrap_or_else(|_| default_log_filter());
     let filter_handle = init_tracing(&filter, app_data_dir_guess(&ctx.config().identifier));
+    prune_stale_logs(&ctx.config().identifier);
     let builder = specta_builder::<tauri::Wry>();
 
     tauri::Builder::default()

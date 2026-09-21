@@ -47,6 +47,9 @@
       void net.cloneCancel(task.taskId).catch(() => {});
     }
     netDialogs.activeTask = null;
+    // 必须显式关窗：close 不走 Dialog.Root 的开合状态，
+    // bind:open 只在 bits-ui 自身的 escape/点击遮罩时回写。
+    dialogOpen = false;
   }
 
   // URL 校验：协议前缀或 scp 简写或本地路径。
@@ -86,7 +89,7 @@
         single_branch: singleBranch,
         recurse_submodules: recurseSubmodules,
       });
-      netDialogs.activeTask = {
+      netDialogs.registerTask({
         taskId,
         url: url.trim(),
         dest: target,
@@ -95,7 +98,7 @@
         percent: null,
         message: "",
         error: null,
-      };
+      });
     } catch (err) {
       normalizeError(err);
     } finally {

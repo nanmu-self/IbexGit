@@ -3,6 +3,7 @@
 //! so they live outside the GitEngine (same layer as `compat`).
 
 use crate::core::error::AppError;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 pub type Registry = tracing_subscriber::Registry;
@@ -35,6 +36,38 @@ pub fn app_check_git_path(path: String) -> Result<String, AppError> {
         return Err(AppError::parse("git path is empty"));
     }
     crate::core::compat::GitCapabilities::version_of(trimmed)
+}
+
+/// 前端（webview）日志级别。serde 小写，前端拿到的是字面量联合类型。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum FrontendLogLevel {
+    Error,
+    Warn,
+    Info,
+}
+
+/// 记录一条前端日志（window.onerror / unhandledrejection / console 转发，
+/// 见 `src/lib/logging.ts`），落进与 Rust 侧相同的 tracing 管线，
+/// target 固定为 `frontend` 以便区分来源。前端调用方已做限流与
+/// 截断，这里再做一次 char 边界截断兜底。
+#[tauri::command]
+#[specta::specta]
+pub fn app_log(level: FrontendLogLevel, message: String) -> Result<(), AppError> {
+    const MAX_CHARS: usize = 4000;
+    let message = if message.chars().count() <= MAX_CHARS {
+        message
+    } else {
+        let mut clipped: String = message.chars().take(MAX_CHARS).collect();
+        clipped.push('…');
+        clipped
+    };
+    match level {
+        FrontendLogLevel::Error => tracing::error!(target: "frontend", "{message}"),
+        FrontendLogLevel::Warn => tracing::warn!(target: "frontend", "{message}"),
+        FrontendLogLevel::Info => tracing::info!(target: "frontend", "{message}"),
+    }
+    Ok(())
 }
 
 /// Open the platform terminal at `path` (P3 工具栏：在终端打开). OS

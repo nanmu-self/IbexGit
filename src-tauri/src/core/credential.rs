@@ -498,6 +498,15 @@ impl CredentialBroker {
     /// IbexGit 的对话框（兜底覆盖无 helper 环境）。过期凭据由 git 的
     /// reject/erase 循环自动清理。
     ///
+    /// 静态标记 `ibexgit-credential`：git 会在命令末尾追加操作名，helper
+    /// 据此分流（credential 模式）；helper 入口同步接受该标记。
+    ///
+    /// `!` 前缀（shell 形式）必不可少：git 对不以 `/` 或 `.` 开头的值会
+    /// 当作 `git credential-<name>` 子命令去解析，Windows 路径加引号后
+    /// 首字符是 `"`，同样落入子命令分支（实测 helper 根本不被执行，
+    /// 见 gitcredentials(7)）。`!` 强制整串走 shell，引号得以保留，
+    /// 含空格路径也安全。
+    ///
     /// askpass 桥（GIT/SSH_ASKPASS）保持注入：SSH 口令短语、host key 确认、
     /// 以及 helper 全部未命中时 git 的最后追问（GIT_TERMINAL_PROMPT=0 下转
     /// askpass）都走应用内 UI，取消流语义完整。
@@ -509,7 +518,7 @@ impl CredentialBroker {
                 // git 经 shell 执行 helper 命令：双引号包裹路径（正斜杠），
                 // action（get/store/erase）由 git 追加。无空值重置：不屏蔽
                 // 用户全局 helper（ADR-014）。
-                format!("credential.helper=\"{helper}\" ibexgit-credential"),
+                format!("credential.helper=!\"{helper}\" ibexgit-credential",),
             ],
             env: vec![
                 (
