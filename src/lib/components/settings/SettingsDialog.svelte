@@ -26,8 +26,7 @@
   } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
   import { ConfirmDialog } from "$lib/components/ui/confirm-dialog";
-  import { appDataDir } from "@tauri-apps/api/path";
-  import { openPath } from "@tauri-apps/plugin-opener";
+  import { appDataDir, join } from "@tauri-apps/api/path";
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Globe from "@lucide/svelte/icons/globe";
@@ -501,7 +500,11 @@
   async function openDir(sub: string | null): Promise<void> {
     try {
       const base = await appDataDir();
-      await openPath(sub ? `${base}/${sub}` : base);
+      const target = sub ? await join(base, sub) : base;
+      // 不走 opener 插件：Windows 上其对目录是 SHOpenFolderAndSelectItems
+      // 的"父窗口中选中"语义，且父窗口已存在时静默无动作（同 Toolbar）。
+      // app_open_folder 用 explorer/open/xdg-open 真正进入目录。
+      await app.openFolder(target);
     } catch (err) {
       normalizeError(err);
     }
