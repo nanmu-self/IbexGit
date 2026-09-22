@@ -707,7 +707,8 @@ mod tests {
                 "renamed_new.txt",
                 "renamed_old.txt",
                 "untracked.txt",
-                "untracked_dir/",
+                // `-uall` expands the untracked directory into per-file entries.
+                "untracked_dir/nested.txt",
                 "binary.bin",
             ],
         );

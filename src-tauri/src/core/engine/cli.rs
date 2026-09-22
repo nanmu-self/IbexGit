@@ -354,7 +354,19 @@ impl CliEngine {
 #[async_trait::async_trait]
 impl engine::GitEngine for CliEngine {
     async fn status(&self, repo: &str) -> Result<Vec<engine::FileStatus>, AppError> {
-        let args = ["-C", repo, "status", "--porcelain=v2", "-z"];
+        // `-uall`: expand untracked directories into individual file entries.
+        // Default (`normal`) collapses a fully-untracked directory into one
+        // `? dir/` record, which breaks the flat file list, per-file diff
+        // synthesis and per-file discard. Min supported git (2.40) always
+        // supports it (capability STATUS_UNTRACKED_ALL).
+        let args = [
+            "-C",
+            repo,
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+        ];
         let res = self.run(args, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)?;
         let mut status = parse::parse_status(&res.stdout);

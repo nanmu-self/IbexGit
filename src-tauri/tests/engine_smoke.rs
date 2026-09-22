@@ -65,6 +65,26 @@ async fn status_stage_commit_log_smoke_loop() {
     assert!(status[0].untracked);
     assert!(!status[0].staged);
 
+    // 2b. fully-untracked directory expands into per-file entries (no
+    // collapsed `dir/` record — flat list / per-file diff / discard depend
+    // on it).
+    std::fs::create_dir_all(dir.join("newdir")).unwrap();
+    std::fs::write(dir.join("newdir/a.txt"), "a\n").unwrap();
+    std::fs::write(dir.join("newdir/b.txt"), "b\n").unwrap();
+    let status = engine.status(&path).await.expect("status");
+    let mut untracked_paths: Vec<&str> = status
+        .iter()
+        .filter(|f| f.untracked)
+        .map(|f| f.path.as_str())
+        .collect();
+    untracked_paths.sort_unstable();
+    assert_eq!(
+        untracked_paths,
+        vec!["hello.txt", "newdir/a.txt", "newdir/b.txt"],
+        "untracked directory must expand to per-file entries"
+    );
+    std::fs::remove_dir_all(dir.join("newdir")).unwrap();
+
     // 3. stage → status shows staged
     engine
         .stage(&path, &["hello.txt".to_string()])

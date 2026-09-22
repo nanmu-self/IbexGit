@@ -14,7 +14,7 @@ use crate::core::error::AppError;
 // status --porcelain=v2 -z
 // =====================
 
-/// Parse `git status --porcelain=v2 -z` output.
+/// Parse `git status --porcelain=v2 -z --untracked-files=all` output.
 ///
 /// Entry grammar (NUL-terminated):
 /// - `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`            ordinary change
@@ -23,6 +23,11 @@ use crate::core::error::AppError;
 /// - `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`   unmerged
 /// - `? <path>`                                                 untracked
 /// - `! <path>`                                                 ignored (skipped here)
+///
+/// With `--untracked-files=all` (always requested by the engine) a fully
+/// untracked directory is expanded into per-file `?` entries, so `? <path>`
+/// is a regular file — except embedded repositories, which still report as
+/// `dir/` with a trailing slash.
 pub fn parse_status(raw: &str) -> Vec<FileStatus> {
     let mut out = Vec::new();
     let parts: Vec<&str> = raw.split('\0').collect();
