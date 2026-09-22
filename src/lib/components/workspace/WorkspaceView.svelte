@@ -568,9 +568,15 @@
         staged={sections.staged}
         unstaged={sections.unstaged}
         activeKey={activeKey}
+        filtered={filteredActive}
+        {selection}
         collapsed={repos.ui.tree_collapsed}
         onleafclick={(file, source) =>
           repos.updateUi({ selected_file: { path: file.path, source } })}
+        onleafcontext={onRowContext}
+        onstage={doStage}
+        onunstage={doUnstage}
+        ondiscard={askDiscard}
       />
     {:else}
       <StatusSections

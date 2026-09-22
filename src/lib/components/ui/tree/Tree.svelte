@@ -25,6 +25,7 @@
     onToggle,
     onActivate,
     onActivateSecondary,
+    onLeafContext,
     depth = 0,
   }: TreeProps = $props();
 
@@ -53,6 +54,12 @@
     style="padding-left: {depth * 12 + 6}px"
     onclick={() => handleClick(node)}
     ondblclick={() => !node.muted && onActivateSecondary?.(node)}
+    oncontextmenu={onLeafContext
+      ? (e) => {
+          e.preventDefault();
+          onLeafContext(node, e);
+        }
+      : undefined}
   >
     {#if node.children?.length}
       <ChevronRight
@@ -90,6 +97,7 @@
         {onToggle}
         {onActivate}
         {onActivateSecondary}
+        {onLeafContext}
         depth={depth + 1}
       />
     </div>

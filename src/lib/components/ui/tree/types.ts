@@ -26,5 +26,7 @@ export interface TreeProps {
   onToggle?: (node: TreeNode, expanded: boolean) => void;
   onActivate?: (node: TreeNode) => void;
   onActivateSecondary?: (node: TreeNode) => void;
+  /** Right-click on a row (context menus); absent → browser menu. */
+  onLeafContext?: (node: TreeNode, e: MouseEvent) => void;
   depth?: number;
 }

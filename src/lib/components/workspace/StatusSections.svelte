@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Button } from "$lib/components/ui/button";
   import { VirtualList } from "$lib/components/ui/virtual-list";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { t } from "$lib/i18n";
@@ -9,6 +8,7 @@
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import EyeOff from "@lucide/svelte/icons/eye-off";
   import Package from "@lucide/svelte/icons/package";
+  import StatusSectionHeader from "./StatusSectionHeader.svelte";
 
   export interface FileKey {
     source: "worktree" | "staged";
@@ -97,18 +97,18 @@
 <div class="min-h-0 flex-1 overflow-y-auto pb-2">
   <!-- 冲突分区 -->
   {#if conflicts.length > 0}
-    <div class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-red-500">
-      <span>{t("workspace.conflicts")}</span>
-      <span class="rounded-full bg-red-500/15 px-1.5 text-[11px] leading-4">{conflicts.length}</span>
-      <Button
-        variant="ghost"
-        size="xs"
-        class="ml-auto text-[11px] text-red-500/90 hover:text-red-500"
-        onclick={() => ondiscard(conflicts.map((f) => f.path), "all")}
-      >
-        {t("workspace.discardAll")}
-      </Button>
-    </div>
+    <StatusSectionHeader
+      title={t("workspace.conflicts")}
+      count={conflicts.length}
+      tone="red"
+      actions={[
+        {
+          label: t("workspace.discardAll"),
+          danger: true,
+          onclick: () => ondiscard(conflicts.map((f) => f.path), "all"),
+        },
+      ]}
+    />
     {#snippet conflictRow(file: FileStatus, index: number)}
       {@const key = keyOf("worktree", file.path)}
       {@const chip = statusChip(file)}
@@ -165,25 +165,26 @@
   {/if}
 
   <!-- 已暂存分区 -->
-  <div class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-    <span>{t("workspace.staged")}</span>
-    <span class="rounded-full bg-muted px-1.5 text-[11px] leading-4">{staged.length}</span>
-    {#if staged.length > 0}
-      <Button
-        variant="ghost"
-        size="xs"
-        class="ml-auto text-[11px] text-muted-foreground"
-        onclick={() => {
-          const sel = selectedPaths(staged, "staged");
-          onunstage(sel.length > 0 ? sel : staged.map((f) => f.path));
-        }}
-      >
-        {selectedPaths(staged, "staged").length > 0
-          ? t("workspace.unstageSelected", { n: selectedPaths(staged, "staged").length })
-          : t("workspace.unstageAll")}
-      </Button>
-    {/if}
-  </div>
+  <StatusSectionHeader
+    title={t("workspace.staged")}
+    count={staged.length}
+    actions={staged.length > 0
+      ? [
+          {
+            label:
+              selectedPaths(staged, "staged").length > 0
+                ? t("workspace.unstageSelected", {
+                    n: selectedPaths(staged, "staged").length,
+                  })
+                : t("workspace.unstageAll"),
+            onclick: () => {
+              const sel = selectedPaths(staged, "staged");
+              onunstage(sel.length > 0 ? sel : staged.map((f) => f.path));
+            },
+          },
+        ]
+      : []}
+  />
   {#if staged.length > 0}
     {#snippet stagedRow(file: FileStatus, index: number)}
       {@const key = keyOf("staged", file.path)}
@@ -235,39 +236,40 @@
   {/if}
 
   <!-- 未暂存分区 -->
-  <div class="mt-1 flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-    <span>{t("workspace.unstaged")}</span>
-    <span class="rounded-full bg-muted px-1.5 text-[11px] leading-4">{unstaged.length}</span>
-    {#if unstaged.length > 0}
-      <div class="ml-auto flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="xs"
-          class="text-[11px] text-red-500/90 hover:text-red-500"
-          onclick={() => {
-            const sel = selectedPaths(unstaged, "worktree");
-            ondiscard(sel.length > 0 ? sel : unstaged.map((f) => f.path), "worktree");
-          }}
-        >
-          {selectedPaths(unstaged, "worktree").length > 0
-            ? t("workspace.discardSelected", { n: selectedPaths(unstaged, "worktree").length })
-            : t("workspace.discardAll")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          class="text-[11px] text-muted-foreground"
-          onclick={() => {
-            const sel = selectedPaths(unstaged, "worktree");
-            onstage(sel.length > 0 ? sel : unstaged.map((f) => f.path));
-          }}
-        >
-          {selectedPaths(unstaged, "worktree").length > 0
-            ? t("workspace.stageSelected", { n: selectedPaths(unstaged, "worktree").length })
-            : t("workspace.stageAll")}
-        </Button>
-      </div>
-    {/if}
+  <div class="mt-1">
+    <StatusSectionHeader
+      title={t("workspace.unstaged")}
+      count={unstaged.length}
+      actions={unstaged.length > 0
+        ? [
+            {
+              label:
+                selectedPaths(unstaged, "worktree").length > 0
+                  ? t("workspace.discardSelected", {
+                      n: selectedPaths(unstaged, "worktree").length,
+                    })
+                  : t("workspace.discardAll"),
+              danger: true,
+              onclick: () => {
+                const sel = selectedPaths(unstaged, "worktree");
+                ondiscard(sel.length > 0 ? sel : unstaged.map((f) => f.path), "worktree");
+              },
+            },
+            {
+              label:
+                selectedPaths(unstaged, "worktree").length > 0
+                  ? t("workspace.stageSelected", {
+                      n: selectedPaths(unstaged, "worktree").length,
+                    })
+                  : t("workspace.stageAll"),
+              onclick: () => {
+                const sel = selectedPaths(unstaged, "worktree");
+                onstage(sel.length > 0 ? sel : unstaged.map((f) => f.path));
+              },
+            },
+          ]
+        : []}
+    />
   </div>
   {#if unstaged.length > 0}
     {#snippet unstagedRow(file: FileStatus, index: number)}
