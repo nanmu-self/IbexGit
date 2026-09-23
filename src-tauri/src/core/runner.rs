@@ -29,6 +29,29 @@ pub struct CredSpawnInjection {
     pub env: Vec<(String, String)>,
 }
 
+/// 网络命令的 per-call SSH 注入覆盖（引擎按仓库配置解析，见
+/// `CliEngine` 的 run_ssh / resolve_ssh_override）：
+/// - `Inherit`：跟随全局活动密钥（NetSpawnConfig.ssh_key_path，旧行为）；
+/// - `Suppress`：不注入 `GIT_SSH_COMMAND` —— 仓库自管
+///   （用户配了 `core.sshCommand`，或 `ibexgit.sshkey=""` 显式禁用）。
+///   env 的优先级高于 config（实测），不抑制会把用户配置盖掉；
+/// - `Command`：注入指定命令（仓库 `ibexgit.sshkey=<路径>`）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SshOverride {
+    #[default]
+    Inherit,
+    Suppress,
+    Command(String),
+}
+
+/// 由私钥路径组装 `GIT_SSH_COMMAND`。双引号保护含空格路径（该变量由
+/// shell 解析；Windows 路径的反斜杠在 sh 双引号内后接非特殊字符时原样
+/// 保留）。路径含 `"` 或 `$` 的场景不受支持（Windows 文件名本就禁止
+/// `"`；`$` 会展开——罕见，接受）。
+pub fn ssh_command_for_key(key_path: &str) -> String {
+    format!("ssh -i \"{key_path}\" -o IdentitiesOnly=yes")
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ProxyMode {
     #[default]
@@ -221,8 +244,9 @@ impl GitProcessRunner {
         self.net_config.clone()
     }
 
-    /// Build a base command with common flags.
-    fn base_command(&self, git: &str) -> Command {
+    /// Build a base command with common flags. `ssh` 为本条命令的 SSH
+    /// 注入覆盖（普通命令传 `Inherit`，网络命令传仓库解析结果）。
+    fn base_command(&self, git: &str, ssh: SshOverride) -> Command {
         let mut cmd = Command::new(git);
         if self.utf8_env {
             cmd.env("LC_ALL", "C.UTF-8");
@@ -260,11 +284,19 @@ impl GitProcessRunner {
                 }
             }
         }
-        if let Some(key) = net.ssh_key_path.as_deref().filter(|s| !s.is_empty()) {
-            cmd.env(
-                "GIT_SSH_COMMAND",
-                format!("ssh -i {key} -o IdentitiesOnly=yes"),
-            );
+        // SSH 注入：per-call 覆盖（仓库级解析结果）优先于全局快照。
+        // 双引号包裹密钥路径：GIT_SSH_COMMAND 经 shell 执行，含空格路径
+        // 必须引住（Windows 用户名带空格时路径同样带空格）。
+        match ssh {
+            SshOverride::Inherit => {
+                if let Some(key) = net.ssh_key_path.as_deref().filter(|s| !s.is_empty()) {
+                    cmd.env("GIT_SSH_COMMAND", ssh_command_for_key(key));
+                }
+            }
+            SshOverride::Suppress => {}
+            SshOverride::Command(c) => {
+                cmd.env("GIT_SSH_COMMAND", c);
+            }
         }
 
         cmd.arg("-c").arg("core.quotepath=false");
@@ -284,6 +316,38 @@ impl GitProcessRunner {
             .await
     }
 
+    /// [`GitProcessRunner::run_with_token`] 带 per-call SSH 注入覆盖：
+    /// 网络命令专用，由引擎按仓库配置解析后传入（见 [`SshOverride`]）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_with_ssh(
+        &self,
+        git: &str,
+        args: &[&str],
+        stdin_mode: StdinMode,
+        stdin_bytes: Option<&[u8]>,
+        timeout_secs: Option<u64>,
+        cancel: Option<&CancelToken>,
+        ssh: SshOverride,
+    ) -> Result<ProcessResult, AppError> {
+        let out = self
+            .run_raw(
+                git,
+                args,
+                stdin_mode,
+                stdin_bytes,
+                timeout_secs,
+                cancel,
+                ssh,
+            )
+            .await?;
+        Ok(ProcessResult {
+            exit_code: out.exit_code,
+            stdout: String::from_utf8(out.stdout).map_err(|_| RunnerError::Utf8)?,
+            stderr: out.stderr,
+            duration_ms: out.duration_ms,
+        })
+    }
+
     /// [`GitProcessRunner::run`] with a cancellation token. Cancellation
     /// terminates the whole process tree (Job Object / process group) and
     /// only then fails with `OperationCancelled`.
@@ -297,7 +361,15 @@ impl GitProcessRunner {
         cancel: Option<&CancelToken>,
     ) -> Result<ProcessResult, AppError> {
         let out = self
-            .run_raw(git, args, stdin_mode, stdin_bytes, timeout_secs, cancel)
+            .run_raw(
+                git,
+                args,
+                stdin_mode,
+                stdin_bytes,
+                timeout_secs,
+                cancel,
+                SshOverride::Inherit,
+            )
             .await?;
         Ok(ProcessResult {
             exit_code: out.exit_code,
@@ -308,6 +380,7 @@ impl GitProcessRunner {
     }
 
     /// Binary-safe run: stdout returned as raw bytes (P4 `cat-file blob`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_raw(
         &self,
         git: &str,
@@ -316,8 +389,9 @@ impl GitProcessRunner {
         stdin_bytes: Option<&[u8]>,
         timeout_secs: Option<u64>,
         cancel: Option<&CancelToken>,
+        ssh: SshOverride,
     ) -> Result<RawResult, AppError> {
-        let mut cmd = self.base_command(git);
+        let mut cmd = self.base_command(git, ssh);
         cmd.args(args);
         cmd.stdout(process::Stdio::piped());
         cmd.stderr(process::Stdio::piped());
@@ -355,8 +429,9 @@ impl GitProcessRunner {
         timeout_secs: Option<u64>,
         cancel: Option<&CancelToken>,
         on_line: Arc<dyn Fn(String) + Send + Sync>,
+        ssh: SshOverride,
     ) -> Result<ProcessResult, AppError> {
-        let mut cmd = self.base_command(git);
+        let mut cmd = self.base_command(git, ssh);
         cmd.args(args);
         cmd.stdout(process::Stdio::piped());
         cmd.stderr(process::Stdio::piped());
@@ -551,6 +626,26 @@ fn forward_complete_segments<F: FnMut(String)>(pending: &mut Vec<u8>, chunk: &[u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_command_quotes_paths_with_spaces() {
+        // Windows 用户名带空格 → 密钥路径带空格：必须整体引住，否则
+        // shell 把路径拆成多个 argv。
+        assert_eq!(
+            ssh_command_for_key(r"C:\Users\John Doe\.ssh\id_ed25519"),
+            r#"ssh -i "C:\Users\John Doe\.ssh\id_ed25519" -o IdentitiesOnly=yes"#
+        );
+        // POSIX 路径同样引住；sh 双引号内反斜杠后接非特殊字符时原样保留。
+        assert_eq!(
+            ssh_command_for_key("/home/u/.ssh/id_ed25519"),
+            "ssh -i \"/home/u/.ssh/id_ed25519\" -o IdentitiesOnly=yes"
+        );
+    }
+
+    #[test]
+    fn ssh_override_default_is_inherit() {
+        assert_eq!(SshOverride::default(), SshOverride::Inherit);
+    }
 
     fn runner() -> GitProcessRunner {
         GitProcessRunner::new(60)

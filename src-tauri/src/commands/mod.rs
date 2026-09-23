@@ -1696,6 +1696,10 @@ const REPO_CONFIG_KEYS: &[&str] = &[
     "pull.rebase",
     "fetch.prune",
     "push.autoSetupRemote",
+    // IbexGit 自有键（仓库级 SSH 密钥三态）："" = 显式禁用注入，路径 =
+    // 指定密钥，未设置 = 跟随全局活动密钥。仅对 SSH remote 生效，解析
+    // 逻辑在 CliEngine（engine/cli.rs::resolve_ssh_override）。
+    "ibexgit.sshkey",
 ];
 
 /// Resolve the common repo config keys: repo-local value + effective

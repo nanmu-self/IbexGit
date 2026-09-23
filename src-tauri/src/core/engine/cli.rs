@@ -3,7 +3,9 @@ use crate::core::engine::{
     DiffOptions, DiffSource, FileContent, GitignoreFile, NumstatCommit,
 };
 use crate::core::error::AppError;
-use crate::core::runner::{CancelToken, GitProcessRunner, ProcessResult, StdinMode};
+use crate::core::runner::{
+    ssh_command_for_key, CancelToken, GitProcessRunner, ProcessResult, SshOverride, StdinMode,
+};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -159,6 +161,93 @@ impl CliEngine {
             .await
     }
 
+    /// 网络命令专用漏斗：先按仓库配置解析 SSH 注入覆盖
+    /// （[`Self::ssh_override`]），再交 runner。仅限真正触网的方法
+    /// （fetch/push/pull/remote prune）使用；clone 无仓库上下文，走全局。
+    /// 普通命令用 [`Self::run`]（不做仓库解析，保持 `Inherit`）。
+    async fn run_ssh(
+        &self,
+        repo: &str,
+        args: impl IntoIterator<Item = impl AsRef<str>>,
+        stdin_mode: StdinMode,
+        stdin_bytes: Option<&[u8]>,
+        timeout_secs: Option<u64>,
+    ) -> Result<ProcessResult, AppError> {
+        let ssh = self.ssh_override(repo).await?;
+        let args_owned: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
+        let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+        self.runner
+            .run_with_ssh(
+                &self.git_path,
+                &args_refs,
+                stdin_mode,
+                stdin_bytes,
+                timeout_secs,
+                None,
+                ssh,
+            )
+            .await
+    }
+
+    /// `git config --get <key>`（合并所有配置层，同键取最后一次）。
+    /// 未设置（exit 1）→ `None`；空值 → `Some("")`（ibexgit.sshkey 的
+    /// 显式禁用标记，不能与未设置混淆）。
+    async fn config_get(&self, repo: &str, key: &str) -> Result<Option<String>, AppError> {
+        let res = self
+            .run(
+                ["-C", repo, "config", "--get", key],
+                StdinMode::Null,
+                None,
+                None,
+            )
+            .await?;
+        match res.exit_code {
+            Some(0) => {
+                let mut value = res.stdout;
+                if value.ends_with('\n') {
+                    value.pop();
+                    if value.ends_with('\r') {
+                        value.pop();
+                    }
+                }
+                Ok(Some(value))
+            }
+            Some(1) => Ok(None),
+            Some(code) => Err(AppError::git_command(
+                format!("git config --get {key} exited with code {code}"),
+                res.stderr,
+                res.stdout,
+            )),
+            None => Err(AppError::internal("git config process killed by signal")),
+        }
+    }
+
+    /// 解析仓库的 SSH 注入覆盖（纯函数，见 `SshOverride` 文档）：
+    /// 1. 用户自管 `core.sshCommand`（任意配置层）→ `Suppress`——
+    ///    env 优先级高于 config，继续注入会把它盖掉；
+    /// 2. `ibexgit.sshkey`：`""` → `Suppress`（显式禁用）；有值 →
+    ///    `Command`；未设置 → `Inherit`（跟随全局活动密钥）。
+    fn resolve_ssh_override(core_ssh: Option<&str>, ibexgit_key: Option<&str>) -> SshOverride {
+        if core_ssh.is_some() {
+            return SshOverride::Suppress;
+        }
+        match ibexgit_key {
+            Some("") => SshOverride::Suppress,
+            Some(path) => SshOverride::Command(ssh_command_for_key(path)),
+            None => SshOverride::Inherit,
+        }
+    }
+
+    /// 按仓库解析本条网络命令的 SSH 注入覆盖（两次 `config --get`）。
+    async fn ssh_override(&self, repo: &str) -> Result<SshOverride, AppError> {
+        let core_ssh = self.config_get(repo, "core.sshCommand").await?;
+        let ibexgit_key = self.config_get(repo, "ibexgit.sshkey").await?;
+        Ok(Self::resolve_ssh_override(
+            core_ssh.as_deref(),
+            ibexgit_key.as_deref(),
+        ))
+    }
+
     fn ensure_success(&self, res: &ProcessResult) -> Result<(), AppError> {
         match res.exit_code {
             Some(0) => Ok(()),
@@ -229,6 +318,8 @@ impl CliEngine {
                 Some(input.as_bytes()),
                 Some(60),
                 None,
+                // 本地对象读：与 SSH 无关。
+                SshOverride::Inherit,
             )
             .await?;
         if res.exit_code != Some(0) {
@@ -694,6 +785,7 @@ impl engine::GitEngine for CliEngine {
                         None,
                         None,
                         None,
+                        SshOverride::Inherit,
                     )
                     .await?;
                 if res.exit_code != Some(0) {
@@ -1151,7 +1243,9 @@ impl engine::GitEngine for CliEngine {
 
     async fn prune_remote(&self, repo: &str, name: &str) -> Result<(), AppError> {
         let args = ["-C", repo, "remote", "prune", name];
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let res = self
+            .run_ssh(repo, args, StdinMode::Null, None, None)
+            .await?;
         self.ensure_success(&res)
     }
 
@@ -1160,7 +1254,9 @@ impl engine::GitEngine for CliEngine {
         if let Some(r) = remote {
             args.push(r);
         }
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let res = self
+            .run_ssh(repo, args, StdinMode::Null, None, None)
+            .await?;
         ensure_success_net(&res)
     }
 
@@ -1356,12 +1452,16 @@ impl engine::GitEngine for CliEngine {
             args.push(remote.to_string());
             args.push(branch.to_string());
             let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+            let res = self
+                .run_ssh(repo, args_refs, StdinMode::Null, None, None)
+                .await?;
             ensure_success_net(&res)?;
         }
         if tags {
             let args = ["-C", repo, "push", remote, "--tags"];
-            let res = self.run(args, StdinMode::Null, None, None).await?;
+            let res = self
+                .run_ssh(repo, args, StdinMode::Null, None, None)
+                .await?;
             ensure_success_net(&res)?;
         }
         if branch.is_empty() && !tags {
@@ -1397,7 +1497,9 @@ impl engine::GitEngine for CliEngine {
             args.push(b.to_string());
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let res = self.run(args_refs, StdinMode::Null, None, None).await?;
+        let res = self
+            .run_ssh(repo, args_refs, StdinMode::Null, None, None)
+            .await?;
         // 凭据取消必须以错误浮出（任务=已取消），不折叠进 success=false。
         if res.exit_code != Some(0)
             && res
@@ -2096,7 +2198,15 @@ impl engine::GitEngine for CliEngine {
         let res = match on_line {
             Some(on_line) => {
                 self.runner
-                    .run_streaming(&self.git_path, &args_refs, Some(3600), cancel, on_line)
+                    .run_streaming(
+                        &self.git_path,
+                        &args_refs,
+                        Some(3600),
+                        cancel,
+                        on_line,
+                        // clone 无仓库上下文：跟随全局活动密钥。
+                        SshOverride::Inherit,
+                    )
                     .await
             }
             None => {
@@ -2289,6 +2399,45 @@ pub(crate) fn detect_operation_state(git_dir: &Path) -> Option<engine::Operation
         });
     }
     None
+}
+
+#[cfg(test)]
+mod ssh_override_tests {
+    use super::*;
+
+    #[test]
+    fn user_core_ssh_command_wins_over_everything() {
+        // env 优先级高于 config：用户自管 core.sshCommand 时必须抑制注入。
+        assert_eq!(
+            CliEngine::resolve_ssh_override(Some("ssh -i ~/.ssh/x"), None),
+            SshOverride::Suppress
+        );
+        assert_eq!(
+            CliEngine::resolve_ssh_override(Some("ssh"), Some("/k/id_ed25519")),
+            SshOverride::Suppress
+        );
+    }
+
+    #[test]
+    fn ibexgit_key_tri_state() {
+        // 未设置 → 跟随全局活动密钥。
+        assert_eq!(
+            CliEngine::resolve_ssh_override(None, None),
+            SshOverride::Inherit
+        );
+        // 空值 = 显式禁用（区别于未设置）。
+        assert_eq!(
+            CliEngine::resolve_ssh_override(None, Some("")),
+            SshOverride::Suppress
+        );
+        // 有值 → 组装指定命令（含空格路径必须引住）。
+        assert_eq!(
+            CliEngine::resolve_ssh_override(None, Some("/home/u/my key/id_ed25519")),
+            SshOverride::Command(
+                "ssh -i \"/home/u/my key/id_ed25519\" -o IdentitiesOnly=yes".to_string()
+            )
+        );
+    }
 }
 
 #[cfg(test)]

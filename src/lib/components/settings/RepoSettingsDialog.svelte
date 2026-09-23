@@ -12,7 +12,8 @@
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
-  import { app, normalizeError, type RepoConfigValue } from "$lib/git";
+  import { settings } from "$lib/stores/settings.svelte";
+  import { app, net, normalizeError, type RepoConfigValue, type SshKeyInfo } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
 
   let {
@@ -85,6 +86,34 @@
   let values = $state<RepoConfigValue[]>([]);
   let drafts = $state<Record<string, string>>({});
 
+  // ---- SSH 认证（ibexgit.sshkey 三态；仅对 SSH remote 生效）----
+  const SSH_KEY = "ibexgit.sshkey";
+  type SshMode = "inherit" | "none" | "custom";
+  let sshMode = $state<SshMode>("inherit");
+  let sshPathDraft = $state("");
+  let sshKeys = $state<SshKeyInfo[]>([]);
+
+  const sshSelectOptions = $derived.by(() => {
+    const opts = sshKeys
+      .filter((k) => k.private_path)
+      .map((k) => ({ value: k.private_path!, label: keyDisplayName(k) }));
+    const cur = sshPathDraft.trim();
+    // 本地已有但不在 ~/.ssh 列表里的路径（外部密钥）也列出。
+    if (cur && !opts.some((o) => o.value === cur)) {
+      opts.unshift({ value: cur, label: cur });
+    }
+    return opts;
+  });
+
+  function keyDisplayName(key: SshKeyInfo): string {
+    const name = key.private_path?.split(/[\\/]/).pop() ?? key.public_path;
+    return key.comment ? `${key.comment} (${name})` : name;
+  }
+
+  function pathDisplayName(path: string): string {
+    return path.split(/[\\/]/).pop() ?? path;
+  }
+
   const repoName = $derived.by(() => {
     if (!targetId) return "";
     const tab = repos.tabs.find((r) => r.id === targetId);
@@ -128,6 +157,11 @@
     try {
       const vals = await app.repoConfigValues(targetId);
       values = vals;
+      sshKeys = await net.sshKeyList();
+      // SSH 三态从本地值还原：null（未设）= 继承，"" = 禁用，路径 = 指定。
+      const local = valueOf(SSH_KEY, "local");
+      sshMode = local === null ? "inherit" : local === "" ? "none" : "custom";
+      sshPathDraft = local ? local : "";
       // 保存中的字段不动草稿，避免 reload 覆盖用户正在输入的内容。
       for (const f of TEXT_FIELDS) {
         if (saving !== f.key) drafts[f.key] = valueOf(f.key, "local") ?? "";
@@ -163,6 +197,35 @@
 
   function saveText(key: string): void {
     void save(key, (drafts[key] ?? "").trim() === "" ? null : (drafts[key] ?? "").trim());
+  }
+
+  /** SSH 三态保存。不能用通用 save()：它的 `(next ?? "") === (prev ?? "")`
+   *  会把 null（继承）和 ""（禁用）视为相等，而这两者语义不同。 */
+  async function saveSsh(next: string | null): Promise<void> {
+    if (!targetId || saving === SSH_KEY) return;
+    if (next === valueOf(SSH_KEY, "local")) return;
+    saving = SSH_KEY;
+    try {
+      await app.repoConfigSet(targetId, SSH_KEY, next);
+      showToast("success", t("settings.repo.saved"));
+      await load();
+    } catch (err) {
+      normalizeError(err);
+      await load();
+    } finally {
+      saving = null;
+    }
+  }
+
+  function setSshMode(mode: SshMode): void {
+    if (mode === sshMode) return;
+    sshMode = mode;
+    if (mode === "inherit") {
+      void saveSsh(null);
+    } else if (mode === "none") {
+      void saveSsh("");
+    }
+    // custom：等选/输入了路径才落盘（空路径不写入，避免误存禁用态）。
   }
 </script>
 
@@ -259,6 +322,60 @@
             {/each}
           </div>
           <p class="text-[11px] text-muted-foreground">{t("settings.repo.workflowHint")}</p>
+        </section>
+
+        <!-- SSH 认证（ibexgit.sshkey 三态） -->
+        <section class="space-y-2 rounded-md border p-3">
+          <span class="text-xs font-semibold">{t("settings.repo.ssh.title")}</span>
+          <div class="grid grid-cols-3 gap-1.5">
+            {#each ["inherit", "none", "custom"] as m (m)}
+              <button
+                type="button"
+                disabled={saving === SSH_KEY}
+                class="rounded-md border px-2 py-1.5 text-[12px] transition-colors {sshMode === m
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50'}"
+                onclick={() => setSshMode(m as SshMode)}
+              >
+                {t(`settings.repo.ssh.mode_${m}`)}
+              </button>
+            {/each}
+          </div>
+          {#if sshMode === "custom"}
+            <select
+              class="h-8 w-full rounded-md border bg-background px-2 text-[12px]"
+              disabled={saving === SSH_KEY}
+              value={sshSelectOptions.some((o) => o.value === sshPathDraft) ? sshPathDraft : ""}
+              onchange={(e) => {
+                sshPathDraft = e.currentTarget.value;
+                if (sshPathDraft) void saveSsh(sshPathDraft);
+              }}
+            >
+              <option value="" disabled>{t("settings.repo.ssh.selectPlaceholder")}</option>
+              {#each sshSelectOptions as o (o.value)}
+                <option value={o.value}>{o.label}</option>
+              {/each}
+            </select>
+            <Input
+              bind:value={sshPathDraft}
+              placeholder={t("settings.repo.ssh.customPath")}
+              class="h-8 font-mono text-[12px]"
+              disabled={saving === SSH_KEY}
+              onchange={() => void saveSsh(sshPathDraft.trim())}
+              onblur={() => void saveSsh(sshPathDraft.trim())}
+            />
+          {:else if sshMode === "inherit"}
+            <p class="text-[11px] text-muted-foreground">
+              {settings.sshKeyPath
+                ? t("settings.repo.ssh.inheritHint", {
+                    name: pathDisplayName(settings.sshKeyPath),
+                  })
+                : t("settings.repo.ssh.inheritNone")}
+            </p>
+          {:else}
+            <p class="text-[11px] text-muted-foreground">{t("settings.repo.ssh.noneHint")}</p>
+          {/if}
+          <p class="text-[11px] text-muted-foreground">{t("settings.repo.ssh.hint")}</p>
         </section>
       </div>
 
