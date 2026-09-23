@@ -87,7 +87,10 @@ pub fn parse_status(raw: &str) -> Vec<FileStatus> {
 
 fn parse_v2_ordinary(rec: &str) -> Option<FileStatus> {
     let rest = rec.strip_prefix("1 ")?;
-    let mut it = rest.splitn(9, ' ');
+    // Fixed fields: XY sub mH mI mW hH hI (7). The path is the remainder and
+    // may contain spaces, so splitn must cap at 8 — splitting only at the 7
+    // separators — or the path gets truncated at its first space.
+    let mut it = rest.splitn(8, ' ');
     let xy = it.next()?;
     let sub = it.next()?;
     let _mh = it.next()?;
@@ -100,7 +103,9 @@ fn parse_v2_ordinary(rec: &str) -> Option<FileStatus> {
 }
 
 fn parse_v2_rename(rest: &str, orig: &str) -> Option<FileStatus> {
-    let mut it = rest.splitn(10, ' ');
+    // Fixed fields: XY sub mH mI mW hH hI <X><score> (8). splitn(9) keeps a
+    // space-containing path intact (see parse_v2_ordinary).
+    let mut it = rest.splitn(9, ' ');
     let xy = it.next()?;
     let sub = it.next()?;
     let _mh = it.next()?;
@@ -120,7 +125,9 @@ fn parse_v2_rename(rest: &str, orig: &str) -> Option<FileStatus> {
 
 fn parse_v2_unmerged(rec: &str) -> Option<FileStatus> {
     let rest = rec.strip_prefix("u ")?;
-    let mut it = rest.splitn(11, ' ');
+    // Fixed fields: XY sub m1 m2 m3 mW h1 h2 h3 (9). splitn(10) keeps a
+    // space-containing path intact (see parse_v2_ordinary).
+    let mut it = rest.splitn(10, ' ');
     let xy = it.next()?;
     let sub = it.next()?;
     let _m1 = it.next()?;
@@ -1366,6 +1373,43 @@ mod tests {
         let raw = "1 .S N... 100644 100644 100644 a b skip.txt\0";
         let out = parse_status(raw);
         assert!(out[0].skipped);
+    }
+
+    #[test]
+    fn status_v2_path_with_spaces_not_truncated() {
+        // Regression: an off-by-one splitn truncated paths at the first
+        // space, making two staged files in the same directory collide into
+        // one key and crash the keyed each (each_key_duplicate) in the
+        // workspace file list.
+        let raw = concat!(
+            "1 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 ad64404e086a0a2dd65bc886caffb67c9bc9c5f0 src/views/cms/customsdeclaration/dataproduction copy 2.vue\0",
+            "1 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 53662d74f0d8abd8a229cf87912679bb2d93702b src/views/cms/customsdeclaration/dataproduction copy.vue\0",
+        );
+        let out = parse_status(raw);
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out[0].path,
+            "src/views/cms/customsdeclaration/dataproduction copy 2.vue"
+        );
+        assert_eq!(
+            out[1].path,
+            "src/views/cms/customsdeclaration/dataproduction copy.vue"
+        );
+        assert!(out[0].staged && out[1].staged);
+    }
+
+    #[test]
+    fn status_v2_rename_and_unmerged_path_with_spaces() {
+        let raw = concat!(
+            "2 R. N... 100644 100644 100644 abc def R95 my new file.txt\0old name.txt\0",
+            "u AA N... 000000 100644 100644 000000 h1 h2 h3 空格 文件.txt\0",
+        );
+        let out = parse_status(raw);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].path, "my new file.txt");
+        assert_eq!(out[0].orig_path.as_deref(), Some("old name.txt"));
+        assert_eq!(out[1].path, "空格 文件.txt");
+        assert!(out[1].conflict);
     }
 
     #[test]
