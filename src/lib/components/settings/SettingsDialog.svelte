@@ -388,6 +388,14 @@
       .catch(normalizeError);
   }
 
+  /** 取消活动密钥（空 = 不再注入 GIT_SSH_COMMAND，认证交回系统 ssh 配置）。 */
+  function clearActiveKey(): void {
+    settings
+      .setSshKeyPath("")
+      .then(() => showToast("info", t("settings.ssh.activeUnset")))
+      .catch(normalizeError);
+  }
+
   async function confirmDeleteKey(): Promise<void> {
     const key = deleteTarget;
     deleteTarget = null;
@@ -831,6 +839,16 @@
                         onclick={() => setActiveKey(key)}
                       >
                         {t("settings.ssh.setActive")}
+                      </Button>
+                    {:else if key.private_path}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        title={t("settings.ssh.unsetActiveHint")}
+                        onclick={clearActiveKey}
+                      >
+                        {t("settings.ssh.unsetActive")}
                       </Button>
                     {/if}
                     <Button
