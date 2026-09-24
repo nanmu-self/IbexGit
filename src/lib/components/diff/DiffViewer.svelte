@@ -358,7 +358,7 @@
   ): string {
     if (!line) return "";
     const eolNote = line.no_eol
-      ? `<span class="select-none text-amber-600/70 dark:text-amber-500/70" title="No newline at end of file">⏎</span>`
+      ? `<span class="select-none text-warning/70 dark:text-warning/70" title="No newline at end of file">⏎</span>`
       : "";
 
     // 1) word-diff spans (paired lines in split view)
@@ -366,7 +366,7 @@
       const html = wordSpans
         .map(
           (sp) =>
-            `<span${sp.changed ? ' class="rounded-sm bg-amber-400/25 dark:bg-amber-300/20"' : ""}>${wsMark(esc(sp.text))}</span>`,
+            `<span${sp.changed ? ' class="rounded-sm bg-warning/25 dark:bg-warning/20"' : ""}>${wsMark(esc(sp.text))}</span>`,
         )
         .join("");
       return html + eolNote;
@@ -393,9 +393,9 @@
   function lineBg(kind: DiffLine["kind"]): string {
     switch (kind) {
       case "add":
-        return "bg-green-500/10";
+        return "bg-success-surface";
       case "remove":
-        return "bg-red-500/10";
+        return "bg-danger-surface";
       default:
         return "";
     }
@@ -489,9 +489,9 @@
     <div class="flex items-center gap-2 border-b bg-muted/40 px-3 py-1 text-xs">
       <span class="min-w-0 flex-1 truncate font-medium" title={row.file.path}>
         {#if row.file.file.old_path && row.file.file.old_path !== row.file.path}
-          <span class="text-red-600/80 line-through dark:text-red-400/80">{row.file.file.old_path}</span>
+          <span class="text-danger/80 line-through dark:text-danger/80">{row.file.file.old_path}</span>
           <span class="mx-1">→</span>
-          <span class="text-green-700 dark:text-green-400">{row.file.path}</span>
+          <span class="text-success dark:text-success">{row.file.path}</span>
           {#if row.file.file.similarity != null}
             <span class="ml-1 text-muted-foreground">{row.file.file.similarity}%</span>
           {/if}
@@ -509,22 +509,22 @@
         {@const sel = selectionsOf(row.file)}
         {#if sel.length > 0}
           <button
-            class="rounded bg-green-600/90 px-1.5 py-0.5 font-medium text-white hover:bg-green-600"
+            class="rounded bg-success/90 px-1.5 py-0.5 font-medium text-success-foreground hover:bg-success"
             onclick={() => selectedOp(ops.primary!, row.file)}
           >{t(ops.primary === "stage" ? "diff.stageSelected" : "diff.unstageSelected", { n: sel.length })}</button>
           {#if ops.secondary}
             <button
-              class="rounded bg-red-600/90 px-1.5 py-0.5 font-medium text-white hover:bg-red-600"
+              class="rounded bg-danger/90 px-1.5 py-0.5 font-medium text-danger-foreground hover:bg-danger"
               onclick={() => selectedOp(ops.secondary!, row.file)}
             >{t("diff.discardSelected", { n: sel.length })}</button>
           {/if}
         {/if}
       {/if}
       {#if row.adds > 0}
-        <span class="font-mono text-green-600 dark:text-green-400">+{row.adds}</span>
+        <span class="font-mono text-success dark:text-success">+{row.adds}</span>
       {/if}
       {#if row.dels > 0}
-        <span class="font-mono text-red-600 dark:text-red-400">-{row.dels}</span>
+        <span class="font-mono text-danger dark:text-danger">-{row.dels}</span>
       {/if}
     </div>
   {:else if row.t === "binary"}
@@ -551,13 +551,13 @@
       </span>
       {#if ops.primary && row.canStage}
         <button
-          class="rounded px-1.5 py-0 text-[11px] text-green-700 hover:bg-green-500/10 dark:text-green-400"
+          class="rounded px-1.5 py-0 text-[11px] text-success hover:bg-success-surface dark:text-success"
           onclick={() => hunkOp(ops.primary!, row.file, row.hunkIndex)}
         >{t(ops.primary === "stage" ? "diff.stageHunk" : "diff.unstageHunk")}</button>
       {/if}
       {#if ops.secondary && row.canStage}
         <button
-          class="rounded px-1.5 py-0 text-[11px] text-red-700 hover:bg-red-500/10 dark:text-red-400"
+          class="rounded px-1.5 py-0 text-[11px] text-danger hover:bg-danger-surface dark:text-danger"
           onclick={() => hunkOp(ops.secondary!, row.file, row.hunkIndex)}
         >{t("diff.discardHunk")}</button>
       {/if}
@@ -581,7 +581,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div
       class="flex h-full font-mono text-xs leading-5 {lineBg(row.line.kind)} {selected
-        ? 'ring-1 ring-inset ring-blue-400/60'
+        ? 'ring-1 ring-inset ring-info/60'
         : ''} {clickable ? 'cursor-pointer' : ''}"
       onclick={(e) => onLineClick(row.file, row.hunkIndex, row.lineIndex, row.line, e)}
     >
@@ -602,7 +602,7 @@
       <div
         class="min-w-0 flex-1 overflow-hidden {lineBg(row.left?.kind ?? 'context')} {row.left &&
         (set?.has(`${row.hunkIndex}:${row.leftIndex}`) ?? false)
-          ? 'ring-1 ring-inset ring-blue-400/60'
+          ? 'ring-1 ring-inset ring-info/60'
           : ''} {(ops.primary || ops.secondary) && row.file.lineOpsAllowed && row.left ? 'cursor-pointer' : ''}"
         onclick={(e) =>
           row.left &&
@@ -619,7 +619,7 @@
       <div
         class="min-w-0 flex-1 overflow-hidden border-l border-border/60 {lineBg(row.right?.kind ?? 'context')} {row.right &&
         (set?.has(`${row.hunkIndex}:${row.rightIndex}`) ?? false)
-          ? 'ring-1 ring-inset ring-blue-400/60'
+          ? 'ring-1 ring-inset ring-info/60'
           : ''} {(ops.primary || ops.secondary) && row.file.lineOpsAllowed && row.right ? 'cursor-pointer' : ''}"
         onclick={(e) =>
           row.right &&

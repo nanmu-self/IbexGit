@@ -192,7 +192,7 @@
           </button>
         </div>
         {#if authorMe && !userEmail}
-          <p class="text-[10px] text-amber-600 dark:text-amber-400">{t("ai.report.authorUnknown")}</p>
+          <p class="text-[10px] text-warning dark:text-warning">{t("ai.report.authorUnknown")}</p>
         {/if}
       </div>
 

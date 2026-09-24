@@ -265,7 +265,7 @@
             onkeydown={(e) => e.key === "Enter" && !b.current && checkout(b.name)}
           >
             {#if b.current}
-              <CircleDot class="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <CircleDot class="size-3 shrink-0 text-success dark:text-success" />
             {:else}
               <GitBranch class="size-3 shrink-0 text-muted-foreground/50" />
             {/if}
@@ -279,8 +279,8 @@
             {/if}
             {#if b.ahead || b.behind}
               <span class="flex shrink-0 items-center gap-0.5 text-[10px] tabular-nums text-muted-foreground">
-                {#if b.ahead}<span class="text-blue-500">↑{b.ahead}</span>{/if}
-                {#if b.behind}<span class="text-red-500">↓{b.behind}</span>{/if}
+                {#if b.ahead}<span class="text-info0">↑{b.ahead}</span>{/if}
+                {#if b.behind}<span class="text-danger0">↓{b.behind}</span>{/if}
               </span>
             {/if}
           </div></li>

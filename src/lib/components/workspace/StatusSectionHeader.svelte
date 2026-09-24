@@ -25,12 +25,12 @@
 
 <div
   class="flex shrink-0 items-center gap-2 px-3 py-1.5 text-xs font-medium {tone === 'red'
-    ? 'text-red-500'
+    ? 'text-danger0'
     : 'text-muted-foreground'}"
 >
   <span>{title}</span>
   <span
-    class="rounded-full {tone === 'red' ? 'bg-red-500/15' : 'bg-muted'} px-1.5 text-[11px] leading-4"
+    class="rounded-full {tone === 'red' ? 'bg-danger/15' : 'bg-muted'} px-1.5 text-[11px] leading-4"
   >
     {count}
   </span>
@@ -41,7 +41,7 @@
           variant="ghost"
           size="xs"
           class="text-[11px] {action.danger
-            ? 'text-red-500/90 hover:text-red-500'
+            ? 'text-danger/90 hover:text-danger0'
             : 'text-muted-foreground'}"
           onclick={action.onclick}
         >

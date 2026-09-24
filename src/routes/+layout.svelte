@@ -30,9 +30,18 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
   $effect(() => {
     const mode = settings.theme;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const root = document.documentElement;
+    let hasApplied = false;   // 首次加载不加过渡，避免闪白
     const apply = () => {
       const dark = mode === "dark" || (mode === "system" && mq.matches);
-      document.documentElement.classList.toggle("dark", dark);
+      if (!hasApplied) {
+        root.classList.toggle("dark", dark);
+        hasApplied = true;
+      } else {
+        root.classList.add("theme-anim");
+        root.classList.toggle("dark", dark);
+        setTimeout(() => root.classList.remove("theme-anim"), 260);
+      }
     };
     apply();
     mq.addEventListener("change", apply);

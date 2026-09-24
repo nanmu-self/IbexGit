@@ -231,10 +231,10 @@
 
   <!-- header -->
   <div class="flex min-h-10 flex-wrap items-center gap-2 border-b px-3 py-1.5">
-    <span class="text-red-500">!</span>
+    <span class="text-danger0">!</span>
     <span class="min-w-0 flex-1 truncate font-mono text-[13px]" title={path}>{path}</span>
     {#if model}
-      <span class="rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400">
+      <span class="rounded bg-danger/15 px-1.5 py-0.5 text-[11px] text-danger dark:text-danger">
         {t(`conflict.type.${TYPE_KEY[model.conflict_type]}`)}
       </span>
       <span class="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
@@ -280,7 +280,7 @@
           {t("conflict.keepTheirs")}
         </Button>
       {/if}
-      <Button variant="outline" size="sm" class="h-7 text-xs text-red-500 hover:text-red-500" disabled={busy} onclick={() => (deleteOpen = true)}>
+      <Button variant="outline" size="sm" class="h-7 text-xs text-danger0 hover:text-danger0" disabled={busy} onclick={() => (deleteOpen = true)}>
         {t("conflict.delete")}
       </Button>
     {/if}
@@ -303,7 +303,7 @@
         {t(model.directory ? "conflict.directoryHint" : "conflict.submoduleHint")}
       </span>
       {#if !model.directory}
-        <Button variant="outline" size="sm" class="h-7 text-xs text-red-500 hover:text-red-500" disabled={busy} onclick={() => (deleteOpen = true)}>
+        <Button variant="outline" size="sm" class="h-7 text-xs text-danger0 hover:text-danger0" disabled={busy} onclick={() => (deleteOpen = true)}>
           {t("conflict.delete")}
         </Button>
       {/if}
@@ -363,7 +363,7 @@
     </div>
   {:else if model && model.binary}
     <div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
-      <FileWarning class="size-6 text-amber-500" />
+      <FileWarning class="size-6 text-warning0" />
       {t("conflict.binaryHint")}
     </div>
   {:else if model}

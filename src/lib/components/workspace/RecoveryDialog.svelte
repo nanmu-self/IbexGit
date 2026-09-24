@@ -51,7 +51,7 @@
               <Undo2 class="size-3.5 shrink-0 text-muted-foreground" />
               <span class="min-w-0 flex-1 truncate font-medium">{formatTime(entry.created_at_ms)}</span>
               {#if entry.warnings.length > 0}
-                <TriangleAlert class="size-3.5 shrink-0 text-amber-500" title={entry.warnings.join("\n")} />
+                <TriangleAlert class="size-3.5 shrink-0 text-warning0" title={entry.warnings.join("\n")} />
               {/if}
             </div>
             <div class="mt-0.5 flex items-center gap-2 pl-6 text-xs text-muted-foreground">
@@ -81,7 +81,7 @@
               </div>
             </div>
             {#if entry.warnings.length > 0}
-              <div class="mt-1 space-y-0.5 pl-6 text-[11px] text-amber-600 dark:text-amber-500">
+              <div class="mt-1 space-y-0.5 pl-6 text-[11px] text-warning dark:text-warning">
                 {#each entry.warnings as warning}
                   <div class="break-all">{warning}</div>
                 {/each}

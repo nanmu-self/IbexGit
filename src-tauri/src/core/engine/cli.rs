@@ -4,7 +4,7 @@ use crate::core::engine::{
 };
 use crate::core::error::AppError;
 use crate::core::runner::{
-    ssh_command_for_key, CancelToken, GitProcessRunner, ProcessResult, SshOverride, StdinMode,
+    ssh_command_for_key_with, CancelToken, GitProcessRunner, ProcessResult, SshOverride, StdinMode,
 };
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -227,13 +227,17 @@ impl CliEngine {
     ///    env 优先级高于 config，继续注入会把它盖掉；
     /// 2. `ibexgit.sshkey`：`""` → `Suppress`（显式禁用）；有值 →
     ///    `Command`；未设置 → `Inherit`（跟随全局活动密钥）。
-    fn resolve_ssh_override(core_ssh: Option<&str>, ibexgit_key: Option<&str>) -> SshOverride {
+    fn resolve_ssh_override(
+        core_ssh: Option<&str>,
+        ibexgit_key: Option<&str>,
+        ssh_name: Option<&str>,
+    ) -> SshOverride {
         if core_ssh.is_some() {
             return SshOverride::Suppress;
         }
         match ibexgit_key {
             Some("") => SshOverride::Suppress,
-            Some(path) => SshOverride::Command(ssh_command_for_key(path)),
+            Some(path) => SshOverride::Command(ssh_command_for_key_with(ssh_name, path)),
             None => SshOverride::Inherit,
         }
     }
@@ -245,6 +249,7 @@ impl CliEngine {
         Ok(Self::resolve_ssh_override(
             core_ssh.as_deref(),
             ibexgit_key.as_deref(),
+            None,
         ))
     }
 
@@ -2409,11 +2414,11 @@ mod ssh_override_tests {
     fn user_core_ssh_command_wins_over_everything() {
         // env 优先级高于 config：用户自管 core.sshCommand 时必须抑制注入。
         assert_eq!(
-            CliEngine::resolve_ssh_override(Some("ssh -i ~/.ssh/x"), None),
+            CliEngine::resolve_ssh_override(Some("ssh -i ~/.ssh/x"), None, Some("ssh")),
             SshOverride::Suppress
         );
         assert_eq!(
-            CliEngine::resolve_ssh_override(Some("ssh"), Some("/k/id_ed25519")),
+            CliEngine::resolve_ssh_override(Some("ssh"), Some("/k/id_ed25519"), Some("ssh")),
             SshOverride::Suppress
         );
     }
@@ -2422,19 +2427,21 @@ mod ssh_override_tests {
     fn ibexgit_key_tri_state() {
         // 未设置 → 跟随全局活动密钥。
         assert_eq!(
-            CliEngine::resolve_ssh_override(None, None),
+            CliEngine::resolve_ssh_override(None, None, Some("ssh")),
             SshOverride::Inherit
         );
         // 空值 = 显式禁用（区别于未设置）。
         assert_eq!(
-            CliEngine::resolve_ssh_override(None, Some("")),
+            CliEngine::resolve_ssh_override(None, Some(""), Some("ssh")),
             SshOverride::Suppress
         );
         // 有值 → 组装指定命令（含空格路径必须引住）。
         assert_eq!(
-            CliEngine::resolve_ssh_override(None, Some("/home/u/my key/id_ed25519")),
+            CliEngine::resolve_ssh_override(None, Some("/home/u/my key/id_ed25519"), Some("ssh")),
             SshOverride::Command(
-                "ssh -i \"/home/u/my key/id_ed25519\" -o IdentitiesOnly=yes".to_string()
+                // "ssh" 被双引号包住（sh 解析时等价于裸 ssh 名，
+                // 但对含特殊字符的可执行路径更安全）。
+                "\"ssh\" -i \"/home/u/my key/id_ed25519\" -o IdentitiesOnly=yes".to_string()
             )
         );
     }

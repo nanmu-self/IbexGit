@@ -78,7 +78,7 @@
     {#if node.badge !== undefined && node.badge !== null && node.badge !== ""}
       <span
         class="ml-auto shrink-0 rounded-full px-1.5 text-[11px] leading-4 {node.badgeTone === 'red'
-          ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+          ? 'bg-danger/15 text-danger dark:text-danger'
           : 'bg-muted text-muted-foreground'}"
       >
         {node.badge}

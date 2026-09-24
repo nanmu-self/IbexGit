@@ -155,7 +155,7 @@
 
 <div class="space-y-2 border-t bg-background p-2.5">
   {#if mode !== "normal"}
-    <div class="text-xs text-amber-600 dark:text-amber-400">
+    <div class="text-xs text-warning dark:text-warning">
       {t(`conflict.commitHint.${mode}`)}
     </div>
   {/if}
@@ -164,13 +164,13 @@
       placeholder={t("commit.subject")}
       bind:value={subject}
       disabled={!repoReady}
-      class="h-8 text-[13px] {subjectOver ? 'border-amber-500/60 pr-12' : 'pr-12'}"
+      class="h-8 text-[13px] {subjectOver ? 'border-warning/60 pr-12' : 'pr-12'}"
       {onkeydown}
     />
     {#if subjectLen > 0}
       <span
         class="absolute top-1/2 right-2 -translate-y-1/2 text-[10px] tabular-nums {subjectOver
-          ? 'font-medium text-amber-600 dark:text-amber-400'
+          ? 'font-medium text-warning dark:text-warning'
           : 'text-muted-foreground'}"
         title={t("commit.subjectLenHint")}
       >
@@ -190,10 +190,10 @@
   <!-- P10: 50/72 + trailers row -->
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
     {#if subjectOver}
-      <span class="text-amber-600 dark:text-amber-400">{t("commit.subjectOver50")}</span>
+      <span class="text-warning dark:text-warning">{t("commit.subjectOver50")}</span>
     {/if}
     {#if bodyOver}
-      <span class="text-amber-600 dark:text-amber-400">{t("commit.bodyOver72")}</span>
+      <span class="text-warning dark:text-warning">{t("commit.bodyOver72")}</span>
     {/if}
     {#if mode === "normal"}
       <button

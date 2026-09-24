@@ -699,7 +699,7 @@
               </Button>
             </div>
             {#if gitPathResult}
-              <p class="font-mono text-[11px] text-green-600 dark:text-green-400">{gitPathResult}</p>
+              <p class="font-mono text-[11px] text-success dark:text-success">{gitPathResult}</p>
             {/if}
             <div class="flex items-center justify-between">
               <p class="text-[11px] text-muted-foreground">{t("settings.git.pathHint")}</p>
@@ -904,7 +904,7 @@
                 {/each}
               </div>
               {#if aiCfg.provider === "ollama"}
-                <p class="text-[11px] text-green-600 dark:text-green-400">{t("ai.settings.ollamaHint")}</p>
+                <p class="text-[11px] text-success dark:text-success">{t("ai.settings.ollamaHint")}</p>
               {/if}
             </div>
 
@@ -1047,7 +1047,7 @@
                 {t("ai.settings.test")}
               </Button>
               {#if aiTestResult}
-                <span class="truncate font-mono text-[11px] text-green-600 dark:text-green-400">{aiTestResult}</span>
+                <span class="truncate font-mono text-[11px] text-success dark:text-success">{aiTestResult}</span>
               {/if}
             </div>
 

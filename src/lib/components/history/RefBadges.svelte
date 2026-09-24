@@ -64,7 +64,7 @@
       </span>
     {:else}
       <span
-        class="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] text-amber-700 dark:text-amber-400"
+        class="inline-flex shrink-0 items-center gap-0.5 rounded border border-warning/40 bg-warning-surface px-1.5 py-px text-[10px] text-warning dark:text-warning"
         title={b.label}
       >
         <Tag class="size-2.5" />

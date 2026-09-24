@@ -122,7 +122,7 @@
           {t("refs.merge.ffOnly")}
         </label>
       {:else}
-        <p class="rounded-md bg-amber-500/10 px-2.5 py-2 text-xs text-amber-600 dark:text-amber-500">
+        <p class="rounded-md bg-warning-surface px-2.5 py-2 text-xs text-warning dark:text-warning">
           {t("refs.rebase.warn")}
         </p>
       {/if}

@@ -264,7 +264,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="h-full w-11 rounded-none hover:bg-red-600 hover:text-white"
+        class="h-full w-11 rounded-none hover:bg-danger hover:text-danger-foreground"
         onclick={closeWindow}
         title={t("win.close")}
         aria-label={t("win.close")}

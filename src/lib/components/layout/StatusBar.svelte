@@ -26,8 +26,8 @@
     </span>
     {#if active.ahead > 0 || active.behind > 0}
       <span class="flex items-center gap-1.5 tabular-nums">
-        {#if active.ahead > 0}<span class="text-blue-500">↑{active.ahead}</span>{/if}
-        {#if active.behind > 0}<span class="text-red-500">↓{active.behind}</span>{/if}
+        {#if active.ahead > 0}<span class="text-info0">↑{active.ahead}</span>{/if}
+        {#if active.behind > 0}<span class="text-danger0">↓{active.behind}</span>{/if}
       </span>
     {/if}
     {#if netOp}

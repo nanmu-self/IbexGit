@@ -169,16 +169,16 @@
   function statusColor(status: string): string {
     switch (status) {
       case "A":
-        return "text-emerald-600 dark:text-emerald-400";
+        return "text-success dark:text-success";
       case "D":
-        return "text-red-600 dark:text-red-400";
+        return "text-danger dark:text-danger";
       case "R":
       case "C":
-        return "text-violet-600 dark:text-violet-400";
+        return "text-info dark:text-info";
       case "U":
-        return "text-orange-600 dark:text-orange-400";
+        return "text-warning dark:text-warning";
       default:
-        return "text-amber-600 dark:text-amber-400";
+        return "text-warning dark:text-warning";
     }
   }
 

@@ -189,20 +189,20 @@
   }
 
   function statusChip(file: FileStatus): { letter: string; cls: string; title: string } {
-    // Chip backgrounds sit at 700/600 level so white 10px text keeps ≥4.5:1.
+    // 用语义令牌配套的 foreground —— 浅色下白字配深底，暗色下深字配亮底，自动适配。
     if (file.conflict) {
-      return { letter: "!", cls: "bg-red-600 text-white", title: file.status };
+      return { letter: "!", cls: "bg-danger text-danger-foreground", title: file.status };
     }
     const s = file.status;
     if (file.untracked || s.startsWith("?"))
-      return { letter: "U", cls: "bg-green-700 text-white", title: "untracked" };
-    if (s.includes("D")) return { letter: "D", cls: "bg-red-600 text-white", title: "deleted" };
+      return { letter: "U", cls: "bg-success text-success-foreground", title: "untracked" };
+    if (s.includes("D")) return { letter: "D", cls: "bg-danger text-danger-foreground", title: "deleted" };
     if (s.includes("R") || s.includes("C"))
-      return { letter: "R", cls: "bg-blue-600 text-white", title: "renamed/copied" };
-    if (s.includes("A")) return { letter: "A", cls: "bg-green-700 text-white", title: "added" };
+      return { letter: "R", cls: "bg-info text-info-foreground", title: "renamed/copied" };
+    if (s.includes("A")) return { letter: "A", cls: "bg-success text-success-foreground", title: "added" };
     if (s.includes("M"))
-      return { letter: "M", cls: "bg-amber-700 text-white", title: "modified" };
-    return { letter: "M", cls: "bg-muted-foreground/70 text-white", title: s };
+      return { letter: "M", cls: "bg-warning text-warning-foreground", title: "modified" };
+    return { letter: "M", cls: "bg-muted text-foreground", title: s };
   }
 
   const TYPE_KEY: Record<ConflictType, string> = {
@@ -263,14 +263,14 @@
         {#if conflictMeta[file.path]}
           {@const meta = conflictMeta[file.path]}
           <span
-            class="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-600 dark:text-red-400"
+            class="rounded bg-danger-surface px-1.5 py-0.5 text-[10px] text-danger dark:text-danger"
             title={t(`conflict.type.${TYPE_KEY[meta.conflict_type]}`)}
           >
             {t(`conflict.type.${TYPE_KEY[meta.conflict_type]}`)}
           </span>
           {#if meta.block_count > 0}
             <span
-              class="rounded-full bg-red-500/15 px-1.5 text-[10px] leading-4 text-red-500"
+              class="rounded-full bg-danger/15 px-1.5 text-[10px] leading-4 text-danger0"
               title={t("conflict.blocksN", { n: meta.block_count })}
             >
               {meta.block_count}
@@ -279,7 +279,7 @@
         {/if}
         <button
           type="button"
-          class="invisible grid size-6 shrink-0 place-items-center rounded text-red-500/70 hover:bg-red-500/10 hover:text-red-500 group-hover:visible group-focus-within:visible"
+          class="invisible grid size-6 shrink-0 place-items-center rounded text-danger/70 hover:bg-danger-surface hover:text-danger0 group-hover:visible group-focus-within:visible"
           title={t("workspace.discard")}
           onclick={(e) => {
             e.stopPropagation();
@@ -345,7 +345,7 @@
           <span class="text-muted-foreground/60">{dir}</span>{name}
         </span>
         {#if file.submodule}
-          <span class="flex items-center gap-0.5 text-[10px] text-violet-500" title={file.submodule_commit_changed ? t("workspace.subCommit") : file.submodule_dirty ? t("workspace.subDirty") : t("workspace.submodule")}>
+          <span class="flex items-center gap-0.5 text-[10px] text-info0" title={file.submodule_commit_changed ? t("workspace.subCommit") : file.submodule_dirty ? t("workspace.subDirty") : t("workspace.submodule")}>
             <Package class="size-3" />
             {#if file.submodule_commit_changed}↕{:else if file.submodule_dirty}!{/if}
           </span>
@@ -439,7 +439,7 @@
           <span class="text-muted-foreground/60">{dir}</span>{name}
         </span>
         {#if file.submodule}
-          <span class="flex items-center gap-0.5 text-[10px] text-violet-500" title={file.submodule_commit_changed ? t("workspace.subCommit") : file.submodule_dirty ? t("workspace.subDirty") : t("workspace.submodule")}>
+          <span class="flex items-center gap-0.5 text-[10px] text-info0" title={file.submodule_commit_changed ? t("workspace.subCommit") : file.submodule_dirty ? t("workspace.subDirty") : t("workspace.submodule")}>
             <Package class="size-3" />
             {#if file.submodule_commit_changed}↕{:else if file.submodule_dirty}!{/if}
           </span>
@@ -452,7 +452,7 @@
         {/if}
         <button
           type="button"
-          class="invisible grid size-6 shrink-0 place-items-center rounded text-red-500/70 hover:bg-red-500/10 hover:text-red-500 group-hover:visible group-focus-within:visible"
+          class="invisible grid size-6 shrink-0 place-items-center rounded text-danger/70 hover:bg-danger-surface hover:text-danger0 group-hover:visible group-focus-within:visible"
           title={t("workspace.discard")}
           onclick={(e) => {
             e.stopPropagation();

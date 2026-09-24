@@ -44,12 +44,58 @@ pub enum SshOverride {
     Command(String),
 }
 
+/// 在 PATH 上解析 ssh 可执行文件的完整路径。
+///
+/// **为什么不直接写 `"ssh"`？**
+/// Git for Windows 启动内部 msys `sh.exe` 时，会把它自己的 `/mingw64/bin`、
+/// `/usr/bin` 强制插到 sh 的 PATH 最前面。测试 prepend 到 Rust 进程 PATH
+/// 最前面的 shim 目录，到了 sh.exe 里反而排在 Git 自带目录后面——sh 自带
+/// `ssh.exe` 永远先被命中。
+///
+/// 用 Rust 进程自己的 Windows 原生 PATH（shim 排在最前面）搜索完整路径，
+/// 然后写进 `GIT_SSH_COMMAND`。git 用 sh -c 解析完整路径时直接命中，不
+/// 依赖 sh.exe 内部的 PATH 搜索。
+fn resolve_ssh_exe() -> Option<std::path::PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    let paths = std::env::split_paths(&path_var);
+    for dir in paths {
+        let candidates: &[&str] = if cfg!(windows) {
+            &["ssh", "ssh.exe", "ssh.cmd"]
+        } else {
+            &["ssh"]
+        };
+        for name in candidates {
+            let p = dir.join(name);
+            if std::fs::metadata(&p).map(|m| m.is_file()).unwrap_or(false) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// 由私钥路径组装 `GIT_SSH_COMMAND`。双引号保护含空格路径（该变量由
 /// shell 解析；Windows 路径的反斜杠在 sh 双引号内后接非特殊字符时原样
 /// 保留）。路径含 `"` 或 `$` 的场景不受支持（Windows 文件名本就禁止
 /// `"`；`$` 会展开——罕见，接受）。
+///
+/// `ssh_name` 允许调用方覆盖 ssh 可执行文件：传 `None` 时内部会在 PATH
+/// 上解析完整路径（`resolve_ssh_exe`），适用于生产代码；传
+/// `Some("ssh")` 之类的裸名称则直接使用，适合单元测试（避免依赖系统
+/// 上实际安装了什么）。
 pub fn ssh_command_for_key(key_path: &str) -> String {
-    format!("ssh -i \"{key_path}\" -o IdentitiesOnly=yes")
+    ssh_command_for_key_with(None, key_path)
+}
+
+pub fn ssh_command_for_key_with(ssh_name: Option<&str>, key_path: &str) -> String {
+    let ssh = match ssh_name {
+        Some(name) => name.to_string(),
+        None => resolve_ssh_exe()
+            .as_ref()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "ssh".to_string()),
+    };
+    format!("\"{ssh}\" -i \"{key_path}\" -o IdentitiesOnly=yes")
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -213,6 +259,9 @@ pub struct GitProcessRunner {
     no_prompt: bool,
     /// P7 spawn 配置（凭据注入 / 代理 / SSH），运行时可变。
     net_config: SharedNetConfig,
+    /// 可选的隔离 git 配置路径；设了就注入 `GIT_CONFIG_GLOBAL` + `GIT_CONFIG_NOSYSTEM=1`，
+    /// 绕过 `.cmd` wrapper 中间层。
+    git_config_global: Option<String>,
 }
 
 enum RunOutcome {
@@ -227,6 +276,7 @@ impl GitProcessRunner {
             utf8_env: true,
             no_prompt: true,
             net_config: SharedNetConfig::new(),
+            git_config_global: None,
         }
     }
 
@@ -237,6 +287,22 @@ impl GitProcessRunner {
             utf8_env: true,
             no_prompt: true,
             net_config,
+            git_config_global: None,
+        }
+    }
+
+    /// 构造时指定隔离 git config 路径（测试专用）。runner 会自行注入
+    /// `GIT_CONFIG_GLOBAL` + `GIT_CONFIG_NOSYSTEM=1`，无需再用 `.cmd` wrapper。
+    pub fn with_git_config(
+        default_timeout_secs: u64,
+        git_config_global: impl Into<String>,
+    ) -> Self {
+        Self {
+            default_timeout_secs,
+            utf8_env: true,
+            no_prompt: true,
+            net_config: SharedNetConfig::new(),
+            git_config_global: Some(git_config_global.into()),
         }
     }
 
@@ -256,6 +322,10 @@ impl GitProcessRunner {
             cmd.env("GIT_TERMINAL_PROMPT", "0");
             cmd.env("GIT_EDITOR", "true");
             cmd.env("GIT_PAGER", "cat");
+        }
+        if let Some(cfg) = &self.git_config_global {
+            cmd.env("GIT_CONFIG_GLOBAL", cfg);
+            cmd.env("GIT_CONFIG_NOSYSTEM", "1");
         }
 
         // P7：凭据 helper / 代理 / SSH 注入（所有 git 进程统一生效）。
@@ -300,6 +370,7 @@ impl GitProcessRunner {
         }
 
         cmd.arg("-c").arg("core.quotepath=false");
+
         cmd
     }
 
@@ -630,15 +701,16 @@ mod tests {
     #[test]
     fn ssh_command_quotes_paths_with_spaces() {
         // Windows 用户名带空格 → 密钥路径带空格：必须整体引住，否则
-        // shell 把路径拆成多个 argv。
+        // shell 把路径拆成多个 argv。传 Some("ssh") 固定 ssh 名，避开
+        // resolve_ssh_exe 对系统 PATH 的依赖。
         assert_eq!(
-            ssh_command_for_key(r"C:\Users\John Doe\.ssh\id_ed25519"),
-            r#"ssh -i "C:\Users\John Doe\.ssh\id_ed25519" -o IdentitiesOnly=yes"#
+            ssh_command_for_key_with(Some("ssh"), r"C:\Users\John Doe\.ssh\id_ed25519"),
+            r#""ssh" -i "C:\Users\John Doe\.ssh\id_ed25519" -o IdentitiesOnly=yes"#
         );
         // POSIX 路径同样引住；sh 双引号内反斜杠后接非特殊字符时原样保留。
         assert_eq!(
-            ssh_command_for_key("/home/u/.ssh/id_ed25519"),
-            "ssh -i \"/home/u/.ssh/id_ed25519\" -o IdentitiesOnly=yes"
+            ssh_command_for_key_with(Some("ssh"), "/home/u/.ssh/id_ed25519"),
+            "\"ssh\" -i \"/home/u/.ssh/id_ed25519\" -o IdentitiesOnly=yes"
         );
     }
 

@@ -163,7 +163,7 @@
           <div class="absolute inset-0 overflow-hidden" style="width: {sliderPos}%">
             <img src={newSide.dataUrl} alt="new" class="absolute right-0 m-auto max-h-full object-contain" style="height: 100%; max-width: none" />
           </div>
-          <div class="absolute inset-y-0 w-0.5 bg-blue-500" style="left: {sliderPos}%"></div>
+          <div class="absolute inset-y-0 w-0.5 bg-info0" style="left: {sliderPos}%"></div>
           <input
             type="range"
             class="absolute inset-x-0 bottom-1 mx-auto w-2/3"

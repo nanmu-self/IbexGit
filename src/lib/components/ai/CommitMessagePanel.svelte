@@ -109,12 +109,12 @@
             })}
           </p>
           {#if aiStore.msgPreview.excluded > 0}
-            <p class="text-[11px] text-green-600 dark:text-green-400">
+            <p class="text-[11px] text-success dark:text-success">
               {t("ai.msg.excluded", { n: aiStore.msgPreview.excluded })}
             </p>
           {/if}
           {#if aiStore.msgPreview.truncated}
-            <p class="text-[11px] text-amber-600 dark:text-amber-400">{t("ai.msg.truncated")}</p>
+            <p class="text-[11px] text-warning dark:text-warning">{t("ai.msg.truncated")}</p>
           {/if}
           <div class="max-h-24 overflow-y-auto rounded border bg-muted/30 p-1.5 font-mono text-[10px] text-muted-foreground">
             {#each aiStore.msgPreview.items as item (item)}

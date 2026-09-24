@@ -96,24 +96,24 @@
 </script>
 
 <div
-  class="flex flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-sm"
+  class="flex flex-wrap items-center gap-2 border-b border-warning/30 bg-warning-surface px-3 py-1.5 text-sm"
 >
-  <summary.icon class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-  <span class="min-w-0 flex-1 truncate text-amber-900 dark:text-amber-200">
+  <summary.icon class="size-4 shrink-0 text-warning dark:text-warning" />
+  <span class="min-w-0 flex-1 truncate text-warning dark:text-warning">
     {summary.text}
   </span>
 
   {#if conflictCount > 0}
     <Button
       size="sm"
-      class="h-7 bg-red-600 text-xs text-white hover:bg-red-600/90"
+      class="h-7 bg-danger text-xs text-danger-foreground hover:bg-danger/90"
       onclick={onresolve}
     >
       <CircleAlert class="size-3.5" />
       {t("conflict.op.resolveN", { n: conflictCount })}
     </Button>
   {:else}
-    <span class="text-xs text-amber-700 dark:text-amber-300/80">
+    <span class="text-xs text-warning dark:text-warning/80">
       {t("conflict.op.noConflicts")}
     </span>
   {/if}
@@ -138,7 +138,7 @@
     <Button
       variant="ghost"
       size="xs"
-      class="text-xs text-red-600 hover:text-red-600 dark:text-red-400"
+      class="text-xs text-danger hover:text-danger dark:text-danger"
       disabled={busy}
       onclick={() => (abortOpen = true)}
     >

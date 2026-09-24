@@ -13,12 +13,12 @@
   /** Subtle group tints (light+dark friendly); keyed by commit index. */
   const PALETTE = [
     "bg-rose-500/10",
-    "bg-amber-500/10",
-    "bg-emerald-500/10",
-    "bg-sky-500/10",
-    "bg-violet-500/10",
+    "bg-warning-surface",
+    "bg-success-surface",
+    "bg-info-surface",
+    "bg-info-surface",
     "bg-teal-500/10",
-    "bg-orange-500/10",
+    "bg-warning-surface",
     "bg-indigo-500/10",
   ];
 
@@ -113,7 +113,7 @@
             <span class="flex w-52 shrink-0 items-center gap-2 border-r border-border/40 px-2">
               {#if c.uncommitted}
                 <span
-                  class="truncate rounded bg-amber-500/20 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+                  class="truncate rounded bg-warning/20 px-1.5 py-0 text-[10px] font-medium text-warning dark:text-warning"
                 >
                   {t("blame.uncommitted")}
                 </span>

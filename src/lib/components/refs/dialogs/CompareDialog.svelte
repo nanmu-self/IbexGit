@@ -161,10 +161,10 @@
       </div>
     {:else if left && right && left !== right}
       <div class="flex items-center gap-3 text-xs">
-        <span class="rounded bg-blue-500/10 px-2 py-0.5 font-medium text-blue-600 dark:text-blue-400">
+        <span class="rounded bg-info-surface px-2 py-0.5 font-medium text-info dark:text-info">
           {left}: ↑{ahead}
         </span>
-        <span class="rounded bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400">
+        <span class="rounded bg-success-surface px-2 py-0.5 font-medium text-success dark:text-success">
           {right}: ↑{behind}
         </span>
         <span class="text-muted-foreground">{t("refs.compare.mergeBaseHint")}</span>

@@ -673,7 +673,7 @@
       {/each}
     </div>
     {#if discardHasUntracked}
-      <div class="text-xs text-amber-600 dark:text-amber-500">{t("workspace.discardUntrackedWarn")}</div>
+      <div class="text-xs text-warning dark:text-warning">{t("workspace.discardUntrackedWarn")}</div>
     {/if}
   </div>
 </ConfirmDialog>

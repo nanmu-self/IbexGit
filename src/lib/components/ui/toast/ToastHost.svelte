@@ -30,9 +30,9 @@
 
   const COLORS: Record<string, string> = {
     error: "text-destructive",
-    success: "text-green-600 dark:text-green-400",
-    info: "text-blue-500",
-    warning: "text-amber-500",
+    success: "text-success dark:text-success",
+    info: "text-info0",
+    warning: "text-warning0",
   };
 </script>
 
