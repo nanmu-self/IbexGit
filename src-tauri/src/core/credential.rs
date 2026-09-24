@@ -1,4 +1,4 @@
-//! CredentialBroker（P7，ADR-004，设计文档 docs/design/credential-ssh.md）。
+//! CredentialBroker（P7，ADR-004）。
 //!
 //! 职责三分（PLAN P7）：
 //! - **Keychain 读写**：机密只存 OS 凭据库（keyring crate），磁盘索引不含明文；

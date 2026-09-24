@@ -1,4 +1,4 @@
-//! credential-helper（P7，独立进程，ADR-004 / docs/design/credential-ssh.md）。
+//! credential-helper（P7，独立进程，ADR-004）。
 //!
 //! 单二进制两种模式（argv 分流）：
 //! - **credential 模式**：`credential-helper credential <get|store|erase>`
