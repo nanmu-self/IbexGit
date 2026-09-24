@@ -23,8 +23,28 @@
   import Square from "@lucide/svelte/icons/square";
   import Copy from "@lucide/svelte/icons/copy";
   import X from "@lucide/svelte/icons/x";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
+  import Mail from "@lucide/svelte/icons/mail";
+  import Scale from "@lucide/svelte/icons/scale";
+  import Copyright from "@lucide/svelte/icons/copyright";
+  import Tag from "@lucide/svelte/icons/tag";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   const platform = getPlatform();
+
+  // ---- 关于（帮助菜单）----
+  const ABOUT_REPO_URL = "https://github.com/nanmu-self/IbexGit";
+  const ABOUT_EMAIL_URL = "mailto:157884200@qq.com";
+
+  // 纯浏览器 dev 下无 Tauri IPC，静默降级（与窗口控制一致）。
+  async function openExternal(url: string): Promise<void> {
+    try {
+      await openUrl(url);
+    } catch {
+      /* 非 Tauri 环境 */
+    }
+  }
+
 
   // ---- 菜单（P10）：菜单项由 features 注册表生成，键位引用 keymap ----
   function shortcutLabel(action: ActionId | undefined): string {
@@ -64,16 +84,16 @@
     };
   });
 
-  async function openAbout(): Promise<void> {
-    try {
-      aboutVersion = await getVersion();
-    } catch {
-      aboutVersion = "?";
-    }
-    appDialogs.openAbout();
-  }
-
+  // 关于对话框的版本号：挂载时取一次。
+  // 注意 features.ts 的「关于」项直接调 appDialogs.openAbout()（只置 open 标志），
+  // 不经过本组件，所以版本号不能放在打开动作里取，否则永远为空。
   let aboutVersion = $state("");
+
+  $effect(() => {
+    getVersion()
+      .then((version) => (aboutVersion = version))
+      .catch(() => (aboutVersion = "?"));
+  });
 
   function minimizeWindow(): void {
     void appWindow.minimize().catch(() => {});
@@ -282,9 +302,50 @@
     <Dialog.Header>
       <Dialog.Title>{t("dialog.about.title")}</Dialog.Title>
       <Dialog.Description>
-        {t("dialog.about.desc", { name: t("app.name"), version: aboutVersion })}
+        {t("dialog.about.desc", { name: t("app.name") })}
       </Dialog.Description>
     </Dialog.Header>
+    <div class="space-y-0.5 text-sm">
+      <div class="flex items-center gap-2 rounded-md px-2 py-1.5">
+        <Tag class="size-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 text-muted-foreground">{t("dialog.about.version")}</span>
+        <span class="ml-auto text-xs font-medium text-foreground">v{aboutVersion}</span>
+      </div>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/50"
+        onclick={() => void openExternal(ABOUT_REPO_URL)}
+        title={ABOUT_REPO_URL}
+      >
+        <ExternalLink class="size-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 text-muted-foreground">{t("dialog.about.repo")}</span>
+        <span class="ml-auto truncate text-xs font-medium text-foreground">
+          {ABOUT_REPO_URL.replace("https://", "")}
+        </span>
+      </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/50"
+        onclick={() => void openExternal(ABOUT_EMAIL_URL)}
+        title={t("dialog.about.email")}
+      >
+        <Mail class="size-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 text-muted-foreground">{t("dialog.about.email")}</span>
+        <span class="ml-auto truncate text-xs font-medium text-foreground">
+          157884200@qq.com
+        </span>
+      </button>
+      <div class="flex items-center gap-2 rounded-md px-2 py-1.5">
+        <Scale class="size-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 text-muted-foreground">{t("dialog.about.license")}</span>
+        <span class="ml-auto text-xs font-medium text-foreground">Apache-2.0</span>
+      </div>
+      <div class="flex items-center gap-2 rounded-md px-2 py-1.5">
+        <Copyright class="size-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 text-muted-foreground">{t("dialog.about.copyright")}</span>
+        <span class="ml-auto text-xs font-medium text-foreground">© 楠木</span>
+      </div>
+    </div>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (appDialogs.aboutOpen = false)}>
         {t("common.close")}

@@ -14,6 +14,7 @@
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     "opener:allow-open-path",
+    "opener:allow-open-url",
     "clipboard-manager:allow-write-text",
     "dialog:default",
     "store:default"
