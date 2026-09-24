@@ -156,8 +156,11 @@ async fn commit_template_reads_local_file_and_unset_is_none() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn config_global_is_readable() {
-    // No mutation — just verify the read path works in this environment.
-    let entries = engine().config_global().await.unwrap();
+    // No mutation — just verify the read path works.
+    // Use isolated_engine so runners without a real ~/.gitconfig (e.g.
+    // GitHub Actions Windows) don't fail on "No such file or directory".
+    let (eng, _cfg) = isolated_engine();
+    let entries = eng.config_global().await.unwrap();
     for e in &entries {
         assert!(!e.key.is_empty(), "key must not be empty");
         assert!(!e.key.contains('\n'), "key must not contain LF");

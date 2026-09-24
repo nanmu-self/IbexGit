@@ -121,15 +121,12 @@ fn candidates(dir: &Path) -> Vec<Command> {
     for (program, args) in list {
         let mut c = Command::new(program);
         c.current_dir(dir);
-        match args {
-            Some(flag) => {
-                // Multi-word entries like "start --cwd" split on spaces.
-                for part in flag.split(' ') {
-                    c.arg(part);
-                }
-                c.arg(dir);
+        if let Some(flag) = args {
+            // Multi-word entries like "start --cwd" split on spaces.
+            for part in flag.split(' ') {
+                c.arg(part);
             }
-            None => {}
+            c.arg(dir);
         }
         cmds.push(c);
     }
