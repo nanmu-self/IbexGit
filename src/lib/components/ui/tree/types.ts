@@ -7,6 +7,8 @@ export interface TreeNode {
   icon?: Component<{ class?: string }>;
   /** Right-aligned pill (counts). */
   badge?: string | number | null;
+  /** Pill tone: `red` accent (conflict counts) or neutral. */
+  badgeTone?: "red" | "muted";
   /** Right-aligned plain text (e.g. ahead/behind). */
   trailing?: string;
   /** Highlight as currently selected (e.g. checked-out branch). */
@@ -24,7 +26,8 @@ export interface TreeProps {
   expanded: Set<string>;
   activeId?: string | null;
   onToggle?: (node: TreeNode, expanded: boolean) => void;
-  onActivate?: (node: TreeNode) => void;
+  /** `e` lets callers implement ctrl/shift-click multi-select. */
+  onActivate?: (node: TreeNode, e?: MouseEvent) => void;
   onActivateSecondary?: (node: TreeNode) => void;
   /** Right-click on a row (context menus); absent → browser menu. */
   onLeafContext?: (node: TreeNode, e: MouseEvent) => void;

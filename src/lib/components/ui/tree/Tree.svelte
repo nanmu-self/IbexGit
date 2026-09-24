@@ -33,12 +33,12 @@
     return expanded.has(node.id);
   }
 
-  function handleClick(node: TreeNode): void {
+  function handleClick(node: TreeNode, e?: MouseEvent): void {
     if (node.muted) return;
     if (node.children?.length) {
       onToggle?.(node, !isOpen(node));
     }
-    onActivate?.(node);
+    onActivate?.(node, e);
   }
 </script>
 
@@ -52,7 +52,7 @@
       ? 'bg-accent font-medium text-accent-foreground'
       : ''}"
     style="padding-left: {depth * 12 + 6}px"
-    onclick={() => handleClick(node)}
+    onclick={(e) => handleClick(node, e)}
     ondblclick={() => !node.muted && onActivateSecondary?.(node)}
     oncontextmenu={onLeafContext
       ? (e) => {
@@ -77,7 +77,9 @@
     <span class="min-w-0 flex-1 truncate" title={node.label}>{node.label}</span>
     {#if node.badge !== undefined && node.badge !== null && node.badge !== ""}
       <span
-        class="ml-auto shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
+        class="ml-auto shrink-0 rounded-full px-1.5 text-[11px] leading-4 {node.badgeTone === 'red'
+          ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+          : 'bg-muted text-muted-foreground'}"
       >
         {node.badge}
       </span>

@@ -44,12 +44,27 @@
   const canCommit = $derived(
     repoReady && !busy && !submitting && subject.trim().length > 0 && (stagedCount > 0 || amend)
   );
+  /** Why the commit button is disabled, for the button's tooltip.
+   *  Transient states (busy/submitting) show no hint — the real reason is
+   *  the in-flight operation, not a missing message or staging. */
+  const disabledHint = $derived(
+    !repoReady || busy || submitting
+      ? undefined
+      : subject.trim().length === 0
+        ? t("commit.needsMessage")
+        : stagedCount === 0 && !amend
+          ? t("commit.needsStaged")
+          : undefined,
+  );
 
-  // Checking Amend loads the HEAD message into the editor (PLAN P3).
+  // Checking Amend loads the HEAD message into the editor (PLAN P3), but
+  // never clobbers a message the user already typed, and ignores a load
+  // that resolves after Amend was unchecked again (late-promise race).
   $effect(() => {
     if (amend && onamend) {
       onamend().then((msg) => {
-        if (msg !== null && msg !== undefined) loadMessage(msg);
+        if (!amend) return;
+        if (msg !== null && msg !== undefined && subject.trim() === "") loadMessage(msg);
       });
     }
   });
@@ -257,7 +272,7 @@
     <Button
       class="ml-auto h-8 min-w-36 text-xs"
       disabled={!canCommit}
-      title={!subject.trim() ? t("commit.needsMessage") : undefined}
+      title={disabledHint}
       onclick={submit}
     >
       <GitCommitHorizontal class="size-3.5" data-icon="inline-start" />

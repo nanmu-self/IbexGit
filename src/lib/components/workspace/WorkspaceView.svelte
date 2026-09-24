@@ -542,6 +542,7 @@
         variant="ghost"
         size="icon-sm"
         title={repos.ui.view_mode === "list" ? t("workspace.treeView") : t("workspace.listView")}
+        aria-pressed={repos.ui.view_mode === "tree"}
         onclick={() => repos.updateUi({ view_mode: repos.ui.view_mode === "list" ? "tree" : "list" })}
       >
         {#if repos.ui.view_mode === "list"}
@@ -571,8 +572,7 @@
         filtered={filteredActive}
         {selection}
         collapsed={repos.ui.tree_collapsed}
-        onleafclick={(file, source) =>
-          repos.updateUi({ selected_file: { path: file.path, source } })}
+        onleafclick={(file, source, e) => onRowClick(file, source, e ?? new MouseEvent("click"))}
         onleafcontext={onRowContext}
         onstage={doStage}
         onunstage={doUnstage}
@@ -593,19 +593,19 @@
         onunstage={doUnstage}
         ondiscard={askDiscard}
       />
-      {#if selectionCount > 1}
-        <div class="flex items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
-          <span>{t("workspace.selected", { n: selectionCount })}</span>
-          <Button
-            variant="ghost"
-            size="xs"
-            class="ml-auto"
-            onclick={() => selection.clear()}
-          >
-            {t("workspace.clearSelection")}
-          </Button>
-        </div>
-      {/if}
+    {/if}
+    {#if active && selectionCount > 1}
+      <div class="flex items-center gap-2 border-t px-3 py-1.5 text-xs text-muted-foreground">
+        <span>{t("workspace.selected", { n: selectionCount })}</span>
+        <Button
+          variant="ghost"
+          size="xs"
+          class="ml-auto"
+          onclick={() => selection.clear()}
+        >
+          {t("workspace.clearSelection")}
+        </Button>
+      </div>
     {/if}
   </div>
 

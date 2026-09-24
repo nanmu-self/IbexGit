@@ -31,7 +31,7 @@
     selection: Set<string>;
     /** Reactive array of collapsed directory ids (persisted per repo). */
     collapsed: string[];
-    onleafclick: (file: FileStatus, source: "worktree" | "staged") => void;
+    onleafclick: (file: FileStatus, source: "worktree" | "staged", e?: MouseEvent) => void;
     /** Right-click on a leaf (list-view parity: context menu). */
     onleafcontext?: (
       file: FileStatus,
@@ -61,7 +61,10 @@
   // Build one section's tree model. Pure — Svelte 5 forbids writing $state
   // inside $derived, so the dir-id list rides along in the return value
   // instead of being assigned to component state (state_unsafe_mutation).
-  function buildModel(leaves: FileLeaf[]): { nodes: TreeNode[]; ids: string[] } {
+  function buildModel(
+    leaves: FileLeaf[],
+    badgeTone: "red" | "muted" = "muted",
+  ): { nodes: TreeNode[]; ids: string[] } {
     interface DirNode {
       dirs: Map<string, DirNode>;
       leaves: FileLeaf[];
@@ -113,6 +116,7 @@
           // the first character ("src" → "rc").
           label: prefix === "" ? path : path.slice(prefix.length + 1),
           badge: node.count,
+          badgeTone,
           children: build(path),
         });
       }
@@ -137,7 +141,7 @@
   // One tree per section, mirroring the list view's information layout
   // (a path both staged and unstaged appears in both sections).
   const conflictModel = $derived(
-    buildModel(conflicts.map((f) => ({ file: f, source: "worktree" as const }))),
+    buildModel(conflicts.map((f) => ({ file: f, source: "worktree" as const })), "red"),
   );
   const stagedModel = $derived(
     buildModel(staged.map((f) => ({ file: f, source: "staged" as const }))),
@@ -176,9 +180,9 @@
     return file ? { file, source } : null;
   }
 
-  function activate(node: TreeNode): void {
+  function activate(node: TreeNode, e?: MouseEvent): void {
     const leaf = leafOf(node);
-    if (leaf) onleafclick(leaf.file, leaf.source);
+    if (leaf) onleafclick(leaf.file, leaf.source, e);
   }
 
   function leafContext(node: TreeNode, e: MouseEvent): void {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { VirtualList } from "$lib/components/ui/virtual-list";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { t } from "$lib/i18n";
@@ -53,6 +54,102 @@
     return `${source}:${path}`;
   }
 
+  // ---- keyboard navigation (listbox pattern, data-driven: the virtualized
+  // DOM only holds visible rows, so traversal must use the section data) ----
+  let listEl: HTMLDivElement | null = $state(null);
+
+  interface FlatRow {
+    file: FileStatus;
+    source: "worktree" | "staged";
+  }
+
+  function flatRows(): FlatRow[] {
+    const out: FlatRow[] = [];
+    conflicts.forEach((f) => out.push({ file: f, source: "worktree" }));
+    staged.forEach((f) => out.push({ file: f, source: "staged" }));
+    unstaged.forEach((f) => out.push({ file: f, source: "worktree" }));
+    return out;
+  }
+
+  /** Guard: keys on the row's inline action buttons must not double-fire. */
+  function insideButton(e: Event): boolean {
+    return e.target instanceof Element && !!e.target.closest("button");
+  }
+
+  /** First row in visual order: the Tab entry point when nothing is active. */
+  const firstRowKey = $derived(
+    conflicts.length > 0
+      ? keyOf("worktree", conflicts[0].path)
+      : staged.length > 0
+        ? keyOf("staged", staged[0].path)
+        : unstaged.length > 0
+          ? keyOf("worktree", unstaged[0].path)
+          : null,
+  );
+  const isTabStop = (key: string): boolean =>
+    activeKey === key || (activeKey === null && firstRowKey === key);
+
+  function onContainerKeydown(e: KeyboardEvent): void {
+    if (insideButton(e)) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      void moveActive(e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      void moveActive(e.key === "Home" ? "first" : "last");
+    } else if (e.key === " ") {
+      // Space toggles membership in the multi-selection (ctrl-click parity).
+      // Target = the focused row (covers Tab entry with no active row yet),
+      // falling back to the active row. Without a target we don't
+      // preventDefault, but we never let Space scroll as a surprise.
+      const active = document.activeElement;
+      const focusedKey =
+        active instanceof Element ? active.getAttribute("data-row-key") : null;
+      const lookup = focusedKey ?? activeKey;
+      if (lookup) {
+        const rows = flatRows();
+        const target = rows.find((r) => keyOf(r.source, r.file.path) === lookup);
+        if (target) {
+          e.preventDefault();
+          onrowclick(target.file, target.source, new MouseEvent("click", { ctrlKey: true }));
+        }
+      }
+    }
+  }
+
+  async function moveActive(delta: 1 | -1 | "first" | "last"): Promise<void> {
+    const rows = flatRows();
+    if (rows.length === 0) return;
+    const cur = activeKey
+      ? rows.findIndex((r) => keyOf(r.source, r.file.path) === activeKey)
+      : -1;
+    const next =
+      delta === "first"
+        ? 0
+        : delta === "last"
+          ? rows.length - 1
+          : cur === -1
+            ? delta === 1
+              ? 0
+              : rows.length - 1
+            : Math.min(rows.length - 1, Math.max(0, cur + delta));
+    const target = rows[next];
+    const key = keyOf(target.source, target.file.path);
+    onrowclick(target.file, target.source, new MouseEvent("click"));
+    await tick();
+    const el = listEl?.querySelector(`[data-row-key="${CSS.escape(key)}"]`);
+    if (el instanceof HTMLElement) {
+      el.focus({ preventScroll: true });
+      // The real scroller is this outer container (the VirtualList roots are
+      // inert in the current layout — their flex-1 has no flex parent), so
+      // route scrolling through the nearest scrollable ancestor. That also
+      // stays correct if the inner lists ever become the actual scrollers.
+      el.scrollIntoView({ block: "nearest" });
+    } else {
+      listEl?.focus(); // resilience: keep keydown alive if the row vanished
+    }
+  }
+
   /** Paths of the current selection that fall inside one section list. */
   function selectedPaths(files: FileStatus[], source: "worktree" | "staged"): string[] {
     return files
@@ -68,18 +165,19 @@
   }
 
   function statusChip(file: FileStatus): { letter: string; cls: string; title: string } {
+    // Chip backgrounds sit at 700/600 level so white 10px text keeps ≥4.5:1.
     if (file.conflict) {
       return { letter: "!", cls: "bg-red-600 text-white", title: file.status };
     }
     const s = file.status;
     if (file.untracked || s.startsWith("?"))
-      return { letter: "U", cls: "bg-green-600/90 text-white", title: "untracked" };
-    if (s.includes("D")) return { letter: "D", cls: "bg-red-500/90 text-white", title: "deleted" };
+      return { letter: "U", cls: "bg-green-700 text-white", title: "untracked" };
+    if (s.includes("D")) return { letter: "D", cls: "bg-red-600 text-white", title: "deleted" };
     if (s.includes("R") || s.includes("C"))
-      return { letter: "R", cls: "bg-blue-500/90 text-white", title: "renamed/copied" };
-    if (s.includes("A")) return { letter: "A", cls: "bg-green-500/90 text-white", title: "added" };
+      return { letter: "R", cls: "bg-blue-600 text-white", title: "renamed/copied" };
+    if (s.includes("A")) return { letter: "A", cls: "bg-green-700 text-white", title: "added" };
     if (s.includes("M"))
-      return { letter: "M", cls: "bg-amber-500/90 text-white", title: "modified" };
+      return { letter: "M", cls: "bg-amber-700 text-white", title: "modified" };
     return { letter: "M", cls: "bg-muted-foreground/70 text-white", title: s };
   }
 
@@ -94,7 +192,14 @@
   };
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto pb-2">
+<div
+  bind:this={listEl}
+  role="listbox"
+  aria-label={t("workspace.fileListAria")}
+  tabindex="-1"
+  class="min-h-0 flex-1 overflow-y-auto pb-2"
+  onkeydown={onContainerKeydown}
+>
   <!-- 冲突分区 -->
   {#if conflicts.length > 0}
     <StatusSectionHeader
@@ -114,8 +219,9 @@
       {@const chip = statusChip(file)}
       {@const { dir, name } = splitPath(file.path)}
       <div
-        role="button"
-        tabindex="-1"
+        role="option"
+        aria-selected={activeKey === key || selection.has(key)}
+        tabindex={isTabStop(key) ? 0 : -1}
         data-row-key={key}
         class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {activeKey === key ? 'bg-accent' : selection.has(key) ? 'bg-accent/60' : 'hover:bg-accent/50'}"
         onclick={(e) => onrowclick(file, "worktree", e)}
@@ -124,7 +230,7 @@
         }}
         oncontextmenu={(e) => onrowcontext(file, "worktree", e)}
       >
-        <span class="flex size-4 shrink-0 animate-pulse items-center justify-center rounded-sm text-[10px] font-bold {chip.cls}">
+        <span class="flex size-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold {chip.cls}">
           {chip.letter}
         </span>
         <span class="min-w-0 flex-1 truncate">
@@ -147,10 +253,9 @@
             </span>
           {/if}
         {/if}
-        <span class="text-[10px] text-red-500/80">{file.status}</span>
         <button
           type="button"
-          class="invisible rounded p-0.5 text-red-500/70 hover:bg-red-500/10 hover:text-red-500 group-hover:visible"
+          class="invisible grid size-6 shrink-0 place-items-center rounded text-red-500/70 hover:bg-red-500/10 hover:text-red-500 group-hover:visible group-focus-within:visible"
           title={t("workspace.discard")}
           onclick={(e) => {
             e.stopPropagation();
@@ -191,8 +296,9 @@
       {@const chip = statusChip(file)}
       {@const { dir, name } = splitPath(file.path)}
       <div
-        role="button"
-        tabindex="-1"
+        role="option"
+        aria-selected={activeKey === key || selection.has(key)}
+        tabindex={isTabStop(key) ? 0 : -1}
         data-row-key={key}
         class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {activeKey === key ? 'bg-accent' : selection.has(key) ? 'bg-accent/60' : 'hover:bg-accent/50'}"
         onclick={(e) => onrowclick(file, "staged", e)}
@@ -221,7 +327,7 @@
         {/if}
         <button
           type="button"
-          class="invisible rounded p-0.5 hover:bg-muted group-hover:visible"
+          class="invisible grid size-6 shrink-0 place-items-center rounded hover:bg-muted group-hover:visible group-focus-within:visible"
           title={t("workspace.unstage")}
           onclick={(e) => {
             e.stopPropagation();
@@ -277,8 +383,9 @@
       {@const chip = statusChip(file)}
       {@const { dir, name } = splitPath(file.path)}
       <div
-        role="button"
-        tabindex="-1"
+        role="option"
+        aria-selected={activeKey === key || selection.has(key)}
+        tabindex={isTabStop(key) ? 0 : -1}
         data-row-key={key}
         class="group flex h-full cursor-pointer items-center gap-2 px-3 text-[13px] transition-colors duration-[120ms] ease-out {activeKey === key ? 'bg-accent' : selection.has(key) ? 'bg-accent/60' : 'hover:bg-accent/50'}"
         onclick={(e) => onrowclick(file, "worktree", e)}
@@ -307,7 +414,7 @@
         {/if}
         <button
           type="button"
-          class="invisible rounded p-0.5 text-red-500/70 hover:bg-red-500/10 hover:text-red-500 group-hover:visible"
+          class="invisible grid size-6 shrink-0 place-items-center rounded text-red-500/70 hover:bg-red-500/10 hover:text-red-500 group-hover:visible group-focus-within:visible"
           title={t("workspace.discard")}
           onclick={(e) => {
             e.stopPropagation();
@@ -318,7 +425,7 @@
         </button>
         <button
           type="button"
-          class="invisible rounded p-0.5 hover:bg-muted group-hover:visible"
+          class="invisible grid size-6 shrink-0 place-items-center rounded hover:bg-muted group-hover:visible group-focus-within:visible"
           title={t("workspace.stage")}
           onclick={(e) => {
             e.stopPropagation();

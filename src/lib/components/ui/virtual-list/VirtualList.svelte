@@ -34,6 +34,9 @@
   export function scrollToIndex(index: number): void {
     if (!scroller) return;
     scroller.scrollTop = Math.max(0, index * itemHeight - viewport / 2 + itemHeight / 2);
+    // Sync internal state immediately: the scroll event only fires async, and
+    // callers must be able to `await tick()` and see the new window rendered.
+    scrollTop = scroller.scrollTop;
   }
 
   const start = $derived(
