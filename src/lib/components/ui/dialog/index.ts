@@ -8,6 +8,7 @@ import Portal from "./dialog-portal.svelte";
 import Title from "./dialog-title.svelte";
 import Trigger from "./dialog-trigger.svelte";
 import Root from "./dialog.svelte";
+import ResizableContent from "./resizable-content.svelte";
 
 export {
 	Root,
@@ -18,6 +19,7 @@ export {
 	Trigger,
 	Overlay,
 	Content,
+	ResizableContent,
 	Description,
 	Close,
 	//
@@ -29,6 +31,7 @@ export {
 	Trigger as DialogTrigger,
 	Overlay as DialogOverlay,
 	Content as DialogContent,
+	ResizableContent as DialogResizableContent,
 	Description as DialogDescription,
 	Close as DialogClose,
 };

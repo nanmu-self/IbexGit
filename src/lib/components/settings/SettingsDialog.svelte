@@ -5,7 +5,7 @@
    * （P8 遗留的持久化）也在此配置。
    */
   import * as Dialog from "$lib/components/ui/dialog";
-  import { untrack } from "svelte";
+  import { ResizableContent } from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -45,117 +45,6 @@
 
   const open = $derived(appDialogs.settingsOpen);
   const section = $derived(appDialogs.settingsSection);
-
-  // ---- 弹窗几何：右缘/底缘/右下角握把自由拖拽调大小，左上角锚定，尺寸持久化 ----
-  const DLG_DEFAULT_W = 880;
-  const DLG_DEFAULT_H = 620;
-  const DLG_MIN_W = 560;
-  const DLG_MIN_H = 360;
-  const DLG_MARGIN = 12; // 与主窗口边缘的最小间距
-
-  type DlgDir = "e" | "s" | "se";
-  let dlgW = $state(DLG_DEFAULT_W);
-  let dlgH = $state(DLG_DEFAULT_H);
-  let dlgX = $state(0);
-  let dlgY = $state(0);
-  let resizeDir = $state<DlgDir | null>(null);
-
-  function clampDlgSize(w: number, h: number): { w: number; h: number } {
-    const maxW = Math.max(DLG_MIN_W, window.innerWidth - DLG_MARGIN * 2);
-    const maxH = Math.max(DLG_MIN_H, window.innerHeight - DLG_MARGIN * 2);
-    return {
-      w: Math.min(maxW, Math.max(DLG_MIN_W, Math.round(w))),
-      h: Math.min(maxH, Math.max(DLG_MIN_H, Math.round(h))),
-    };
-  }
-
-  function centerDlg(w: number, h: number): void {
-    dlgX = Math.max(0, Math.round((window.innerWidth - w) / 2));
-    dlgY = Math.max(0, Math.round((window.innerHeight - h) / 2));
-  }
-
-  // 打开时恢复上次尺寸并居中；$effect.pre 渲染前执行，避免首帧位置闪跳。
-  // untrack：拖拽提交的新尺寸不应触发重新居中。
-  $effect.pre(() => {
-    if (!open) return;
-    untrack(() => {
-      const c = clampDlgSize(
-        settings.settingsWidth || DLG_DEFAULT_W,
-        settings.settingsHeight || DLG_DEFAULT_H,
-      );
-      dlgW = c.w;
-      dlgH = c.h;
-      centerDlg(c.w, c.h);
-    });
-  });
-
-  // 主窗口缩小时把弹窗钳回可视范围。
-  $effect(() => {
-    if (!open) return;
-    const onViewportResize = (): void => {
-      const c = clampDlgSize(dlgW, dlgH);
-      dlgW = c.w;
-      dlgH = c.h;
-      dlgX = Math.min(dlgX, Math.max(0, window.innerWidth - c.w));
-      dlgY = Math.min(dlgY, Math.max(0, window.innerHeight - c.h));
-    };
-    window.addEventListener("resize", onViewportResize);
-    return () => window.removeEventListener("resize", onViewportResize);
-  });
-
-  function beginResize(dir: DlgDir, event: PointerEvent): void {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    resizeDir = dir;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startW = dlgW;
-    const startH = dlgH;
-    (event.currentTarget as Element).setPointerCapture(event.pointerId);
-
-    const onMove = (ev: PointerEvent): void => {
-      const c = clampDlgSize(
-        dir === "s" ? startW : startW + (ev.clientX - startX),
-        dir === "e" ? startH : startH + (ev.clientY - startY),
-      );
-      dlgW = c.w;
-      dlgH = c.h;
-    };
-    const finish = (): void => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-      resizeDir = null;
-      void settings.setSettingsSize(dlgW, dlgH);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
-  }
-
-  /** 握把聚焦后方向键微调，步进即持久化。 */
-  function resizeKey(dir: DlgDir, event: KeyboardEvent): void {
-    const dx = event.key === "ArrowLeft" ? -8 : event.key === "ArrowRight" ? 8 : 0;
-    const dy = event.key === "ArrowUp" ? -8 : event.key === "ArrowDown" ? 8 : 0;
-    if (dx === 0 && dy === 0) return;
-    event.preventDefault();
-    const c = clampDlgSize(
-      dir === "s" ? dlgW : dlgW + dx,
-      dir === "e" ? dlgH : dlgH + dy,
-    );
-    dlgW = c.w;
-    dlgH = c.h;
-    void settings.setSettingsSize(c.w, c.h);
-  }
-
-  /** 双击角部握把：恢复默认尺寸并重新居中（持久化 0 = 默认）。 */
-  function resetDlgSize(): void {
-    const c = clampDlgSize(DLG_DEFAULT_W, DLG_DEFAULT_H);
-    dlgW = c.w;
-    dlgH = c.h;
-    centerDlg(c.w, c.h);
-    void settings.setSettingsSize(0, 0);
-  }
 
   const SECTIONS: { id: SettingsSection; icon: typeof Settings2 }[] = [
     { id: "general", icon: Settings2 },
@@ -541,10 +430,23 @@
 </script>
 
 <Dialog.Root bind:open={appDialogs.settingsOpen}>
-  <!-- 尺寸/位置走 inline style：可靠压过基类的 sm:max-w-sm 与居中 transform -->
-  <Dialog.Content
-    class="flex gap-0 overflow-hidden p-0 {resizeDir ? 'select-none' : ''}"
-    style="left:{dlgX}px; top:{dlgY}px; width:{dlgW}px; height:{dlgH}px; max-width:none; translate:none;"
+  <!-- 几何/握把/持久化由 ResizableContent 承担；持久化 0 = 恢复默认 -->
+  <ResizableContent
+    open={open}
+    defaultWidth={880}
+    defaultHeight={620}
+    minWidth={560}
+    minHeight={360}
+    savedWidth={settings.settingsWidth}
+    savedHeight={settings.settingsHeight}
+    labels={{
+      width: t("settings.resize.width"),
+      height: t("settings.resize.height"),
+      both: t("settings.resize.both"),
+    }}
+    onPersist={(w, h) => void settings.setSettingsSize(w, h)}
+    onReset={() => void settings.setSettingsSize(0, 0)}
+    class="flex gap-0 overflow-hidden p-0"
   >
     <Dialog.Header class="sr-only">
       <Dialog.Title>{t("settings.title")}</Dialog.Title>
@@ -1199,31 +1101,7 @@
         </section>
       {/if}
     </div>
-
-    <!-- 自由调大小握把：右缘 / 底缘 / 右下角（左上角锚定；角部双击复位） -->
-    <button
-      type="button"
-      aria-label={t("settings.resize.width")}
-      class="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize touch-none bg-transparent transition-colors outline-none hover:bg-primary/20 focus-visible:bg-primary/20 {resizeDir === 'e' ? 'bg-primary/30' : ''}"
-      onpointerdown={(e) => beginResize("e", e)}
-      onkeydown={(e) => resizeKey("e", e)}
-    ></button>
-    <button
-      type="button"
-      aria-label={t("settings.resize.height")}
-      class="absolute inset-x-0 bottom-0 z-10 h-1.5 cursor-ns-resize touch-none bg-transparent transition-colors outline-none hover:bg-primary/20 focus-visible:bg-primary/20 {resizeDir === 's' ? 'bg-primary/30' : ''}"
-      onpointerdown={(e) => beginResize("s", e)}
-      onkeydown={(e) => resizeKey("s", e)}
-    ></button>
-    <button
-      type="button"
-      aria-label={t("settings.resize.both")}
-      class="absolute right-0 bottom-0 z-20 size-4 cursor-nwse-resize touch-none bg-transparent transition-colors outline-none hover:bg-primary/20 focus-visible:bg-primary/20 {resizeDir === 'se' ? 'bg-primary/30' : ''}"
-      onpointerdown={(e) => beginResize("se", e)}
-      ondblclick={resetDlgSize}
-      onkeydown={(e) => resizeKey("se", e)}
-    ></button>
-  </Dialog.Content>
+  </ResizableContent>
 </Dialog.Root>
 
 <!-- SSH 密钥生成（嵌套在设置中心之上） -->
