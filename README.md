@@ -73,6 +73,11 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 - 分支检出 / 新建 / 删除 / 重命名，Merge / Rebase（dry-run 预览），`--force-with-lease` 推送
 - 标签（附注 / 轻量）、贮藏（apply / pop / drop / 查看 diff）、Reset 三档、Clean 预览、Reflog 浏览器
 
+**提交统计**
+- 独立统计对话框（历史视图工具栏入口）：总览 / 本月 / 本周 / 本日四粒度切换，后端一次 `git log` 取数、切 tab 零 IPC；分支下拉可统计任意分支
+- 柱状图：全历史按月（可横向滚动）、本月 / 本周按天、本日按小时；零填充时间轴 + 本地时区口径，`--no-merges` 对齐 GitHub contribution 口径
+- 贡献者列表与底部合计跟随所选周期（按 email 聚合、显示名取最新一次提交所用名字）；纯本地计算，零依赖手写 SVG 图表，亮 / 暗主题自动跟随，对话框打开期间仓库变更自动刷新
+
 **冲突解决**
 - merge / rebase / cherry-pick / pull 四类冲突全流程闭环；Content / Delete-Modify / Add-Add / Binary 四类可视化解决
 - CodeMirror 6 冲突编辑器（按需动态加载）、接受当前 / 传入 / 双方、冲突间导航
@@ -147,36 +152,41 @@ cargo test                # 全部测试；tauri-specta 绑定在此时重新生
 src/                        # SvelteKit 前端
   lib/git/                  # 类型化命令 API、repo-changed 事件、错误归一化
   lib/git/bindings.ts       # tauri-specta 生成（勿手改）
-  lib/components/           # ui / workspace / diff / history / refs / merge / settings / ai …
+  lib/components/           # ui / workspace / diff / history / refs / merge / settings / ai / file / credential / palette / stats …
   lib/{keyboard,stores,i18n,theme}
+  routes/                   # SPA 路由（+page.svelte = 主窗口）
 src-tauri/src/
   core/
-    engine/                 # GitEngine trait、porcelain 解析器、CLI 实现
+    engine/                 # GitEngine trait、CLI 实现、porcelain 解析器、patch/conflict/stats/untracked
     runner.rs               # GitProcessRunner：spawn/超时/kill/stdin 模式
     repo.rs                 # RepoManager：会话缓存/写 gate/读信号量
     watcher.rs              # notify → 分类 → 防抖 → 失效事件
-    task.rs / graph.rs / recovery.rs / credential.rs / ai/ …
-  commands/                 # #[tauri::command] 薄封装
+    graph.rs / recovery.rs / credential.rs / ai/ / sshkeys.rs / workspace.rs / compat.rs / error.rs / …
+  commands/                 # #[tauri::command] 薄封装（ai / app / net / ssh / workspace / mod）
+  bin/credential-helper.rs  # 独立凭据 helper 子进程（git credential 协议 + askpass）
 docs/
   PLAN.md                   # 开发计划（P0–P12，进度真相源）
-  adr/                      # 架构决策记录
+  adr/                      # 架构决策记录（14 篇）
   capability-matrix.md      # Git 能力规格与 Feature 分层
-  design/                   # 专项设计（凭据/SSH、键位表）
+  design/                   # 专项设计（凭据/SSH、键位表等）
 ```
 
 ### 测试约定
 
-- porcelain 解析器为纯函数 + 内联 fixture 单测，另有 Golden Test 固定期望输出；
+- porcelain 解析器为纯函数 + 内联 fixture 单测；
 - 时序逻辑（防抖等）用 `tokio::test(start_paused = true)`；
-- 真实 git 集成测试（watcher 端到端、并发 stage、冲突恢复、AI 流程等）：临时目录 + `git init`。
+- 真实 git 集成测试（watcher 端到端、并发 stage、冲突恢复、AI 流程、SSH 覆盖等）：临时目录 + `git init`，临时文件命名含 pid + 纳秒时间戳以避免并行测试冲突；
+- `tests/bindings.rs` 在 `cargo test` 中校验 tauri-specta 生成的 bindings.ts 是否与命令签名同步。
 
 CI（GitHub Actions）在每 PR 上运行前端 `check + build`，并在 Windows / macOS / Ubuntu 三平台矩阵上运行 `cargo fmt --check` + `clippy -D warnings` + `cargo test`。
 
 ## 文档
 
 - [docs/PLAN.md](docs/PLAN.md) — 产品定位、功能清单、总体架构、阶段计划（P0–P12）、难点预案
-- [docs/adr/](docs/adr/) — 架构决策记录（14 篇）
+- [docs/adr/](docs/adr/) — 架构决策记录（14 篇，git CLI 选型、diff 管线、凭据 broker、虚拟渲染、包体策略、AI Provider 管线等）
 - [docs/capability-matrix.md](docs/capability-matrix.md) — Git 能力规格（Capability）与 Feature 分层
+- [docs/design/credential-ssh.md](docs/design/credential-ssh.md) — 凭据接管与 SSH 范围设计（三平台 IPC 通道矩阵、取消流、平台差异）
+- [docs/design/keymap.md](docs/design/keymap.md) — 键位表（Feature 注册表 → keymap 单一数据源 → 菜单/命令面板同源展示）
 - [AGENTS.md](AGENTS.md) — AI 编码代理协作约定
 
 ## License
