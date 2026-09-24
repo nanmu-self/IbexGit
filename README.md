@@ -107,14 +107,12 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 
 标准调用链：**UI → commands（写持 per-repo WriteGate、读取信号量）→ GitEngine（CliEngine 实现）→ GitProcessRunner → git**；长任务经 TaskManager 执行并推送进度事件。
 
-几条核心设计（详见 [docs/adr/](docs/adr/)）：
+几条核心设计：
 
-- **GitEngine trait 是 git 操作唯一入口**（[ADR-001](docs/adr/ADR-001-git-cli-over-libgit2.md)）：新能力 = trait 方法 + CLI 实现 + 纯函数解析器 + fixture 单测；
+- **GitEngine trait 是 git 操作唯一入口**（ADR-001）：新能力 = trait 方法 + CLI 实现 + 纯函数解析器 + fixture 单测；
 - **缓存只作展示加速，`.git` 与工作区是唯一真相源**：所有变更（含应用自身写操作）统一走 watcher 失效路径 → `repo://changed` 事件；
-- **并发模型**（[ADR-005](docs/adr/ADR-005-repo-concurrency-model.md)）：写操作持 per-repo WriteGate 串行执行规避 index.lock 冲突，只读操作全局并发 ≤ 8；
+- **并发模型**（ADR-005）：写操作持 per-repo WriteGate 串行执行规避 index.lock 冲突，只读操作全局并发 ≤ 8；
 - **恢复体系**：丢弃 / 重置 / 变基 / 合并均有撤销安全网（工作区快照 + backup ref 双轨）。
-
-完整架构决策记录见 [docs/adr/](docs/adr/)（git CLI 选型、diff 管线、凭据 broker、虚拟渲染、包体策略、AI Provider 管线等 14 篇）。
 
 ## 开发环境
 
@@ -165,7 +163,6 @@ src-tauri/src/
     graph.rs / recovery.rs / credential.rs / ai/ / sshkeys.rs / workspace.rs / compat.rs / error.rs / …
   commands/                 # #[tauri::command] 薄封装（ai / app / net / ssh / workspace / mod）
   bin/credential-helper.rs  # 独立凭据 helper 子进程（git credential 协议 + askpass）
-docs/adr/                   # 架构决策记录（14 篇）
 ```
 
 ### 测试约定
@@ -179,7 +176,6 @@ CI（GitHub Actions）在每 PR 上运行前端 `check + build`，并在 Windows
 
 ## 文档
 
-- [docs/adr/](docs/adr/) — 架构决策记录（14 篇，git CLI 选型、diff 管线、凭据 broker、虚拟渲染、包体策略、AI Provider 管线等）
 - [AGENTS.md](AGENTS.md) — AI 编码代理协作约定
 
 ## License

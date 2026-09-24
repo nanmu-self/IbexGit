@@ -1,7 +1,7 @@
 # AGENTS.md — AI 编码代理指南
 
 IbexGit：本地优先的 Git 图形客户端（Tauri 2 + SvelteKit 5 + TypeScript + Rust）。
-架构决策：`docs/adr/`（14 篇）；阶段路线图见 README 的进度表。
+阶段路线图见 README 的进度表。
 
 ## 技术栈
 
