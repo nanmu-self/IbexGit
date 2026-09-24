@@ -57,17 +57,30 @@
   // ---- keyboard navigation (listbox pattern, data-driven: the virtualized
   // DOM only holds visible rows, so traversal must use the section data) ----
   let listEl: HTMLDivElement | null = $state(null);
+  /** Per-section virtual list handle (keyboard-nav scrolling). */
+  type SectionList = { ensureVisible(index: number): void };
+  let conflictList: SectionList | null = $state(null);
+  let stagedList: SectionList | null = $state(null);
+  let unstagedList: SectionList | null = $state(null);
 
   interface FlatRow {
     file: FileStatus;
     source: "worktree" | "staged";
+    section: "conflicts" | "staged" | "unstaged";
+    index: number;
   }
 
   function flatRows(): FlatRow[] {
     const out: FlatRow[] = [];
-    conflicts.forEach((f) => out.push({ file: f, source: "worktree" }));
-    staged.forEach((f) => out.push({ file: f, source: "staged" }));
-    unstaged.forEach((f) => out.push({ file: f, source: "worktree" }));
+    conflicts.forEach((f, i) =>
+      out.push({ file: f, source: "worktree", section: "conflicts", index: i }),
+    );
+    staged.forEach((f, i) =>
+      out.push({ file: f, source: "staged", section: "staged", index: i }),
+    );
+    unstaged.forEach((f, i) =>
+      out.push({ file: f, source: "worktree", section: "unstaged", index: i }),
+    );
     return out;
   }
 
@@ -136,14 +149,25 @@
     const target = rows[next];
     const key = keyOf(target.source, target.file.path);
     onrowclick(target.file, target.source, new MouseEvent("click"));
+    // Scroll the target section's virtual window BEFORE the tick: ensureVisible
+    // synchronously updates that VirtualList's internal scrollTop state, so
+    // after one tick the target row is guaranteed rendered — focus() can
+    // never hit a no-op on an unrendered row. The trailing scrollIntoView is
+    // a no-op in the normal flex layout (sections always fit the container);
+    // caveat: it CAN programmatically scroll an overflow-hidden ancestor, so
+    // if the outer container ever grows real overflow, replace it instead of
+    // relying on it (users couldn't scroll back out).
+    const list =
+      target.section === "conflicts"
+        ? conflictList
+        : target.section === "staged"
+          ? stagedList
+          : unstagedList;
+    list?.ensureVisible(target.index);
     await tick();
     const el = listEl?.querySelector(`[data-row-key="${CSS.escape(key)}"]`);
     if (el instanceof HTMLElement) {
       el.focus({ preventScroll: true });
-      // The real scroller is this outer container (the VirtualList roots are
-      // inert in the current layout — their flex-1 has no flex parent), so
-      // route scrolling through the nearest scrollable ancestor. That also
-      // stays correct if the inner lists ever become the actual scrollers.
       el.scrollIntoView({ block: "nearest" });
     } else {
       listEl?.focus(); // resilience: keep keydown alive if the row vanished
@@ -197,7 +221,7 @@
   role="listbox"
   aria-label={t("workspace.fileListAria")}
   tabindex="-1"
-  class="min-h-0 flex-1 overflow-y-auto pb-2"
+  class="flex min-h-0 flex-1 flex-col overflow-hidden pb-2"
   onkeydown={onContainerKeydown}
 >
   <!-- 冲突分区 -->
@@ -266,7 +290,14 @@
         </button>
       </div>
     {/snippet}
-    <VirtualList items={conflicts} itemHeight={ROW} row={conflictRow} getKey={(f) => `c:${f.path}`} />
+    <VirtualList
+      bind:this={conflictList}
+      sizing="content"
+      items={conflicts}
+      itemHeight={ROW}
+      row={conflictRow}
+      getKey={(f) => `c:${f.path}`}
+    />
   {/if}
 
   <!-- 已暂存分区 -->
@@ -338,11 +369,18 @@
         </button>
       </div>
     {/snippet}
-    <VirtualList items={staged} itemHeight={ROW} row={stagedRow} getKey={(f) => `s:${f.path}`} />
+    <VirtualList
+      bind:this={stagedList}
+      sizing="content"
+      items={staged}
+      itemHeight={ROW}
+      row={stagedRow}
+      getKey={(f) => `s:${f.path}`}
+    />
   {/if}
 
   <!-- 未暂存分区 -->
-  <div class="mt-1">
+  <div class="mt-1 shrink-0">
     <StatusSectionHeader
       title={t("workspace.unstaged")}
       count={unstaged.length}
@@ -436,7 +474,14 @@
         </button>
       </div>
     {/snippet}
-    <VirtualList items={unstaged} itemHeight={ROW} row={unstagedRow} getKey={(f) => `u:${f.path}`} />
+    <VirtualList
+      bind:this={unstagedList}
+      sizing="content"
+      items={unstaged}
+      itemHeight={ROW}
+      row={unstagedRow}
+      getKey={(f) => `u:${f.path}`}
+    />
   {/if}
 
   {#if conflicts.length === 0 && staged.length === 0 && unstaged.length === 0}

@@ -24,7 +24,7 @@
 </script>
 
 <div
-  class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium {tone === 'red'
+  class="flex shrink-0 items-center gap-2 px-3 py-1.5 text-xs font-medium {tone === 'red'
     ? 'text-red-500'
     : 'text-muted-foreground'}"
 >
