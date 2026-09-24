@@ -65,6 +65,10 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-clipboard-manager = "2.3.3"
+# 自动更新（docs/auto-update-plan.md）：updater 检查/下载/签名校验，process 供 relaunch。
+# 私钥在 ~/.tauri/ibexgit-updater.key（绝不入库），CI 用 TAURI_SIGNING_PRIVATE_KEY 注入。
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

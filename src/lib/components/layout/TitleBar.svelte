@@ -29,6 +29,7 @@
   import Copyright from "@lucide/svelte/icons/copyright";
   import Tag from "@lucide/svelte/icons/tag";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { updater } from "$lib/updater/useAppUpdater.svelte";
 
   const platform = getPlatform();
 
@@ -347,6 +348,13 @@
       </div>
     </div>
     <Dialog.Footer>
+      <Button
+        variant="outline"
+        disabled={updater.status === "checking" || updater.hasUpdate}
+        onclick={() => void updater.checkForUpdate({ silent: false })}
+      >
+        {updater.status === "checking" ? t("update.checking") : t("update.check")}
+      </Button>
       <Button variant="outline" onclick={() => (appDialogs.aboutOpen = false)}>
         {t("common.close")}
       </Button>

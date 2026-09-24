@@ -24,6 +24,8 @@ class AppDialogsStore {
   settingsSection = $state<SettingsSection>("general");
   shortcutsOpen = $state(false);
   aboutOpen = $state(false);
+  /** 自动更新对话框（docs/auto-update-plan.md），由 updater 状态机/Toolbar 角标打开。 */
+  updateOpen = $state(false);
   /** P11 日报/周报对话框。 */
   aiReportOpen = $state(false);
   /** 仓库级常用配置（.git/config）对话框；null = 当前活动仓库。 */
@@ -45,6 +47,10 @@ class AppDialogsStore {
 
   openAbout(): void {
     this.aboutOpen = true;
+  }
+
+  openUpdate(): void {
+    this.updateOpen = true;
   }
 
   openAiReport(): void {

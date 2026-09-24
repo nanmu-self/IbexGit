@@ -8,6 +8,8 @@
   import { showToast } from "$lib/stores/toast";
   import { runFetch, isBusy } from "$lib/stores/netops.svelte";
   import { requestRefAction } from "$lib/stores/refbus";
+  import { updater } from "$lib/updater/useAppUpdater.svelte";
+  import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import Download from "@lucide/svelte/icons/download";
   import ArrowDownToLine from "@lucide/svelte/icons/arrow-down-to-line";
   import ArrowUpFromLine from "@lucide/svelte/icons/arrow-up-from-line";
@@ -204,6 +206,32 @@
     </div>
 
     <!-- 右侧 -->
+    <!-- 自动更新角标（docs/auto-update-plan.md）：仅发现新版本时出现 -->
+    {#if updater.hasUpdate}
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="ghost"
+              size="icon"
+              class="flex h-11 w-auto min-w-12 flex-col gap-0.5 px-2 text-[10px] font-normal"
+              onclick={() => appDialogs.openUpdate()}
+            >
+              <span class="relative">
+                <Download class="size-4" />
+                <span
+                  class="absolute -top-0.5 -right-1 size-2 rounded-full bg-success ring-2 ring-background"
+                ></span>
+              </span>
+              {t("update.badge")}
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>{t("update.badgeTip", { version: updater.newVersion })}</Tooltip.Content>
+      </Tooltip.Root>
+    {/if}
+
     <Tooltip.Root>
       <Tooltip.Trigger>
         {#snippet child({ props })}

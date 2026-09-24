@@ -11,6 +11,8 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { installFrontendLogging } from "$lib/logging";
   import { t } from "$lib/i18n";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import UpdateDialog from "$lib/components/updater/UpdateDialog.svelte";
+  import { updater } from "$lib/updater/useAppUpdater.svelte";
 
   let { children } = $props();
   let dragOver = $state(false);
@@ -18,6 +20,11 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
   // Settings store init (idempotent) — gates session restore in +page.svelte.
   $effect(() => {
     void settings.init();
+  });
+
+  // 自动更新（docs/auto-update-plan.md）：幂等；生产环境延迟静默检查。
+  $effect(() => {
+    updater.init();
   });
 
   // Global keyboard dispatcher (keymap single source, PLAN §4.9).
@@ -114,3 +121,4 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
   bind:open={appDialogs.repoSettingsOpen}
   repoId={appDialogs.repoSettingsRepoId}
 />
+<UpdateDialog />
