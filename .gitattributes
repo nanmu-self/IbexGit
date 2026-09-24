@@ -2,6 +2,7 @@
 * text=auto eol=lf
 
 # 二进制文件
+*.rtf -text
 *.png binary
 *.ico binary
 *.icns binary

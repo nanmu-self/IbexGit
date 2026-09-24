@@ -1,8 +1,9 @@
 [package]
 name = "ibexgit"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "本地优先的 Git 图形客户端"
+authors = ["楠木 <157884200@qq.com>"]
+license = "Apache-2.0"
 edition = "2021"
 # 双 bin 目标（主程序 + credential-helper，P7）下 `cargo run`/`tauri dev` 的
 # 默认选择，否则报 "could not determine which binary to run"。

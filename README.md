@@ -9,7 +9,7 @@
 Tauri 2 · SvelteKit 5 (Svelte 5 runes) · TypeScript · Rust
 
 [![CI](https://github.com/nanmu-self/IbexGit/actions/workflows/ci.yml/badge.svg)](https://github.com/nanmu-self/IbexGit/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](#license)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#开发环境)
 
 </div>
@@ -29,7 +29,7 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 
 > ⚠️ 项目处于活跃开发期（v0.1.0，内部 alpha）。核心功能已齐备但尚未提供正式安装包，欢迎 clone 源码体验 / 参与共建。
 
-开发按 [docs/PLAN.md](docs/PLAN.md) 的 P0–P12 阶段推进，当前进度：
+开发按 P0–P12 阶段推进，当前进度：
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -90,6 +90,7 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 **效率与个性化**
 - 全功能菜单栏 + 全局快捷键体系 + 命令面板（Ctrl+Shift+P，模糊搜索 + 最近使用）
 - 设置中心：主题、语言（中/英）、Git 路径与 pull 策略、网络（代理 / SSH key）、凭据管理、SSH 密钥生成、日志级别热更、Git 配置查看器
+- 仓库级设置：仓库专属 SSH 密钥（`ibexgit.sshkey` 三态）、常用 git 配置编辑
 - AI 助手（自带 Key）：智能提交消息（diff → 消息，可重新生成多方案）、日报 / 周报生成（跨仓库聚合、map-reduce）；支持 OpenAI 兼容端点 / Anthropic / Ollama（本地离线），隐私排除规则 + 发送前预览，**API Key 只存 OS keychain，绝不进 WebView**
 
 ## 技术栈与架构
@@ -104,9 +105,9 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 | 类型同步 | tauri-specta：`#[tauri::command]` → 生成 TS 绑定（编译期对齐） |
 | 日志 | tracing + 按天滚动文件日志 |
 
-标准调用链：**UI → Task → Operation → RepoQueue（每仓库串行写）→ GitEngine → CliEngine → GitProcessRunner → git**。
+标准调用链：**UI → commands（写持 per-repo WriteGate、读取信号量）→ GitEngine（CliEngine 实现）→ GitProcessRunner → git**；长任务经 TaskManager 执行并推送进度事件。
 
-几条核心设计（详见 [docs/PLAN.md](docs/PLAN.md) 与 [docs/adr/](docs/adr/)）：
+几条核心设计（详见 [docs/adr/](docs/adr/)）：
 
 - **GitEngine trait 是 git 操作唯一入口**（[ADR-001](docs/adr/ADR-001-git-cli-over-libgit2.md)）：新能力 = trait 方法 + CLI 实现 + 纯函数解析器 + fixture 单测；
 - **缓存只作展示加速，`.git` 与工作区是唯一真相源**：所有变更（含应用自身写操作）统一走 watcher 失效路径 → `repo://changed` 事件；
@@ -117,7 +118,7 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 
 ## 开发环境
 
-要求：**Node 22+ / pnpm 11+ / Rust stable**，且 `git`（≥ 2.40）在 PATH 中（部分集成测试与运行时均依赖真实 git）。
+要求：**Node 22+ / pnpm 11+ / Rust stable**，且 `git`（≥ 2.40）在 PATH 中（部分集成测试与运行时均依赖真实 git）。Linux 开发需先装 Tauri 系统依赖（webkit2gtk 等，见 [Tauri prerequisites](https://tauri.app/start/prerequisites/)）。
 
 ```bash
 # 安装前端依赖
@@ -137,7 +138,7 @@ pnpm check                # svelte-check 类型检查（必须 0 error）
 pnpm build                # 前端构建（adapter-static）
 
 cd src-tauri
-cargo fmt --all           # 格式化
+cargo fmt --all           # 格式化（提交前必跑，CI 用 --check）
 cargo clippy --all-targets -- -D warnings   # lint（0 warning）
 cargo test                # 全部测试；tauri-specta 绑定在此时重新生成
 ```
@@ -164,11 +165,7 @@ src-tauri/src/
     graph.rs / recovery.rs / credential.rs / ai/ / sshkeys.rs / workspace.rs / compat.rs / error.rs / …
   commands/                 # #[tauri::command] 薄封装（ai / app / net / ssh / workspace / mod）
   bin/credential-helper.rs  # 独立凭据 helper 子进程（git credential 协议 + askpass）
-docs/
-  PLAN.md                   # 开发计划（P0–P12，进度真相源）
-  adr/                      # 架构决策记录（14 篇）
-  capability-matrix.md      # Git 能力规格与 Feature 分层
-  design/                   # 专项设计（凭据/SSH、键位表等）
+docs/adr/                   # 架构决策记录（14 篇）
 ```
 
 ### 测试约定
@@ -182,13 +179,9 @@ CI（GitHub Actions）在每 PR 上运行前端 `check + build`，并在 Windows
 
 ## 文档
 
-- [docs/PLAN.md](docs/PLAN.md) — 产品定位、功能清单、总体架构、阶段计划（P0–P12）、难点预案
 - [docs/adr/](docs/adr/) — 架构决策记录（14 篇，git CLI 选型、diff 管线、凭据 broker、虚拟渲染、包体策略、AI Provider 管线等）
-- [docs/capability-matrix.md](docs/capability-matrix.md) — Git 能力规格（Capability）与 Feature 分层
-- [docs/design/credential-ssh.md](docs/design/credential-ssh.md) — 凭据接管与 SSH 范围设计（三平台 IPC 通道矩阵、取消流、平台差异）
-- [docs/design/keymap.md](docs/design/keymap.md) — 键位表（Feature 注册表 → keymap 单一数据源 → 菜单/命令面板同源展示）
 - [AGENTS.md](AGENTS.md) — AI 编码代理协作约定
 
 ## License
 
-MIT（仓库尚未添加 LICENSE 文件，待 P12 发布阶段补齐）
+[Apache-2.0](LICENSE)

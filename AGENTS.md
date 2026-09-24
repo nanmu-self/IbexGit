@@ -1,110 +1,99 @@
 # AGENTS.md — AI 编码代理指南
 
-IbexGit 是一个**本地优先的 Git 图形客户端**（Tauri 2 + SvelteKit 5 + TypeScript + Rust）。
-本文件给 AI 代理提供高效工作所需的约定与红线。详细规划见 `docs/PLAN.md`（P0–P12 阶段），
-架构决策见 `docs/adr/`。
+IbexGit：本地优先的 Git 图形客户端（Tauri 2 + SvelteKit 5 + TypeScript + Rust）。
+架构决策：`docs/adr/`（14 篇）；阶段路线图见 README 的进度表。
+
+## 技术栈
+
+- **前端**：SvelteKit 5 SPA（Svelte 5 runes）+ Tailwind 4 + shadcn-svelte；Shiki 高亮；CodeMirror 6（冲突编辑，动态加载）
+- **后端**：Tauri 2，git 走系统 git CLI（≥ 2.40，非 libgit2）；tauri-specta 生成 TS 绑定；tracing 日志（stdout + 按天滚动文件）
+- **凭据**：独立 helper 子进程（credential 协议 + askpass）+ OS keychain（keyring）
 
 ## 常用命令
 
 ```bash
-pnpm install              # 安装前端依赖（用 pnpm，CI 用 frozen-lockfile）
-pnpm check                # svelte-check 类型检查（必须 0 error）
-pnpm build                # 前端构建（adapter-static）
-pnpm dev                  # 前端 dev server
+pnpm install              # 用 pnpm，CI 用 frozen-lockfile
+pnpm check                # svelte-check，必须 0 error
+pnpm build                # 前端构建
+pnpm tauri dev            # 桌面开发模式
 
 cd src-tauri
-cargo fmt --all           # 格式化（提交前必跑，CI 用 --check）
-cargo clippy --all-targets -- -D warnings   # lint（0 warning）
-cargo test                # 全部测试；ts-rs 绑定在此时重新生成
-pnpm tauri dev            # 桌面应用开发模式
+cargo fmt --all                             # 提交前必跑，CI 用 --check
+cargo clippy --all-targets -- -D warnings   # 0 warning
+cargo test                # 全部测试；同时重新生成 bindings.ts
 ```
 
-提交前全套：`cargo fmt` → `cargo clippy -- -D warnings` → `cargo test` → `pnpm check` → `pnpm build`。
-测试需要 `git` 在 PATH 中（部分集成测试用真实 git 仓库）。
+提交前全套：`cargo fmt` → `clippy -D warnings` → `cargo test` → `pnpm check` → `pnpm build`。
+测试需 `git`（≥ 2.40）在 PATH。
 
-## 目录结构（PLAN §5）
+## 目录速查
 
 ```
-src/                        # SvelteKit 前端
-  lib/git/                  # 类型化命令 API、repo-changed 事件、错误归一化
-  lib/git/bindings.ts       # tauri-specta 生成（勿手改）
-  lib/components/{ui,workspace,diff,history,refs,merge}
-  lib/{keyboard,stores,i18n,theme}
-src-tauri/src/
-  core/
-    engine/{mod,parse,cli}.rs   # GitEngine trait（唯一入口）、解析器、CLI 实现
-    runner.rs                   # GitProcessRunner：spawn/超时/kill/stdin 模式
-    repo.rs                     # RepoManager：打开/会话缓存/写 gate/读信号量
-    watcher.rs                  # 状态失效：notify → 分类 → 防抖 → 事件
-    task.rs / graph.rs / recovery.rs / credential.rs / compat.rs / error.rs
-  commands/mod.rs           # #[tauri::command] 薄封装
-docs/{PLAN.md,adr/,capability-matrix.md,design/}
+src/lib/git/          # 命令 API（repo/git/recovery/net/app/ai/workspace）+ normalizeError
+  bindings.ts         # tauri-specta 生成，勿手改
+src/lib/diff/         # diff 行模型（虚拟滚动）、词级差异、高亮
+src/lib/components/   # ui/layout/workspace/diff/history/refs/merge/file/credential/ai/settings/palette/…
+src/lib/keyboard/     # keymap.ts 键位单一数据源
+src/lib/stores/       # runes 状态（*.svelte.ts）；toast.ts 唯一 writable；refbus.ts 回调总线
+src/lib/i18n/         # 自研 runes i18n，字典 dictionaries/{zh-CN,en}.json
+src/lib/features.ts   # 功能注册表：菜单/命令面板/快捷键同源
+src-tauri/src/core/
+  engine/             # GitEngine trait + cli.rs 实现 + parse.rs 解析器（唯一 git 入口）
+  runner.rs           # GitProcessRunner：spawn/超时/kill/stdin 模式
+  repo.rs             # RepoManager：写 gate / 读信号量 / 缓存
+  watcher.rs          # notify → 防抖 → repo://changed 失效事件
+  credential.rs ai/ sshkeys.rs task.rs graph.rs recovery.rs …
+src-tauri/src/commands/   # #[tauri::command] 薄封装：mod + ai/app/net/ssh/workspace
+src-tauri/src/bin/credential-helper.rs   # 独立凭据 helper
+src-tauri/tests/      # 集成测试（含 bindings.rs 同步校验）
 ```
 
-## 架构红线（改动前必读）
+## 规范与红线
 
-1. **GitEngine trait 是 git 操作唯一入口**（ADR-001：git CLI 而非 libgit2）。
-   不要在 runner.rs 之外直接 `Command::new("git")`；新 git 能力 =
-   trait 方法 + cli.rs 实现 + parse.rs 纯函数解析器 + 单测。
-
-2. **git 子进程永不交互**：stdin 只允许 `Null`（默认，读即快速失败）或
-   `Feed`（一次性写入后关闭）。环境兜底 `GIT_TERMINAL_PROMPT=0`、
-   `GIT_EDITOR=true`，并强制 `-c core.quotepath=false`（中文路径 raw UTF-8）。
-   凭据将来走独立 helper 子进程，不经 git 主进程 stdin。
-
-3. **缓存只作展示加速，`.git` 与工作区是唯一真相源**（§4.3）。
-   RepoManager 不提供"长期可信"状态；任何变更（含 IbexGit 自己的写操作）
-   都必须走 watcher 失效路径 → `invalidate()` → `repo://changed`。
-   不要为内部写操作另开快速通道。
-
-4. **变更类操作必须持有 per-repo `WriteGate`**（避免 index.lock 冲突）；
-   只读操作先取 `read_permit()`（全局并发 ≤ 8）。见 commands/mod.rs 现有
-   模式，新命令照抄。
-
-5. **AppError 序列化为 `{ "code": "<variant>", ...fields }`**（serde tag）。
-   前端 `normalizeError`（lib/git/index.ts）依赖此形状。注意：AppError 刻意
-   **不用** `thiserror::Error` derive（String source 与 AsDynError 冲突），
-   手写 `Display` + `std::error::Error`——别"修复"回去。
-
-6. **`src/lib/git/bindings.ts` 由 tauri-specta 生成**（ADR-009）。新增命令 =
-   Rust 端加 `#[tauri::command]` + `#[specta::specta]` → 登记进 lib.rs 的
-   `specta_builder()` → `cargo test` 重新生成 bindings.ts + 提交产物。
-   不要手改生成文件，不要用 `tauri::generate_handler!`。
-
-7. **Svelte 5 runes**（ADR-002）：新组件用 `$state/$derived/$effect`，
-   不要引入 legacy `export let` / store 订阅语法（stores/ 目录的既有
-   writable 除外）。UI 组件基于 shadcn-svelte（ADR-008）。
-
-8. **i18n**：P2 起用户可见字符串一律走 `lib/i18n` 的 `t()`，不要硬编码。
+1. **GitEngine trait 是 git 操作唯一入口**（ADR-001）。不要在 runner.rs 之外
+   `Command::new("git")`；新 git 能力 = trait 方法 + cli.rs 实现 + parse.rs 纯函数解析器 + 单测。
+2. **git 子进程永不交互**：stdin 只允许 `Null`（默认）或 `Feed`（一次写入即关）；
+   强制 `GIT_TERMINAL_PROMPT=0`、`GIT_EDITOR=true`、`-c core.quotepath=false`。
+   凭据走 helper-first（ADR-014，追加链尾注入，独立进程回连 CredentialBroker）。
+3. **缓存只作展示加速，`.git` 与工作区是唯一真相源**。所有变更（含自身写操作）
+   走 watcher 失效 → `repo://changed`，不为内部写操作开快速通道。
+4. **写操作持 per-repo `WriteGate`，读操作取 `read_permit()`**（并发 ≤ 8），
+   照 commands/mod.rs 现有模式。
+5. **AppError** 序列化为 `{ "code": "<variant>", ...fields }`（serde tag），前端
+   `normalizeError` 依赖此形状。刻意不用 thiserror derive（手写 Display）——别"修复"。
+6. **bindings.ts 由 tauri-specta 生成**（ADR-009）：新增命令 = `#[tauri::command]`
+   + `#[specta::specta]` → 登记 `lib.rs` 的 `specta_builder()` → `cargo test` 重新生成并提交。
+   不要用 `tauri::generate_handler!`，`ErrorHandlingMode::Throw` 不改。
+7. **Svelte 5 runes**（ADR-002）：新代码一律 `$state/$derived/$effect`，不写
+   legacy `export let` / store 订阅（toast.ts、refbus.ts 为历史遗留）。UI 基于 shadcn-svelte。
+8. **用户可见字符串一律走 `t()`**（ADR-011 自研 i18n，勿引入 svelte-i18n）；
+   新字符串同时补 zh-CN.json 和 en.json。
+9. **功能与键位单一数据源**：可从菜单/命令面板/快捷键触达的功能登记进
+   `features.ts`，键位引用 `keymap.ts`，不建第二份数据源。
 
 ## 测试约定
 
-- **解析器**：纯函数 + 内联 fixture 单测。注意 Rust 字符串续行 `\`+换行
-  会吞掉下一行前导空白——unified diff 上下文行的前导空格要写 `\x20`。
-- **时序逻辑**（防抖等）：`#[tokio::test(start_paused = true)]` +
-  `tokio::time::advance`（tokio dev-dep 含 test-util）。
-- **真实 git 集成测试**（watcher 端到端、并发 stage、engine smoke 闭环）：
-  临时目录 + `git init`，超时给足（≥10s）。CI 三平台都装了 git。
-- bindings 导出测试（tests/bindings.rs）在 `cargo test` 中运行；改了
-  命令/事件/DTO 后记得提交重新生成的 bindings.ts。
-- 新增解析器/防抖/缓存行为必须有对应单测——这是 P1 的验收标准之一。
+- 解析器：纯函数 + 内联 fixture 单测。注意 Rust `\`+换行续行吞前导空白，
+  diff 上下文行前导空格写 `\x20`。
+- 时序逻辑：`#[tokio::test(start_paused = true)]` + `tokio::time::advance`。
+- 集成测试在 `src-tauri/tests/`：临时目录 + `git init`，超时 ≥10s；临时文件
+  命名带 pid + 纳秒时间戳防并行冲突。
+- 改了命令/事件/DTO 后提交重新生成的 bindings.ts。
 
 ## CI（.github/workflows/ci.yml）
 
-- Frontend（ubuntu，Node 22 + pnpm 11）：`pnpm check` + `pnpm build` + 包体积报告
-- Rust（windows / macos / ubuntu 矩阵）：`cargo fmt --check` + `clippy -D warnings` + `cargo test`
+- Frontend（ubuntu）：`pnpm check` + `pnpm build` + 包体积报告
+- Rust（windows/macos/ubuntu 矩阵）：`fmt --check` + `clippy -D warnings` + `cargo test`
 
-## 其他注意事项
+## 其他注意
 
-- **版本钉子**：`typescript@^6` + `@typescript/native`（npm:typescript@^7）
-  是 svelte-check 4.7 的要求，升级前先跑 `pnpm check` 验证。
-- 仓库用 LF（.gitattributes）；Windows 下开发也保持 LF。
-- 类型同步：tauri-specta（ADR-009），`ErrorHandlingMode::Throw`（命令
-  reject 而非 resolve 错误对象）；RepoId 走字符串序列化（u64 超 JS 安全
-  整数）。
-- Windows 已知坑：测试二进制没有 tauri-build 的 manifest，若链接 GUI 栈
-  （tao/muda 的 comctl32 v6 导入）会 STATUS_ENTRYPOINT_NOT_FOUND——
-  build.rs 已为 test 目标嵌入 tests.manifest，别删。
-- 提交信息风格：`<阶段>: <主题>`（如 `P1: ...`），正文列要点；
-  一个逻辑单元一个提交。
-- PLAN.md 的阶段清单是进度真相源：完成一项勾一项（`[ ]` → `[x]`）。
+- 仓库用 LF（.gitattributes），Windows 下也保持 LF。
+- 依赖钉子（Cargo.toml 有注释，勿清理）：keyring 必须带平台 features
+  （缺了静默降级 mock，凭据悄悄失效）；rand 钉 0.8（ssh-key 0.6）；reqwest 用 rustls。
+- `typescript@^6` + `@typescript/native`（npm:typescript@^7）是 svelte-check 要求，升级先跑 `pnpm check`。
+- 双 bin 目标：Cargo.toml 的 `default-run = "ibexgit"` 不能删。
+- Windows 坑：build.rs 为 test 目标嵌入 tests.manifest（缺了会
+  STATUS_ENTRYPOINT_NOT_FOUND），别删。
+- RepoId 是 worktree 路径的 FNV-1a 哈希，字符串序列化（u64 超 JS 安全整数）。
+- 提交信息：阶段性用 `<阶段>: <主题>`（如 `P11: …`），日常用 `feat:`/`fix:` 等前缀，
+  主题简洁中文，一个逻辑单元一个提交。
