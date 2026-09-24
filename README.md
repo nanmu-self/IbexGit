@@ -25,6 +25,33 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 
 底层直接驱动**系统 git CLI**（而非 libgit2），行为与命令行一致；所有 git 子进程永不交互（`GIT_TERMINAL_PROMPT=0` 兜底），凭据走独立 helper + OS keychain，不落明文。
 
+## 截图预览
+
+**工作区与差异审阅** — 未暂存 / 已暂存分区，行级暂存，Shiki 语法高亮与词级差异
+
+![工作区与差异审阅](docs/screenshots/01-workspace-diff.png)
+
+<table>
+<tr>
+<th>提交历史与提交图</th>
+<th>图片差异对比</th>
+</tr>
+<tr>
+<td><img src="docs/screenshots/02-history-graph.png" alt="提交历史与 SVG 提交图" /></td>
+<td><img src="docs/screenshots/03-image-diff.png" alt="图片 diff 滑动对比" /></td>
+</tr>
+<tr>
+<th>AI 日报 / 周报</th>
+<th>仓库总览</th>
+</tr>
+<tr>
+<td><img src="docs/screenshots/04-ai-report.png" alt="AI 生成日报 / 周报" /></td>
+<td><img src="docs/screenshots/05-welcome-repos.png" alt="仓库总览与彩色书签" /></td>
+</tr>
+</table>
+
+> 更多界面见 [`docs/screenshots/`](docs/screenshots/)。
+
 ## 当前状态
 
 > ⚠️ 项目处于活跃开发期（v0.1.0，内部 alpha）。核心功能已齐备但尚未提供正式安装包，欢迎 clone 源码体验 / 参与共建。
