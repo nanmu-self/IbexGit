@@ -153,6 +153,8 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::git_restore_file_version,
             commands::git_create_branch,
             commands::git_checkout_branch,
+            commands::git_remote_branches,
+            commands::git_checkout_remote_branch,
             commands::git_delete_branch,
             commands::git_rename_branch,
             commands::git_set_upstream,

@@ -63,8 +63,18 @@
   // ---- data (tags/remotes/stash/reflog from the shared store) ----
   const tags = $derived(refsData.tags);
   const remotes = $derived(refsData.remotes);
+  const remoteBranches = $derived(refsData.remoteBranches);
   const stashes = $derived(refsData.stashes);
   const reflog = $derived(refsData.reflog);
+
+  /** Remote-tracking branches of one remote, display name without the `remote/` prefix. */
+  function branchesOf(remoteName: string): { name: string; info: BranchInfo }[] {
+    const prefix = `refs/remotes/${remoteName}/`;
+    return remoteBranches
+      .filter((b) => b.full_name.startsWith(prefix))
+      .map((b) => ({ name: b.name.slice(remoteName.length + 1), info: b }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   // Reload refs data when the repo changes or after a watcher refresh.
   let lastRefreshMark: number | null = null;
@@ -81,6 +91,7 @@
   // ---- context menu (single shared positioned menu) ----
   type MenuTarget =
     | { kind: "branch"; branch: BranchInfo; x: number; y: number }
+    | { kind: "remoteBranch"; remote: string; branch: BranchInfo; localName: string; x: number; y: number }
     | { kind: "remote"; remote: RemoteInfo; x: number; y: number }
     | { kind: "tag"; tag: TagInfo; x: number; y: number }
     | { kind: "stash"; stash: StashEntry; x: number; y: number }
@@ -155,6 +166,20 @@
       if (pop) await git.stashPop(id, index);
       else await git.stashApply(id, index);
       showToast("success", t(pop ? "refs.stash.popped" : "refs.stash.applied"));
+      await repos.refresh(id);
+      await loadRefsData(id);
+    } catch (e) {
+      normalizeError(e);
+    }
+  }
+
+  /** Check out `refs/remotes/<remote>/<branch>` as a local branch. */
+  async function checkoutRemote(remote: string, branch: string): Promise<void> {
+    const id = repos.activeId;
+    if (id === null) return;
+    try {
+      await git.checkoutRemoteBranch(id, remote, branch);
+      showToast("success", t("sidebar.checkoutDone", { name: branch }));
       await repos.refresh(id);
       await loadRefsData(id);
     } catch (e) {
@@ -330,7 +355,27 @@
           >
             <GitFork class="size-3 shrink-0 text-muted-foreground/50" />
             <span class="min-w-0 flex-1 truncate" title={r.fetch_url}>{r.name}</span>
-          </div></li>
+          </div>
+          {#each branchesOf(r.name) as rb (rb.info.full_name)}
+            <div
+              class="group ml-3 flex cursor-default items-center gap-1.5 rounded px-2 py-[3px] text-[13px] hover:bg-accent/70"
+              role="button"
+              tabindex="0"
+              title={rb.info.name}
+              ondblclick={() => checkoutRemote(r.name, rb.name)}
+              oncontextmenu={(e) =>
+                openMenu(e, (x, y) => ({ kind: "remoteBranch", remote: r.name, branch: rb.info, localName: rb.name, x, y }))}
+              onkeydown={(e) => e.key === "Enter" && checkoutRemote(r.name, rb.name)}
+            >
+              <GitBranch class="size-3 shrink-0 text-muted-foreground/50" />
+              <span class="min-w-0 flex-1 truncate">{rb.name}</span>
+            </div>
+          {:else}
+            <p class="ml-3 px-2 py-[3px] text-[11px] text-muted-foreground">
+              {t("refs.remote.noBranches")}
+            </p>
+          {/each}
+          </li>
         {:else}
           <li class="px-2 py-1 text-xs text-muted-foreground">{t("refs.remote.none")}</li>
         {/each}
@@ -522,6 +567,29 @@
       </button>
       <button type="button" class="menu-item" onclick={menuRun(() => requestRefAction({ kind: "deleteBranch", name: b.name }))}>
         <Scissors class="size-3.5" /> {t("refs.menu.delete")}
+      </button>
+    {:else if menu.kind === "remoteBranch"}
+      {@const rb = menu}
+      <button
+        type="button"
+        class="menu-item"
+        onclick={menuRun(() => checkoutRemote(rb.remote, rb.localName))}
+      >
+        <CircleDot class="size-3.5" /> {t("refs.menu.checkoutRemote")}
+      </button>
+      <button
+        type="button"
+        class="menu-item"
+        onclick={menuRun(() => requestRefAction({ kind: "newBranch", start: rb.branch.name }))}
+      >
+        <GitBranchPlus class="size-3.5" /> {t("refs.menu.branchFrom")}
+      </button>
+      <button
+        type="button"
+        class="menu-item"
+        onclick={menuRun(() => requestRefAction({ kind: "newTag", target: rb.branch.name }))}
+      >
+        <Tag class="size-3.5" /> {t("refs.menu.tagHere")}
       </button>
     {:else if menu.kind === "remote"}
       {@const r = menu.remote}

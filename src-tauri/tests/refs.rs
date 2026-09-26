@@ -464,6 +464,65 @@ async fn remotes_tags_stash_upstream_roundtrip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn remote_branches_list_and_checkout() {
+    // Origin with two branches, one Chinese-named to mirror the real-world
+    // "clone shows only main" scenario (clone creates local main only).
+    let origin_dir = temp_repo();
+    git(
+        &origin_dir,
+        &"init -q -b main".split_whitespace().collect::<Vec<_>>(),
+    );
+    git(&origin_dir, &["config", "user.email", "o@o"]);
+    git(&origin_dir, &["config", "user.name", "o"]);
+    std::fs::write(origin_dir.join("seed.txt"), "seed\n").unwrap();
+    git(&origin_dir, &["add", "."]);
+    git(&origin_dir, &["commit", "-qm", "seed"]);
+    git(&origin_dir, &["checkout", "-qb", "AI能力"]);
+    std::fs::write(origin_dir.join("feat.txt"), "feat\n").unwrap();
+    git(&origin_dir, &["add", "."]);
+    git(&origin_dir, &["commit", "-qm", "feat"]);
+    git(&origin_dir, &["checkout", "-q", "main"]);
+    let origin_url = origin_dir.display().to_string();
+
+    let dir = temp_repo();
+    git(&dir, &["clone", "-q", &origin_url, "."]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    // Clone only created main locally…
+    let local = engine.list_branches(&path).await.unwrap();
+    let local_names: Vec<&str> = local.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(local_names, vec!["main"]);
+    // …while the remote-tracking branches are both there, origin/HEAD skipped.
+    let remote = engine.list_remote_branches(&path).await.unwrap();
+    let names: Vec<&str> = remote.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, vec!["origin/AI能力", "origin/main"]);
+
+    // Check out the remote branch as a local branch with tracking.
+    engine
+        .checkout_remote_branch(&path, "origin", "AI能力")
+        .await
+        .unwrap();
+    let branches = engine.list_branches(&path).await.unwrap();
+    let cur = branches.iter().find(|b| b.current).unwrap();
+    assert_eq!(cur.name, "AI能力");
+    assert_eq!(cur.upstream.as_deref(), Some("origin/AI能力"));
+    assert!(dir.join("feat.txt").exists(), "worktree switched");
+
+    // Re-checkout when the local branch already exists just switches to it.
+    git(&dir, &["checkout", "-q", "main"]);
+    engine
+        .checkout_remote_branch(&path, "origin", "AI能力")
+        .await
+        .unwrap();
+    let branches = engine.list_branches(&path).await.unwrap();
+    assert!(branches.iter().find(|b| b.current).unwrap().name == "AI能力");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&origin_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn merge_ff_only_and_reflog() {
     let dir = temp_repo();
     git_init(&dir);

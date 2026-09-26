@@ -1102,6 +1102,41 @@ impl engine::GitEngine for CliEngine {
         self.ensure_success(&res)
     }
 
+    async fn list_remote_branches(&self, repo: &str) -> Result<Vec<engine::BranchInfo>, AppError> {
+        // Same column layout as list_branches plus a trailing %(symref) so
+        // the parser can skip symbolic refs like refs/remotes/origin/HEAD.
+        let args = [
+            "-C",
+            repo,
+            "for-each-ref",
+            "--format=%(refname)%00%(refname:short)%00%(upstream:short)%00%(upstream:track)%00%(HEAD)%00%(objectname)%00%(symref)",
+            "refs/remotes/",
+        ];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        Ok(parse::parse_remote_branches(&res.stdout))
+    }
+
+    async fn checkout_remote_branch(
+        &self,
+        repo: &str,
+        remote: &str,
+        branch: &str,
+    ) -> Result<(), AppError> {
+        // A local branch of the same name may already exist (e.g. created by
+        // an earlier checkout or by a bare --single-branch clone) — switching
+        // to it is the right move then.
+        let local = self.list_branches(repo).await?;
+        if local.iter().any(|b| b.name == branch) {
+            return self.checkout_branch(repo, branch).await;
+        }
+        // Otherwise create it explicitly tracking the remote branch; no
+        // reliance on checkout DWIM rules.
+        let start = format!("{remote}/{branch}");
+        let args = ["-C", repo, "checkout", "-b", branch, "--track", &start];
+        let res = self.run(args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&res)
+    }
+
     async fn set_branch_upstream(
         &self,
         repo: &str,

@@ -633,6 +633,12 @@ mod tests {
         async fn checkout_branch(&self, _: &str, _: &str) -> Result<(), AppError> {
             Err(err("checkout_branch"))
         }
+        async fn list_remote_branches(&self, _: &str) -> Result<Vec<BranchInfo>, AppError> {
+            Err(err("remote_branches"))
+        }
+        async fn checkout_remote_branch(&self, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+            Err(err("checkout_remote_branch"))
+        }
         async fn set_branch_upstream(
             &self,
             _: &str,

@@ -114,6 +114,9 @@ export const commands = {
 	 */
 	gitCreateBranch: (id: RepoId_Deserialize, name: string, startPoint: string | null) => __TAURI_INVOKE<null>("git_create_branch", { id, name, startPoint }),
 	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
+	gitRemoteBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_remote_branches", { id }),
+	/**  Check out a remote-tracking branch as a (new or existing) local branch. */
+	gitCheckoutRemoteBranch: (id: RepoId_Deserialize, remote: string, branch: string) => __TAURI_INVOKE<null>("git_checkout_remote_branch", { id, remote, branch }),
 	gitDeleteBranch: (id: RepoId_Deserialize, name: string, force: boolean) => __TAURI_INVOKE<null>("git_delete_branch", { id, name, force }),
 	gitRenameBranch: (id: RepoId_Deserialize, oldName: string, newName: string) => __TAURI_INVOKE<null>("git_rename_branch", { id, oldName, newName }),
 	/**  Set (or clear with `None`) the upstream tracking of a branch. */

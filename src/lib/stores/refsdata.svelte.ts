@@ -4,7 +4,7 @@
  * mutation; rendered by the sidebar RefPanel, TagsView and dialog hosts.
  */
 import { git, normalizeError } from "$lib/git";
-import type { ReflogEntry, RemoteInfo, StashEntry, TagInfo } from "$lib/git/bindings";
+import type { BranchInfo, ReflogEntry, RemoteInfo, StashEntry, TagInfo } from "$lib/git/bindings";
 
 export const REFS_RELOG_LIMIT = 100;
 
@@ -13,6 +13,8 @@ export const refsData = $state<{
   loading: boolean;
   tags: TagInfo[];
   remotes: RemoteInfo[];
+  /** Remote-tracking branches of all remotes (origin/…). */
+  remoteBranches: BranchInfo[];
   stashes: StashEntry[];
   /** HEAD reflog (browser section). */
   reflog: ReflogEntry[];
@@ -23,6 +25,7 @@ export const refsData = $state<{
   loading: false,
   tags: [],
   remotes: [],
+  remoteBranches: [],
   stashes: [],
   reflog: [],
   reflogRef: "HEAD",
@@ -34,6 +37,7 @@ export async function loadRefsData(id: string | null, reflogRef?: string): Promi
     refsData.repoId = null;
     refsData.tags = [];
     refsData.remotes = [];
+    refsData.remoteBranches = [];
     refsData.stashes = [];
     refsData.reflog = [];
     return;
@@ -46,15 +50,17 @@ export async function loadRefsData(id: string | null, reflogRef?: string): Promi
   refsData.loading = true;
   try {
     const ref = refsData.reflogRef;
-    const [tags, remotes, stashes, reflog] = await Promise.all([
+    const [tags, remotes, remoteBranches, stashes, reflog] = await Promise.all([
       git.tags(id),
       git.remotes(id),
+      git.remoteBranches(id),
       git.stashList(id),
       git.reflog(id, ref),
     ]);
     if (refsData.repoId !== id) return; // switched away meanwhile
     refsData.tags = tags;
     refsData.remotes = remotes;
+    refsData.remoteBranches = remoteBranches;
     refsData.stashes = stashes;
     refsData.reflog = reflog;
   } catch (e) {

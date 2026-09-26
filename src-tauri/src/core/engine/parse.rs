@@ -693,6 +693,17 @@ pub fn parse_commit_files(output: &str) -> Vec<CommitFileStat> {
 
 /// Parse `git for-each-ref --format=%(refname)%00%(refname:short)%00%(upstream:short)%00%(upstream:track)%00%(HEAD)%00%(objectname)`.
 pub fn parse_branches(output: &str) -> Vec<BranchInfo> {
+    parse_branch_records(output, false)
+}
+
+/// Parse the `list_remote_branches` output: the same column layout plus a
+/// trailing `%(symref)` column; symbolic refs (e.g. `refs/remotes/origin/HEAD`)
+/// are skipped so only real remote heads come back.
+pub fn parse_remote_branches(output: &str) -> Vec<BranchInfo> {
+    parse_branch_records(output, true)
+}
+
+fn parse_branch_records(output: &str, skip_symref: bool) -> Vec<BranchInfo> {
     let mut out = Vec::new();
     for rec in output.lines() {
         if rec.is_empty() {
@@ -700,6 +711,9 @@ pub fn parse_branches(output: &str) -> Vec<BranchInfo> {
         }
         let f: Vec<&str> = rec.split('\0').collect();
         if f.len() < 6 {
+            continue;
+        }
+        if skip_symref && f.get(6).is_some_and(|s| !s.is_empty()) {
             continue;
         }
         let full_name = f[0].to_string();
@@ -1789,6 +1803,23 @@ mod tests {
         let b = &out[0];
         assert_eq!((b.ahead, b.behind), (0, 0));
         assert_eq!(b.upstream.as_deref(), Some("origin/dev"));
+    }
+
+    #[test]
+    fn remote_branches_parse_skips_symref_and_keeps_utf8() {
+        // Typical clone layout: origin/HEAD is a symbolic ref pointing at
+        // origin/main and must be excluded; non-ASCII names pass through
+        // raw (core.quotepath=false is enforced by the runner).
+        let raw = "refs/remotes/origin/HEAD\0origin/HEAD\0\0\0 \0def5678def5678def5678def5678def5678\0refs/remotes/origin/main\n\
+                   refs/remotes/origin/AI能力\0origin/AI能力\0\0\0 \0abc1234abc1234abc1234abc1234abc1234\0\n\
+                   refs/remotes/origin/main\0origin/main\0\0\0 \0def5678def5678def5678def5678def5678\0\n";
+        let out = parse_remote_branches(raw);
+        let names: Vec<&str> = out.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, vec!["origin/AI能力", "origin/main"]);
+        assert_eq!(out[0].full_name, "refs/remotes/origin/AI能力");
+        assert!(out
+            .iter()
+            .all(|b| b.upstream.is_none() && !b.current && !b.detached));
     }
 
     // ---------- tags ----------

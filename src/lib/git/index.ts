@@ -250,6 +250,11 @@ export const git = {
   branches: (id: RepoId) => wrap(commands.gitBranches(id)),
   checkoutBranch: (id: RepoId, name: string) =>
     wrap(commands.gitCheckoutBranch(id, name)),
+  /** Remote-tracking branches (origin/…), symbolic HEAD refs excluded. */
+  remoteBranches: (id: RepoId) => wrap(commands.gitRemoteBranches(id)),
+  /** Check out a remote-tracking branch as a (new or existing) local branch. */
+  checkoutRemoteBranch: (id: RepoId, remote: string, branch: string) =>
+    wrap(commands.gitCheckoutRemoteBranch(id, remote, branch)),
   createBranch: (id: RepoId, name: string, startPoint?: string) =>
     wrap(commands.gitCreateBranch(id, name, startPoint ?? null)),
   deleteBranch: (id: RepoId, name: string, force = false) =>

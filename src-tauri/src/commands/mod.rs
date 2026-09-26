@@ -532,6 +532,37 @@ pub async fn git_checkout_branch(
     repos.engine().checkout_branch(&path, &name).await
 }
 
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_remote_branches(
+    id: RepoId,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::BranchInfo>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let path = resolve(&repos, id).await?;
+    repos.engine().list_remote_branches(&path).await
+}
+
+/// Check out a remote-tracking branch as a (new or existing) local branch.
+#[tauri::command]
+#[specta::specta]
+
+pub async fn git_checkout_remote_branch(
+    id: RepoId,
+    remote: String,
+    branch: String,
+    repos: State<'_, RepoManager>,
+) -> Result<(), AppError> {
+    let gate = repos.write_gate(id).await?;
+    let _guard = gate.lock().await;
+    let path = resolve(&repos, id).await?;
+    repos
+        .engine()
+        .checkout_remote_branch(&path, &remote, &branch)
+        .await
+}
+
 // =====================
 // Recovery (PLAN §4.7 轨道 A)
 // =====================

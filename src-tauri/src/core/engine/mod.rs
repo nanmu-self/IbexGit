@@ -625,6 +625,19 @@ pub trait GitEngine: Send + Sync {
         new_name: &str,
     ) -> Result<(), AppError>;
     async fn checkout_branch(&self, repo: &str, name: &str) -> Result<(), AppError>;
+    /// List remote-tracking branches (`refs/remotes/<remote>/<branch>`,
+    /// `name` is the short form like `origin/main`); symbolic refs such as
+    /// `refs/remotes/origin/HEAD` are excluded.
+    async fn list_remote_branches(&self, repo: &str) -> Result<Vec<BranchInfo>, AppError>;
+    /// Check out a remote-tracking branch as a local branch: reuses an
+    /// existing local branch of the same name, otherwise creates one
+    /// tracking `refs/remotes/<remote>/<branch>`.
+    async fn checkout_remote_branch(
+        &self,
+        repo: &str,
+        remote: &str,
+        branch: &str,
+    ) -> Result<(), AppError>;
     /// Track a remote branch (`git branch --set-upstream-to=<upstream>`);
     /// `None` removes the tracking relationship.
     async fn set_branch_upstream(
