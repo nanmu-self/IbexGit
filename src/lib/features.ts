@@ -13,6 +13,7 @@ import { requestRefAction } from "$lib/stores/refbus";
 import { netDialogs } from "$lib/stores/netdialogs.svelte";
 import { appDialogs } from "$lib/stores/appdialogs.svelte";
 import { runFetch } from "$lib/stores/netops.svelte";
+import { tasks } from "$lib/stores/tasks.svelte";
 import { git, normalizeError } from "$lib/git";
 import { showToast } from "$lib/stores/toast";
 import { t } from "$lib/i18n";
@@ -168,6 +169,17 @@ export const FEATURES: Feature[] = [
       const next = order[(order.indexOf(settings.theme) + 1) % order.length];
       void settings.setTheme(next);
     },
+  },
+  {
+    id: "app.tasks",
+    labelKey: "statusbar.tasks",
+    section: "view",
+    group: 1,
+    order: 2,
+    needsRepo: false,
+    shortcut: "app.tasks",
+    keywords: "tasks background progress 任务 中心 克隆 拉取 推送",
+    run: () => tasks.toggle(),
   },
   {
     id: "repo.refresh",

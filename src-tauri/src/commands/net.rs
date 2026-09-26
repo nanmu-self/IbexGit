@@ -11,10 +11,10 @@ use crate::core::engine::{parse, CloneOptions};
 use crate::core::error::AppError;
 use crate::core::repo::RepoManager;
 use crate::core::runner::{CancelToken, ProxyMode, SharedNetConfig};
+use crate::core::task::TaskManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -38,10 +38,9 @@ pub struct CloneEvent {
 }
 
 /// 克隆任务注册表：taskId → CancelToken（完成/取消后移除）。
+/// taskId 与任务中心的 TaskManager id 同源（见 `git_clone`）。
 #[derive(Default)]
 pub struct CloneTasks(Arc<Mutex<HashMap<u32, CancelToken>>>);
-
-static NEXT_TASK: AtomicU32 = AtomicU32::new(1);
 
 fn validate_url(url: &str) -> Result<(), AppError> {
     let ok = ["https://", "http://", "ssh://", "git://", "file://"]
@@ -82,6 +81,7 @@ pub async fn git_clone(
     emitter: State<'_, AppEmitter>,
     repos: State<'_, RepoManager>,
     tasks: State<'_, CloneTasks>,
+    manager: State<'_, TaskManager>,
 ) -> Result<u32, AppError> {
     let CloneRequest {
         url,
@@ -103,6 +103,7 @@ pub async fn git_clone(
         return Err(AppError::parse("clone: depth must be 1..=100000"));
     }
 
+    let desc = format!("clone {url}");
     let opts = CloneOptions {
         url,
         dest,
@@ -111,12 +112,20 @@ pub async fn git_clone(
         recurse_submodules,
     };
 
-    let task_id = NEXT_TASK.fetch_add(1, Ordering::Relaxed);
     let token = CancelToken::new();
+    // 任务中心（P12）：克隆是用户可见长任务；TaskManager 持有同一个
+    // CancelToken（task_cancel 与 clone_cancel 双通道等价），其任务 id
+    // 兼作 CloneEvent 的 task_id，两条事件流同源不漂移。
+    let tm_task = manager
+        .create("clone", None, desc, true, Some(token.clone()))
+        .await;
+    manager.start(tm_task).await;
+    let task_id = u32::try_from(tm_task.0).unwrap_or(u32::MAX);
     tasks.0.lock().await.insert(task_id, token.clone());
 
     let engine = repos.engine();
     let registry = tasks.inner().0.clone();
+    let tm = manager.inner().clone();
     let app = emitter.inner().0.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -140,8 +149,10 @@ pub async fn git_clone(
         emit("start", None, None, format!("clone {}", opts.url), None);
 
         let app_for_lines = app_for_emit.clone();
+        let tm_lines = tm.clone();
         let on_line: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |line: String| {
             let p = parse::parse_clone_progress(&line);
+            tm_lines.try_update_progress(tm_task, p.percent, line.clone());
             let _ = CloneEvent {
                 task_id,
                 phase: "progress".into(),
@@ -156,17 +167,24 @@ pub async fn git_clone(
         let result = engine.clone_repo(&opts, Some(&token), Some(on_line)).await;
         registry.lock().await.remove(&task_id);
         match result {
-            Ok(()) => emit(
-                "done",
-                None,
-                Some(100),
-                format!("cloned into {}", opts.dest),
-                None,
-            ),
+            Ok(()) => {
+                tm.complete(tm_task, None).await;
+                emit(
+                    "done",
+                    None,
+                    Some(100),
+                    format!("cloned into {}", opts.dest),
+                    None,
+                )
+            }
             Err(AppError::OperationCancelled | AppError::CredentialCancelled) => {
+                tm.mark_cancelled(tm_task).await;
                 emit("cancelled", None, None, "clone cancelled".to_string(), None)
             }
-            Err(e) => emit("failed", None, None, e.to_string(), Some(e)),
+            Err(e) => {
+                tm.complete(tm_task, Some(e.clone())).await;
+                emit("failed", None, None, e.to_string(), Some(e))
+            }
         }
     });
 

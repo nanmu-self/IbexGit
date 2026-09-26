@@ -44,7 +44,7 @@ pub struct RepoId(
     pub u64,
 );
 
-mod u64_as_string {
+pub(crate) mod u64_as_string {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&v.to_string())

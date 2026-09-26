@@ -249,11 +249,15 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::ssh::ssh_key_list,
             commands::ssh::ssh_key_generate,
             commands::ssh::ssh_key_delete,
+            commands::task::task_list,
+            commands::task::task_cancel,
+            commands::task::task_clear_finished,
         ])
         .events(tauri_specta::collect_events![
             core::watcher::RepoChanged,
             commands::workspace::AppOpenPaths,
             commands::net::CloneEvent,
+            commands::task::TaskEvent,
             core::credential::CredentialPrompt,
             commands::ai::AiEvent,
         ])
@@ -428,6 +432,23 @@ pub fn run() {
 
             // Clone task registry (P7): taskId → CancelToken.
             app.manage(crate::commands::net::CloneTasks::default());
+
+            // Task center (P12): TaskManager is the truth source for user-
+            // visible long tasks; every mutation is forwarded to the frontend
+            // as a TaskEvent snapshot.
+            let (task_tx, mut task_rx) =
+                tokio::sync::mpsc::unbounded_channel::<crate::core::task::Task>();
+            app.manage(crate::core::task::TaskManager::with_sink(Some(task_tx)));
+            let task_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tauri_specta::Event as _;
+                while let Some(task) = task_rx.recv().await {
+                    let ev = commands::task::TaskEvent { task };
+                    if let Err(e) = ev.emit(&task_handle) {
+                        tracing::warn!("failed to emit TaskEvent: {}", e);
+                    }
+                }
+            });
 
             // AI 生成任务注册表（P11）：taskId → CancelToken。
             app.manage(crate::commands::ai::AiTasks::default());

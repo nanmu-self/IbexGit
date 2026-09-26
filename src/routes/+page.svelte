@@ -23,7 +23,6 @@
   import { onAction } from "$lib/keyboard";
   import { initFeatureShortcuts } from "$lib/features";
   import { t } from "$lib/i18n";
-  import { showToast } from "$lib/stores/toast";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
 
@@ -52,12 +51,11 @@
 
   $effect(() => {
     const offs = [
-      // P10：所有 feature 声明的快捷键由注册表统一接线（含打开/刷新/侧栏等），
-      // 这里只保留非 feature 的 Tab 切换与占位动作。
+      // P10：所有 feature 声明的快捷键由注册表统一接线（含打开/刷新/侧栏/
+      // 任务中心等），这里只保留非 feature 的 Tab 切换动作。
       initFeatureShortcuts(),
       onAction("repo.nextTab", () => stepTab(1)),
       onAction("repo.prevTab", () => stepTab(-1)),
-      onAction("app.tasks", () => showToast("info", t("common.comingSoon", { phase: "P12" }))),
     ];
     return () => offs.forEach((off) => off());
   });

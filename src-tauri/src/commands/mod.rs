@@ -8,6 +8,7 @@ use crate::core::engine::{
 use crate::core::error::AppError;
 use crate::core::recovery::{DiscardScope, DiscardTarget, RecoveryEntry, RecoveryManager};
 use crate::core::repo::{RepoId, RepoManager, GRAPH_BATCH};
+use crate::core::task::{TaskId, TaskManager};
 use crate::core::watcher::WatcherHub;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -19,6 +20,7 @@ pub mod ai;
 pub mod app;
 pub mod net;
 pub mod ssh;
+pub mod task;
 pub mod workspace;
 
 /// Return the detected git capabilities as JSON.
@@ -1118,17 +1120,38 @@ pub async fn git_prune_remote(
 // P6: fetch / pull / push / merge / rebase
 // =====================
 
+/// Begin a task-center entry around a long engine operation. Emits the
+/// queued + running snapshots; the caller completes it with the result.
+async fn begin_task(
+    tasks: &State<'_, TaskManager>,
+    kind: &str,
+    repo_id: Option<String>,
+    message: String,
+) -> TaskId {
+    let id = tasks.create(kind, repo_id, message, false, None).await;
+    tasks.start(id).await;
+    id
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn git_fetch(
     id: RepoId,
     remote: Option<String>,
     repos: State<'_, RepoManager>,
+    tasks: State<'_, TaskManager>,
 ) -> Result<(), AppError> {
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
-    repos.engine().fetch(&path, remote.as_deref()).await
+    let desc = match remote.as_deref() {
+        Some(r) => format!("fetch {r}"),
+        None => "fetch --all".to_string(),
+    };
+    let task = begin_task(&tasks, "fetch", Some(id.0.to_string()), desc).await;
+    let result = repos.engine().fetch(&path, remote.as_deref()).await;
+    tasks.complete(task, result.as_ref().err().cloned()).await;
+    result
 }
 
 /// Pull with an explicit strategy: merge (default) / rebase / ff_only.
@@ -1140,18 +1163,30 @@ pub async fn git_pull(
     branch: Option<String>,
     mode: Option<String>,
     repos: State<'_, RepoManager>,
+    tasks: State<'_, TaskManager>,
 ) -> Result<crate::core::engine::PullResult, AppError> {
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
-    repos
+    let refspec = match (remote.as_deref(), branch.as_deref()) {
+        (Some(r), Some(b)) => format!("{r}/{b}"),
+        (Some(r), None) => r.to_string(),
+        (None, Some(b)) => b.to_string(),
+        (None, None) => "upstream".to_string(),
+    };
+    let desc = format!("pull {refspec} ({})", mode.as_deref().unwrap_or("merge"));
+    let task = begin_task(&tasks, "pull", Some(id.0.to_string()), desc).await;
+    let result = repos
         .engine()
         .pull(&path, remote.as_deref(), branch.as_deref(), mode.as_deref())
-        .await
+        .await;
+    tasks.complete(task, result.as_ref().err().cloned()).await;
+    result
 }
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn git_push(
     id: RepoId,
     remote: String,
@@ -1160,11 +1195,28 @@ pub async fn git_push(
     set_upstream: bool,
     tags: bool,
     repos: State<'_, RepoManager>,
+    tasks: State<'_, TaskManager>,
 ) -> Result<(), AppError> {
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
-    repos
+    let mut flags: Vec<&str> = Vec::new();
+    if force_with_lease {
+        flags.push("--force-with-lease");
+    }
+    if set_upstream {
+        flags.push("--set-upstream");
+    }
+    if tags {
+        flags.push("--tags");
+    }
+    let desc = if flags.is_empty() {
+        format!("push {branch} to {remote}")
+    } else {
+        format!("push {branch} to {remote} {}", flags.join(" "))
+    };
+    let task = begin_task(&tasks, "push", Some(id.0.to_string()), desc).await;
+    let result = repos
         .engine()
         .push(
             &path,
@@ -1174,7 +1226,9 @@ pub async fn git_push(
             set_upstream,
             tags,
         )
-        .await
+        .await;
+    tasks.complete(task, result.as_ref().err().cloned()).await;
+    result
 }
 
 /// Merge `target` into the current branch. Conflicts surface as git errors

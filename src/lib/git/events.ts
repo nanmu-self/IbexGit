@@ -1,8 +1,8 @@
-import { events, type RepoChanged, type AppOpenPaths, type CloneEvent, type CredentialPrompt, type AiEvent } from "./bindings";
+import { events, type RepoChanged, type AppOpenPaths, type CloneEvent, type CredentialPrompt, type AiEvent, type TaskEvent } from "./bindings";
 
 export type { RepoChanged } from "./bindings";
 export type { UnlistenFn } from "@tauri-apps/api/event";
-export type { CloneEvent, CredentialPrompt, AiEvent } from "./bindings";
+export type { CloneEvent, CredentialPrompt, AiEvent, TaskEvent } from "./bindings";
 
 /**
  * Subscribe to repository change events (state invalidation system,
@@ -35,6 +35,14 @@ export function onCloneEvent(
   handler: (payload: CloneEvent) => void
 ): Promise<() => void> {
   return events.cloneEvent.listen((e) => handler(e.payload));
+}
+
+/**
+ * P12 任务中心事件（TaskEvent）：TaskManager 每次生命周期变更推送全量
+ * Task 快照，前端按 id upsert。
+ */
+export function onTaskUpdated(handler: (payload: TaskEvent) => void): Promise<() => void> {
+  return events.taskEvent.listen((e) => handler(e.payload));
 }
 
 /**

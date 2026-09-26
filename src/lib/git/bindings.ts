@@ -382,6 +382,12 @@ export const commands = {
 	sshKeyGenerate: (req: SshKeyGenerateRequest) => __TAURI_INVOKE<SshKeyInfo>("ssh_key_generate", { req }),
 	/**  删除密钥（私钥 + `.pub`；路径必须位于 `~/.ssh` 内）。 */
 	sshKeyDelete: (path: string) => __TAURI_INVOKE<null>("ssh_key_delete", { path }),
+	/**  当前全部任务（旧 → 新；面板自行排序展示）。 */
+	taskList: () => __TAURI_INVOKE<Task_Serialize[]>("task_list"),
+	/**  取消一个任务：置位其 CancelToken（若有）并标记 Cancelling。 */
+	taskCancel: (id: TaskId_Deserialize) => __TAURI_INVOKE<null>("task_cancel", { id }),
+	/**  清理全部已终结任务，返回删除数。 */
+	taskClearFinished: () => __TAURI_INVOKE<number>("task_clear_finished"),
 };
 
 /** Events */
@@ -391,6 +397,7 @@ export const events = {
 	cloneEvent: makeEvent<CloneEvent>("clone-event"),
 	credentialPrompt: makeEvent<CredentialPrompt>("credential-prompt"),
 	repoChanged: makeEvent<RepoChanged_Deserialize>("repo-changed"),
+	taskEvent: makeEvent<TaskEvent_Deserialize>("task-event"),
 };
 
 /* Types */
@@ -1402,6 +1409,61 @@ export type TagInfo = {
 	tagger: string | null,
 	date: string | null,
 	message: string | null,
+};
+
+export type Task = Task_Serialize | Task_Deserialize;
+
+/**  后台任务快照事件：TaskManager 每次生命周期变更推送一条。 */
+export type TaskEvent = TaskEvent_Serialize | TaskEvent_Deserialize;
+
+/**  后台任务快照事件：TaskManager 每次生命周期变更推送一条。 */
+export type TaskEvent_Deserialize = {
+	task: Task_Deserialize,
+};
+
+/**  后台任务快照事件：TaskManager 每次生命周期变更推送一条。 */
+export type TaskEvent_Serialize = {
+	task: Task_Serialize,
+};
+
+export type TaskId = TaskId_Serialize | TaskId_Deserialize;
+
+export type TaskId_Deserialize = 
+/**  字符串序列化（u64 超 JS 安全整数，同 RepoId 约定）。 */
+string;
+
+export type TaskId_Serialize = 
+/**  字符串序列化（u64 超 JS 安全整数，同 RepoId 约定）。 */
+string;
+
+export type TaskStatus = "queued" | "running" | "cancelling" | "cancelled" | "success" | "failed";
+
+export type Task_Deserialize = {
+	id: TaskId_Deserialize,
+	kind: string,
+	repo_id: string | null,
+	status: TaskStatus,
+	progress: number,
+	message: string,
+	/**  毫秒时间戳（f64 同 RecoveryEntry.created_at_ms 约定，JS number 安全）。 */
+	started_at: number | null,
+	finished_at: number | null,
+	cancellable: boolean,
+	error: AppError | null,
+};
+
+export type Task_Serialize = {
+	id: TaskId_Serialize,
+	kind: string,
+	repo_id: string | null,
+	status: TaskStatus,
+	progress: number,
+	message: string,
+	/**  毫秒时间戳（f64 同 RecoveryEntry.created_at_ms 约定，JS number 安全）。 */
+	started_at: number | null,
+	finished_at: number | null,
+	cancellable: boolean,
+	error: AppError | null,
 };
 
 /* Tauri Specta runtime */

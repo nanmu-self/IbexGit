@@ -89,6 +89,9 @@ export type {
   SshKeyInfo,
   StashEntry,
   TagInfo,
+  Task,
+  TaskEvent,
+  TaskStatus,
 } from "./bindings";
 
 /**
@@ -168,6 +171,16 @@ function humanize(code: string, e: Record<string, unknown>): string {
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/**
+ * Pure display formatting for a *stored* AppError (task center, history
+ * views): unlike `normalizeError` this has no toast/dialog side effects.
+ */
+export function formatAppError(e: unknown): string {
+  const rec = (e ?? {}) as Record<string, unknown>;
+  const code = typeof rec.code === "string" ? rec.code : "internal";
+  return humanize(code, rec);
 }
 
 async function wrap<T>(p: Promise<T>): Promise<T> {
@@ -427,6 +440,17 @@ export const net = {
 
   // ---- 代理 / SSH 配置（runner spawn 时统一注入） ----
   setNetConfig: (config: NetConfig) => wrap(commands.appSetNetConfig(config)),
+};
+
+/**
+ * P12 任务中心：后台长任务的后台查询 / 取消 / 清理。生命周期数据经
+ * `onTaskUpdated` 事件推送（TaskManager 为唯一真相源），命令只在挂载时
+ * 拉一次初始列表。
+ */
+export const tasksApi = {
+  list: () => wrap(commands.taskList()),
+  cancel: (id: string) => wrap(commands.taskCancel(id)),
+  clearFinished: () => wrap(commands.taskClearFinished()),
 };
 
 /**
