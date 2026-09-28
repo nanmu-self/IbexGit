@@ -13,7 +13,6 @@
     branches = [],
     currentBranch = "",
     upstream = null,
-    busy = false,
     onpull,
   }: {
     open?: boolean;
@@ -21,8 +20,8 @@
     branches?: BranchInfo[];
     currentBranch?: string;
     upstream?: string | null;
-    busy?: boolean;
-    onpull: (remote: string | null, branch: string | null, mode: string) => Promise<void>;
+    /** 任务中心（P12）：宿主立即关窗后台执行，回调同步返回即可。 */
+    onpull: (remote: string | null, branch: string | null, mode: string) => void | Promise<void>;
   } = $props();
 
   let remote = $state("");
@@ -109,7 +108,7 @@
         <Button type="button" variant="ghost" size="sm" onclick={() => (open = false)}>
           {t("common.cancel")}
         </Button>
-        <Button type="submit" size="sm" disabled={busy}>{t("refs.pull.confirm")}</Button>
+        <Button type="submit" size="sm">{t("refs.pull.confirm")}</Button>
       </Dialog.Footer>
     </form>
   </Dialog.Content>

@@ -459,39 +459,33 @@
 
   // ===================== pull / push / merge / rebase =====================
   let pushOpen = $state(false);
-  let pushBusy = $state(false);
 
-  async function doPush(
+  // 任务中心（P12）接管进度与结果提示：点击确认立即关闭对话框，操作后台
+  // 执行（状态栏转圈 + 任务中心条目 + 完成后 toast）。runPush/runPull 内部
+  // 吞错并提示，完成（无论成败）后刷新 refs 数据；仓库中途关闭等边缘场景
+  // 静默兜底。
+  function doPush(
     remote: string,
     branch: string,
     o: { forceWithLease: boolean; setUpstream: boolean; tags: boolean }
-  ): Promise<void> {
-    if (repoId === null) return;
-    pushBusy = true;
-    try {
-      await runPush(repoId, remote, branch, o);
-      await loadRefsData(repoId);
-    } finally {
-      pushBusy = false;
-    }
+  ): void {
+    const id = repoId;
+    if (id === null) return;
+    pushOpen = false;
+    void runPush(id, remote, branch, o)
+      .then(() => loadRefsData(id))
+      .catch(() => {});
   }
 
   let pullOpen = $state(false);
-  let pullBusy = $state(false);
 
-  async function doPull(
-    remote: string | null,
-    branch: string | null,
-    mode: string
-  ): Promise<void> {
-    if (repoId === null) return;
-    pullBusy = true;
-    try {
-      await runPull(repoId, remote, branch, mode as "merge" | "rebase" | "ff_only");
-      await loadRefsData(repoId);
-    } finally {
-      pullBusy = false;
-    }
+  function doPull(remote: string | null, branch: string | null, mode: string): void {
+    const id = repoId;
+    if (id === null) return;
+    pullOpen = false;
+    void runPull(id, remote, branch, mode as "merge" | "rebase" | "ff_only")
+      .then(() => loadRefsData(id))
+      .catch(() => {});
   }
 
   let mergeOpen = $state(false);
@@ -679,7 +673,6 @@
   remotes={refsData.remotes}
   branch={active?.branch ?? ""}
   hasUpstream={!!active?.branches.find((b) => b.current)?.upstream}
-  busy={pushBusy}
   onpush={doPush}
 />
 <PullDialog
@@ -688,7 +681,6 @@
   branches={active?.branches ?? []}
   currentBranch={active?.branch ?? ""}
   upstream={active?.branches.find((b) => b.current)?.upstream ?? null}
-  busy={pullBusy}
   onpull={doPull}
 />
 <MergeRebaseDialog

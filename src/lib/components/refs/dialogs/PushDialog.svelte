@@ -14,19 +14,22 @@
     remotes = [],
     branch = "",
     hasUpstream = false,
-    busy = false,
     onpush,
   }: {
     open?: boolean;
     remotes?: RemoteInfo[];
     branch?: string;
     hasUpstream?: boolean;
-    busy?: boolean;
-    onpush: (remote: string, branch: string, o: {
-      forceWithLease: boolean;
-      setUpstream: boolean;
-      tags: boolean;
-    }) => Promise<void>;
+    /** 任务中心（P12）：宿主立即关窗后台执行，回调同步返回即可。 */
+    onpush: (
+      remote: string,
+      branch: string,
+      o: {
+        forceWithLease: boolean;
+        setUpstream: boolean;
+        tags: boolean;
+      }
+    ) => void | Promise<void>;
   } = $props();
 
   let remote = $state("origin");
@@ -118,7 +121,7 @@
         <Button type="button" variant="ghost" size="sm" onclick={() => (open = false)}>
           {t("common.cancel")}
         </Button>
-        <Button type="submit" size="sm" disabled={busy || !branch || !forceArmed}>
+        <Button type="submit" size="sm" disabled={!branch || !forceArmed}>
           {t("refs.push.confirm")}
         </Button>
       </Dialog.Footer>
