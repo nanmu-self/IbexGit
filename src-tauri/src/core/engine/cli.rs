@@ -78,6 +78,22 @@ fn ensure_success_net(res: &ProcessResult) -> Result<(), AppError> {
     }
 }
 
+/// 网络操作结束后的 INFO 日志：git 的回复（远端消息）是判断
+/// 「到底推没推过去」的唯一权威证据（如 `main -> main` /
+/// `Everything up-to-date` / `! [rejected]`）。完整的命令行（脱敏后）
+/// 由 runner 在 debug 级记录；这里补 info 级别的结果摘要（release 构建
+/// 默认级别也能看到）。
+fn log_net(op: &str, detail: &str, res: &ProcessResult) {
+    tracing::info!(
+        op,
+        detail,
+        exit = ?res.exit_code,
+        ms = res.duration_ms,
+        reply = %crate::core::runner::compact_output(&res.stderr, 400),
+        "network op finished"
+    );
+}
+
 /// Log format shared by `log`, `graph` and `commit_detail` (8 lines per
 /// commit, see `parse_log`).
 const LOG_FORMAT: &str = "%H%n%h%n%an%n%ae%n%aI%n%s%n%d%n%P";
@@ -1297,6 +1313,7 @@ impl engine::GitEngine for CliEngine {
         let res = self
             .run_ssh(repo, args, StdinMode::Null, None, None)
             .await?;
+        log_net("fetch", remote.unwrap_or("--all"), &res);
         ensure_success_net(&res)
     }
 
@@ -1495,6 +1512,19 @@ impl engine::GitEngine for CliEngine {
             let res = self
                 .run_ssh(repo, args_refs, StdinMode::Null, None, None)
                 .await?;
+            log_net(
+                "push",
+                &format!(
+                    "{remote} {branch}{}{}",
+                    if force_with_lease {
+                        " --force-with-lease"
+                    } else {
+                        ""
+                    },
+                    if set_upstream { " --set-upstream" } else { "" }
+                ),
+                &res,
+            );
             ensure_success_net(&res)?;
         }
         if tags {
@@ -1502,6 +1532,7 @@ impl engine::GitEngine for CliEngine {
             let res = self
                 .run_ssh(repo, args, StdinMode::Null, None, None)
                 .await?;
+            log_net("push", &format!("{remote} --tags"), &res);
             ensure_success_net(&res)?;
         }
         if branch.is_empty() && !tags {
@@ -1540,6 +1571,16 @@ impl engine::GitEngine for CliEngine {
         let res = self
             .run_ssh(repo, args_refs, StdinMode::Null, None, None)
             .await?;
+        log_net(
+            "pull",
+            &format!(
+                "remote={:?} branch={:?} mode={}",
+                remote,
+                branch,
+                mode.unwrap_or("merge")
+            ),
+            &res,
+        );
         // 凭据取消必须以错误浮出（任务=已取消），不折叠进 success=false。
         if res.exit_code != Some(0)
             && res
@@ -2271,6 +2312,7 @@ impl engine::GitEngine for CliEngine {
             }
             Err(e) => return Err(e),
         };
+        log_net("clone", &opts.dest, &res);
         ensure_success_net(&res)?;
         Ok(())
     }

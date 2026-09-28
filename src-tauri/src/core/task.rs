@@ -134,6 +134,13 @@ impl TaskManager {
         }
         self.prune_cap().await;
         self.emit(&task);
+        tracing::info!(
+            task = %id.0,
+            kind = %task.kind,
+            repo = ?task.repo_id,
+            message = %task.message,
+            "task created"
+        );
         id
     }
 
@@ -197,6 +204,27 @@ impl TaskManager {
             task.progress = 100;
             self.cancel_tokens.write().await.remove(&id);
             self.emit(task);
+            let ms = task
+                .started_at
+                .map(|s| (task.finished_at.unwrap_or(s) - s) as u64)
+                .unwrap_or(0);
+            match &task.error {
+                None => tracing::info!(
+                    task = %id.0,
+                    kind = %task.kind,
+                    ms,
+                    ok = true,
+                    "task completed"
+                ),
+                Some(e) => tracing::warn!(
+                    task = %id.0,
+                    kind = %task.kind,
+                    ms,
+                    ok = false,
+                    error = %e,
+                    "task completed"
+                ),
+            }
         }
     }
 

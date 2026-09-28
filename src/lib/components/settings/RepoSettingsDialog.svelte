@@ -10,10 +10,20 @@
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import Copy from "@lucide/svelte/icons/copy";
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
   import { settings } from "$lib/stores/settings.svelte";
-  import { app, net, normalizeError, type RepoConfigValue, type SshKeyInfo } from "$lib/git";
+  import { copyText, remoteUrl } from "$lib/clipboard";
+  import {
+    app,
+    git,
+    net,
+    normalizeError,
+    type RepoConfigValue,
+    type RemoteInfo,
+    type SshKeyInfo,
+  } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
 
   let {
@@ -92,6 +102,7 @@
   let sshMode = $state<SshMode>("inherit");
   let sshPathDraft = $state("");
   let sshKeys = $state<SshKeyInfo[]>([]);
+  let remotes = $state<RemoteInfo[]>([]);
 
   const sshSelectOptions = $derived.by(() => {
     const opts = sshKeys
@@ -158,6 +169,7 @@
       const vals = await app.repoConfigValues(targetId);
       values = vals;
       sshKeys = await net.sshKeyList();
+      remotes = await git.remotes(targetId);
       // SSH 三态从本地值还原：null（未设）= 继承，"" = 禁用，路径 = 指定。
       const local = valueOf(SSH_KEY, "local");
       sshMode = local === null ? "inherit" : local === "" ? "none" : "custom";
@@ -289,6 +301,33 @@
               </label>
             {/each}
           </div>
+        </section>
+
+        <!-- 远程仓库（只读展示 + 一步复制；增删改走侧栏远程区） -->
+        <section class="space-y-2 rounded-md border p-3">
+          <span class="text-xs font-semibold">{t("settings.repo.remotes")}</span>
+          {#each remotes as r (r.name)}
+            <div class="flex items-center gap-2">
+              <span class="w-16 shrink-0 truncate font-mono text-[12px]">{r.name}</span>
+              <span
+                class="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground"
+                title={remoteUrl(r)}
+              >
+                {remoteUrl(r)}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 shrink-0 px-1.5"
+                title={t("refs.menu.copyUrl")}
+                onclick={() => void copyText(remoteUrl(r), "clipboard.remoteUrlCopied")}
+              >
+                <Copy class="size-3.5" />
+              </Button>
+            </div>
+          {:else}
+            <p class="text-[11px] text-muted-foreground">{t("refs.remote.none")}</p>
+          {/each}
         </section>
 
         <!-- 拉取与推送 / 换行 -->

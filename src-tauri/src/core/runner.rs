@@ -245,6 +245,92 @@ pub struct RawResult {
     pub duration_ms: u64,
 }
 
+/// 对单个参数做凭据脱敏：`scheme://user:secret@host` → `scheme://***@host`。
+/// clone/push 的 URL 可能内嵌 token（用户粘贴带凭据的 URL），日志里不能
+/// 出现明文。只有 `://` 后到 `@` 之间含 `:`（user:pass 形态）才脱敏，
+/// 纯 `user@host` 的用户名不是机密，保留。
+fn sanitize_arg(arg: &str) -> std::borrow::Cow<'_, str> {
+    let Some(scheme_end) = arg.find("://") else {
+        return std::borrow::Cow::Borrowed(arg);
+    };
+    let rest = &arg[scheme_end + 3..];
+    match rest.find('@') {
+        Some(at) if rest[..at].contains(':') => {
+            let mut out = String::with_capacity(arg.len());
+            out.push_str(&arg[..scheme_end + 3]);
+            out.push_str("***");
+            out.push_str(&rest[at..]);
+            std::borrow::Cow::Owned(out)
+        }
+        _ => std::borrow::Cow::Borrowed(arg),
+    }
+}
+
+/// 把输出折叠成单行日志片段：按 `\r`/`\n` 切段（git 进度行以 `\r` 结尾）、
+/// 去掉空段、` | ` 连接后取尾部 `max_chars` 字符。网络命令的远端回复
+/// （`main -> main` / `Everything up-to-date`）在 stderr 尾部，这是判断
+/// 「到底推没推过去」的权威证据。
+pub(crate) fn compact_output(s: &str, max_chars: usize) -> String {
+    let joined = s
+        .split(['\r', '\n'])
+        .filter(|seg| !seg.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let len = joined.chars().count();
+    if len <= max_chars {
+        joined
+    } else {
+        joined.chars().skip(len - max_chars).collect()
+    }
+}
+
+/// spawn 前的执行日志（debug）：完整命令行（参数已脱敏）。一次推送
+/// 能否复现、推到哪个 remote/branch，都靠这一行对账。
+fn log_exec(program: &str, args: &[&str]) {
+    let joined = args
+        .iter()
+        .map(|a| {
+            let sanitized = sanitize_arg(a);
+            if sanitized.contains(char::is_whitespace) {
+                format!("\"{sanitized}\"")
+            } else {
+                sanitized.into_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    tracing::debug!(program = %program, args = %joined, "git exec");
+}
+
+/// 执行后的结果日志：成功 debug；非零退出 / 执行失败 warn（附 stderr
+/// 尾部，网络命令的错误原因都写在 stderr 里）。
+fn log_exit(program: &str, res: &Result<RawResult, AppError>) {
+    match res {
+        Ok(out) => {
+            if out.exit_code == Some(0) {
+                tracing::debug!(
+                    program = %program,
+                    ms = out.duration_ms,
+                    stdout_bytes = out.stdout.len(),
+                    stderr_bytes = out.stderr.len(),
+                    "git done"
+                );
+            } else {
+                tracing::warn!(
+                    program = %program,
+                    exit = ?out.exit_code,
+                    ms = out.duration_ms,
+                    stderr = %compact_output(&out.stderr, 400),
+                    "git exited nonzero"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(program = %program, error = %e, "git exec failed");
+        }
+    }
+}
+
 /// GitProcessRunner: spawn / cancel / kill / wait / streams / stdin / timeout / env.
 ///
 /// 进程树 kill（PLAN P1）：cancel 与超时都经 [`proctree::TreeChild`] 终止
@@ -462,6 +548,7 @@ impl GitProcessRunner {
         cancel: Option<&CancelToken>,
         ssh: SshOverride,
     ) -> Result<RawResult, AppError> {
+        log_exec(git, args);
         let mut cmd = self.base_command(git, ssh);
         cmd.args(args);
         cmd.stdout(process::Stdio::piped());
@@ -480,15 +567,18 @@ impl GitProcessRunner {
             }
         }
 
-        self.run_command_bytes(
-            &mut cmd,
-            stdin_mode,
-            stdin_bytes,
-            timeout_secs,
-            cancel,
-            None,
-        )
-        .await
+        let res = self
+            .run_command_bytes(
+                &mut cmd,
+                stdin_mode,
+                stdin_bytes,
+                timeout_secs,
+                cancel,
+                None,
+            )
+            .await;
+        log_exit(git, &res);
+        res
     }
 
     /// 流式 run（P7）：stderr 逐行（含 `\r` 分段）转发给 `on_line`，
@@ -508,7 +598,7 @@ impl GitProcessRunner {
         cmd.stderr(process::Stdio::piped());
         cmd.stdin(process::Stdio::null());
 
-        let out = self
+        let res = self
             .run_command_bytes(
                 &mut cmd,
                 StdinMode::Null,
@@ -517,12 +607,16 @@ impl GitProcessRunner {
                 cancel,
                 Some(on_line),
             )
-            .await?;
-        Ok(ProcessResult {
-            exit_code: out.exit_code,
-            stdout: String::from_utf8(out.stdout).map_err(|_| RunnerError::Utf8)?,
-            stderr: out.stderr,
-            duration_ms: out.duration_ms,
+            .await;
+        log_exit(git, &res);
+        res.and_then(|out| {
+            let stdout = String::from_utf8(out.stdout).map_err(|_| RunnerError::Utf8)?;
+            Ok(ProcessResult {
+                exit_code: out.exit_code,
+                stdout,
+                stderr: out.stderr,
+                duration_ms: out.duration_ms,
+            })
         })
     }
 
@@ -717,6 +811,40 @@ mod tests {
     #[test]
     fn ssh_override_default_is_inherit() {
         assert_eq!(SshOverride::default(), SshOverride::Inherit);
+    }
+
+    #[test]
+    fn sanitize_arg_masks_user_password_urls() {
+        // user:pass 形态 → 机密段脱敏，scheme/host/path 保留。
+        assert_eq!(
+            sanitize_arg("https://user:ghp_token123@github.com/a/b.git"),
+            "https://***@github.com/a/b.git"
+        );
+        // 纯用户名不是机密：保留。
+        assert_eq!(
+            sanitize_arg("ssh://git@github.com/a/b.git"),
+            "ssh://git@github.com/a/b.git"
+        );
+        // 无 scheme / 无 @ / 无冒号：原样。
+        assert_eq!(sanitize_arg("origin"), "origin");
+        assert_eq!(sanitize_arg("main"), "main");
+        assert_eq!(sanitize_arg("C:\\some path\\repo"), "C:\\some path\\repo");
+        // URL 里 @ 在 scheme 前（如邮件参数）不误伤：无 :// 不处理。
+        assert_eq!(sanitize_arg("a@b:c"), "a@b:c");
+    }
+
+    #[test]
+    fn compact_output_joins_segments_and_takes_tail() {
+        // git 进度行以 \r 结尾：折叠为 " | " 连接，空段丢弃。
+        assert_eq!(
+            compact_output("Enumerating 1\r\nCounting 2\r", 400),
+            "Enumerating 1 | Counting 2"
+        );
+        // 超长：从尾部截断（远端回复在尾部）。
+        let long = compact_output("\r\n\r\nabcdefghijklmnopqrstuvwxyz", 10);
+        assert_eq!(long, "qrstuvwxyz");
+        // 空输入。
+        assert_eq!(compact_output("", 400), "");
     }
 
     fn runner() -> GitProcessRunner {

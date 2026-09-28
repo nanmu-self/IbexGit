@@ -19,6 +19,7 @@ import { showToast } from "$lib/stores/toast";
 import { t } from "$lib/i18n";
 import { emitAction, onAction, type ActionId } from "$lib/keyboard";
 import { pickRepo } from "$lib/repo-picker";
+import { copyPrimaryRemoteUrl } from "$lib/clipboard";
 
 export type FeatureSection = "file" | "view" | "repository" | "help";
 
@@ -329,6 +330,19 @@ export const FEATURES: Feature[] = [
     keywords: "config user email proxy settings gitconfig 仓库设置",
     run: () => {
       if (needsActiveRepo()) appDialogs.openRepoSettings();
+    },
+  },
+  {
+    id: "repo.copyUrl",
+    labelKey: "menu.repo.copyUrl",
+    section: "repository",
+    group: 4,
+    order: 2,
+    needsRepo: true,
+    keywords: "remote url copy clone origin address 复制 地址 远程 仓库",
+    run: () => {
+      const id = repos.activeId;
+      if (id !== null) void copyPrimaryRemoteUrl(id);
     },
   },
   {

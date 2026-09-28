@@ -9,6 +9,7 @@
   import { repos } from "$lib/stores/repos.svelte";
   import { refsData, loadRefsData, REFS_RELOG_LIMIT } from "$lib/stores/refsdata.svelte";
   import { requestRefAction } from "$lib/stores/refbus";
+  import { copyText, remoteUrl } from "$lib/clipboard";
   import { git, normalizeError, type BranchInfo, type ReflogEntry, type RemoteInfo, type StashEntry, type TagInfo } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
   import ChevronsUpDown from "@lucide/svelte/icons/chevrons-up-down";
@@ -19,6 +20,7 @@
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import Tag from "@lucide/svelte/icons/tag";
   import Archive from "@lucide/svelte/icons/archive";
+  import Copy from "@lucide/svelte/icons/copy";
   import Plus from "@lucide/svelte/icons/plus";
   import MoreHorizontal from "@lucide/svelte/icons/more-horizontal";
   import Scissors from "@lucide/svelte/icons/scissors";
@@ -593,6 +595,13 @@
       </button>
     {:else if menu.kind === "remote"}
       {@const r = menu.remote}
+      <button
+        type="button"
+        class="menu-item"
+        onclick={menuRun(() => void copyText(remoteUrl(r), "clipboard.remoteUrlCopied"))}
+      >
+        <Copy class="size-3.5" /> {t("refs.menu.copyUrl")}
+      </button>
       <button type="button" class="menu-item" onclick={menuRun(() => fetchRemote(r.name))}>
         {t("refs.menu.fetch")}
       </button>
