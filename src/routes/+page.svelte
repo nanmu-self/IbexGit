@@ -93,7 +93,7 @@
       <main class="flex min-w-0 flex-1 flex-col">
         {#if repos.reposTabActive}
           <ReposTab />
-        {:else if !active || active.phase === "loading"}
+        {:else if !active || active.phase === "pending" || active.phase === "loading"}
           <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
             <LoaderCircle class="size-4 animate-spin" />
             {t("common.loading")}

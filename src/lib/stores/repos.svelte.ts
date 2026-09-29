@@ -36,7 +36,13 @@ export interface RepoTab {
   /** Resolved worktree root (backend may walk up from the requested path). */
   path: string;
   name: string;
-  phase: "loading" | "ready" | "error";
+  /**
+   * `pending` = registered but never loaded (lazy session-restore tabs);
+   * first activation flips it to `loading` and kicks off the initial read.
+   */
+  phase: "pending" | "loading" | "ready" | "error";
+  /** Whether the first status+branches round trip ran (or was attempted). */
+  initialized: boolean;
   error: string | null;
   branch: string;
   detached: boolean;
@@ -152,9 +158,15 @@ class ReposStore {
 
   // ===================== open / close / activate =====================
 
-  async openPath(path: string): Promise<void> {
+  /**
+   * Open a repo in a tab. With `activate: false` the tab is only registered
+   * (lazy): the initial status read is deferred to the first `activate`.
+   * Used by session restore so startup only pays for the last-active repo.
+   */
+  async openPath(path: string, opts?: { activate?: boolean }): Promise<void> {
     const trimmed = path.trim();
     if (!trimmed) return;
+    const activate = opts?.activate ?? true;
     const existing = this.tabs.find((t) => samePath(t.path, trimmed));
     if (existing) {
       this.activate(existing.id);
@@ -171,7 +183,8 @@ class ReposStore {
         id,
         path: resolved,
         name,
-        phase: "loading",
+        phase: "pending",
+        initialized: false,
         error: null,
         branch: "",
         detached: false,
@@ -184,8 +197,7 @@ class ReposStore {
         refreshing: false,
         lastRefreshMs: null,
       });
-      this.activate(id);
-      await this.#load(id);
+      if (activate) this.activate(id);
       workspace.touchRecent(resolved, name)
         .then(() => this.loadRecents())
         .catch(() => {});
@@ -255,6 +267,12 @@ class ReposStore {
     }
     const tab = this.tabs.find((t) => t.id === id);
     if (!tab) return;
+    // Lazy tab (session restore): the first activation pays for the load.
+    if (!tab.initialized) {
+      tab.initialized = true;
+      tab.phase = "loading";
+      void this.refresh(id);
+    }
     if (this.activeId === id) return;
     // Save the outgoing repo's UI state, then swap in the new one's.
     if (this.active) {
@@ -306,10 +324,6 @@ class ReposStore {
       const t = this.tabs.find((x) => x.id === id);
       if (t) t.refreshing = false;
     }
-  }
-
-  async #load(id: string): Promise<void> {
-    await this.refresh(id);
   }
 
   #apply(id: string, files: FileStatus[], branches: BranchInfo[], ms: number): void {
@@ -487,11 +501,15 @@ class ReposStore {
     );
   }
 
-  /** Restore the last session (called once after settings are ready). */
+  /**
+   * Restore the last session (called once after settings are ready).
+   * Tabs are registered lazily; only the last-active repo loads up front,
+   * the rest hydrate on first activation (browser-style tab restore).
+   */
   async restoreSession(): Promise<void> {
     await Promise.all([this.loadRecents(), this.loadGroups()]);
     for (const path of settings.openPaths) {
-      await this.openPath(path);
+      await this.openPath(path, { activate: false });
     }
     if (settings.reposTabOpen) {
       this.openReposTab();
@@ -520,7 +538,9 @@ class ReposStore {
 
   async #onRepoChanged(payload: RepoChanged): Promise<void> {
     const tab = this.tabs.find((t) => t.id === payload.repoId);
-    if (!tab) return;
+    // Lazy tabs ignore change events; the first activation re-reads anyway,
+    // and the backend keeps serving the probed status from cache.
+    if (!tab || !tab.initialized) return;
     const t0 = performance.now();
     await this.refresh(tab.id);
     // SLA 埋点 (PLAN §4.3): IPC + re-read portion of the end-to-end budget;
