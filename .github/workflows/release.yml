@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # release 构建不应被后续 push 取消
+
+permissions:
+  contents: write  # 创建 Release + 上传资产
+
+jobs:
+  build:
+    name: '${{ matrix.label }}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (x64 NSIS)
+            artifact: windows-x64
+            # Tauri 在 updater-release/ 生成的平台后缀
+            updater_target: windows-x86_64
+          - os: macos-latest
+            label: macOS (arm64 DMG)
+            artifact: macOS-arm64
+            updater_target: darwin-aarch64
+          - os: ubuntu-latest
+            label: Linux (x64 AppImage + deb)
+            artifact: linux-x64
+            updater_target: linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri bundle
+        env:
+          # 可选：配了 TAURI_SIGNING_PRIVATE_KEY 才生成带签名的 latest.<target>.json
+          # 和 .sig 文件，客户端自动更新才可用。不配则跳过签名产物。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: pnpm tauri build
+
+      - name: Show build outputs
+        run: |
+          echo "=== Bundle artifacts ==="
+          find src-tauri/target/release/bundle -type f 2>/dev/null | head -50
+          echo ""
+          echo "=== Updater artifacts ==="
+          find src-tauri/target/release/updater-release -type f 2>/dev/null | head -20
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            src-tauri/target/release/bundle/**/*.{exe,msi,dmg,appimage,deb,rpm,snap}
+            src-tauri/target/release/bundle/**/*.sig
+            src-tauri/target/release/updater-release/*
+          if-no-files-found: warn
+          retention-days: 7
+
+  finalize:
+    name: 创建 Release 并上传
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 列出所有 artifacts
+        run: |
+          echo "=== 所有下载的 artifacts ==="
+          find artifacts -type f -exec ls -lh {} \;
+
+      - name: 整理文件到发布目录
+        run: |
+          mkdir -p release-assets
+          cd release-assets
+
+          # 把所有 artifact 目录里的文件平铺到 release-assets/
+          # latest.json 文件本身已经包含平台标识（latest.windows-x86_64.json 等）
+          find ../artifacts -type f -exec cp {} . \;
+
+          echo ""
+          echo "=== release-assets 内容 ==="
+          ls -lh
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: IbexGit ${{ github.ref_name }}
+          body: |
+            **IbexGit** — 本地优先的 Git 图形客户端（Tauri 2 + SvelteKit 5）
+
+            ## 下载
+
+            | 平台 | 文件 | 自动更新 |
+            |------|------|---------|
+            | Windows x64 (NSIS) | `ibexgit_*_x64-setup.exe` | ✅ 支持 |
+            | macOS Apple Silicon (DMG) | `ibexgit_*_aarch64.dmg` | ✅ 支持 |
+            | Linux x64 (AppImage) | `ibexgit_*_amd64.AppImage` | ⚠️ 部分支持 |
+            | Linux x64 (deb) | `ibexgit_*_amd64.deb` | ❌ 不支持 |
+
+            ## 自动更新机制
+
+            本 Release 包含各平台的 `latest.<target>.json` + `.sig` 文件。
+            客户端内置 updater 会从 `https://github.com/nanmu-self/IbexGit/releases/latest/download/latest.{target}.json`
+            获取对应平台的更新元数据并校验签名。
+
+            > **注意**：`latest.*.json` + `.sig` 文件仅在配置了 `TAURI_SIGNING_PRIVATE_KEY` secret 时生成。
+            > 若当前 Release 缺少这些文件，自动更新不可用，请手动下载安装。
+
+            ## 构建信息
+
+            - **Tag**: ${{ github.ref_name }}
+            - **Commit**: ${{ github.sha }}
+            - **Runner**: GitHub Actions (windows-latest + macos-latest + ubuntu-latest)
+
+          files: |
+            release-assets/*.exe
+            release-assets/*.msi
+            release-assets/*.dmg
+            release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.sig
+            release-assets/*.json
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}  # v0.1.1-alpha → prerelease
+          fail_on_unmatched_files: false
