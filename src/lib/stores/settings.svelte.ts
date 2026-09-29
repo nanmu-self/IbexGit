@@ -5,7 +5,7 @@
  */
 import { load, type Store } from "@tauri-apps/plugin-store";
 import { commands } from "$lib/git/bindings";
-import { setLocale, type Locale } from "$lib/i18n";
+import { setLocale, FALLBACK_LOCALE, type Locale } from "$lib/i18n";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -105,7 +105,12 @@ class SettingsStore {
       this.settingsWidth = (await this.#store.get<number>("settingsWidth")) ?? 0;
       this.settingsHeight = (await this.#store.get<number>("settingsHeight")) ?? 0;
     } finally {
-      setLocale(this.locale);
+      // Apply the persisted locale before `ready` flips (UI renders t()).
+      // If the dictionary fails to load, fall back to the default locale so
+      // the settings UI stays in sync with what's actually on screen.
+      if (!(await setLocale(this.locale))) {
+        this.locale = FALLBACK_LOCALE;
+      }
       this.ready = true;
       // P7：把持久化的网络配置下发给 runner（失败不阻断启动，默认继承环境）。
       commands
@@ -124,8 +129,11 @@ class SettingsStore {
   }
 
   async setLocale(locale: Locale): Promise<void> {
+    // Apply first; persist only when the dictionary actually loaded — a
+    // failed load must not leave the persisted locale out of sync with
+    // what the UI is showing (i18n.setLocale logs the failure).
+    if (!(await setLocale(locale))) return;
     this.locale = locale;
-    setLocale(locale);
     await this.#store?.set("locale", locale);
   }
 

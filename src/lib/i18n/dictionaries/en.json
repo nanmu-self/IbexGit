@@ -2,7 +2,6 @@
   "app.name": "IbexGit",
   "app.tagline": "Local-first Git graphical client",
   "app.dropToOpen": "Drop to open repository",
-  "app.loading": "Starting…",
   "menu.file": "File",
   "menu.view": "View",
   "menu.repository": "Repository",

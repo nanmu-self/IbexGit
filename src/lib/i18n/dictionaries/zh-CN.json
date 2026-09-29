@@ -2,7 +2,6 @@
   "app.name": "IbexGit",
   "app.tagline": "本地优先的 Git 图形客户端",
   "app.dropToOpen": "松开以打开仓库",
-  "app.loading": "正在启动…",
   "menu.file": "文件",
   "menu.view": "查看",
   "menu.repository": "仓库",

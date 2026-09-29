@@ -2,18 +2,18 @@
   import TitleBar from "$lib/components/layout/TitleBar.svelte";
   import Toolbar from "$lib/components/layout/Toolbar.svelte";
   import RepoTabs from "$lib/components/layout/RepoTabs.svelte";
-  import ReposTab from "$lib/components/layout/ReposTab.svelte";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import StatusBar from "$lib/components/layout/StatusBar.svelte";
   import Welcome from "$lib/components/welcome/Welcome.svelte";
   import WorkspaceView from "$lib/components/workspace/WorkspaceView.svelte";
   import HistoryView from "$lib/components/history/HistoryView.svelte";
   import TagsView from "$lib/components/refs/TagsView.svelte";
-  import FileInspectDialog from "$lib/components/file/FileInspectDialog.svelte";
   import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
   import NetDialogsHost from "$lib/components/credential/NetDialogsHost.svelte";
   import GitErrorDialog from "$lib/components/giterror/GitErrorDialog.svelte";
+  import FileInspectDialog from "$lib/components/file/FileInspectDialog.svelte";
   import ReportDialog from "$lib/components/ai/ReportDialog.svelte";
+  import ReposTab from "$lib/components/layout/ReposTab.svelte";
   import { wireAiEvents } from "$lib/stores/ai.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
@@ -64,9 +64,9 @@
 </script>
 
 {#if !settings.ready}
-  <div class="flex h-screen items-center justify-center gap-2 text-sm text-muted-foreground">
-    <LoaderCircle class="size-4 animate-spin" />
-    {t("app.loading")}
+  <!-- 纯 spinner：字典此刻尚未就位，渲染 t() 会闪原始 key。 -->
+  <div class="flex h-screen items-center justify-center">
+    <LoaderCircle class="size-5 animate-spin text-muted-foreground" />
   </div>
 {:else if repos.tabs.length === 0}
   <div class="flex h-screen flex-col overflow-hidden">
