@@ -19,12 +19,12 @@ name = "ibexgit_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7.0", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-tauri-plugin-log = "2"
+tauri = { version = "2.12.0", features = [] }
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-log = "2.9.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
@@ -61,14 +61,14 @@ reqwest = { version = "0.13", default-features = false, features = [
   "charset",
 ] }
 futures-util = { version = "0.3", default-features = false }
-tauri-plugin-single-instance = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-store = "2"
-tauri-plugin-clipboard-manager = "2.3.3"
+tauri-plugin-single-instance = "2.5.0"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-store = "2.5.0"
+tauri-plugin-clipboard-manager = "2.4.0"
 # 自动更新（docs/auto-update-plan.md）：updater 检查/下载/签名校验，process 供 relaunch。
 # 私钥在 ~/.tauri/ibexgit-updater.key（绝不入库），CI 用 TAURI_SIGNING_PRIVATE_KEY 注入。
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
+tauri-plugin-updater = "2.13.0"
+tauri-plugin-process = "2.4.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -95,5 +95,6 @@ strip = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "macros", "rt"] }
-tauri = { version = "2", features = ["test"] }
+tauri = { version = "2.12.0", features = ["test"] }
 wiremock = "0.6"
+
