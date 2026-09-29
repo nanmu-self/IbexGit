@@ -104,13 +104,24 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-          # merge-multiple 把所有 artifact 平铺到 artifacts/ 根目录
-          # 避免 artifacts/windows-x64/..., artifacts/macOS-arm64/... 多层嵌套
           merge-multiple: true
 
-      - name: 列出所有 artifacts
+      - name: 平铺 artifacts 到根目录
         run: |
-          echo "=== 所有下载的 artifacts ==="
+          # merge-multiple 保留了每个 artifact 内部的目录结构（bundle/nsis/*, updater-release/* 等）
+          # softprops/action-gh-release 的 glob 只匹配根目录，所以全部平铺
+          echo "=== 平铺前结构 ==="
+          find artifacts -type f | head -20
+
+          # 把所有子目录里的文件挪到 artifacts/ 根目录
+          # -mindepth 2 跳过根目录本身；同名覆盖（不同平台产物名不会冲突）
+          find artifacts -mindepth 2 -type f -exec mv {} artifacts/ \;
+
+          # 删掉空的子目录
+          find artifacts -mindepth 1 -type d -empty -delete
+
+          echo ""
+          echo "=== 平铺后 ==="
           ls -lh artifacts/
 
       - name: 创建 Release
