@@ -283,6 +283,7 @@
   "common.comingSoonPhase": "{feature} will arrive in {phase}",
   "common.error": "Something went wrong",
   "common.openRepoFailed": "Failed to open repository",
+  "common.viewLoadFailed": "Failed to load view",
   "theme.light": "Light",
   "theme.dark": "Dark",
   "theme.system": "System",

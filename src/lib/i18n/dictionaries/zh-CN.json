@@ -283,6 +283,7 @@
   "common.comingSoonPhase": "{feature} 将在 {phase} 提供",
   "common.error": "出错了",
   "common.openRepoFailed": "打开仓库失败",
+  "common.viewLoadFailed": "视图加载失败",
   "theme.light": "浅色",
   "theme.dark": "深色",
   "theme.system": "跟随系统",

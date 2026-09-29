@@ -5,30 +5,54 @@
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import StatusBar from "$lib/components/layout/StatusBar.svelte";
   import Welcome from "$lib/components/welcome/Welcome.svelte";
-  import WorkspaceView from "$lib/components/workspace/WorkspaceView.svelte";
-  import HistoryView from "$lib/components/history/HistoryView.svelte";
-  import TagsView from "$lib/components/refs/TagsView.svelte";
   import RefsDialogsHost from "$lib/components/refs/RefsDialogsHost.svelte";
   import NetDialogsHost from "$lib/components/credential/NetDialogsHost.svelte";
-  import GitErrorDialog from "$lib/components/giterror/GitErrorDialog.svelte";
-  import FileInspectDialog from "$lib/components/file/FileInspectDialog.svelte";
-  import ReportDialog from "$lib/components/ai/ReportDialog.svelte";
-  import ReposTab from "$lib/components/layout/ReposTab.svelte";
   import { wireAiEvents } from "$lib/stores/ai.svelte";
   import { EmptyState } from "$lib/components/ui/empty-state";
   import { PanelResizer } from "$lib/components/ui/panel-resizer";
+  import LazyView from "$lib/components/ui/lazy-view.svelte";
+  import LazyMount from "$lib/components/ui/lazy-mount.svelte";
   import { Button } from "$lib/components/ui/button";
   import { settings } from "$lib/stores/settings.svelte";
   import { repos } from "$lib/stores/repos.svelte";
+  import { fileView } from "$lib/stores/fileview.svelte";
+  import { giterr } from "$lib/stores/giterr.svelte";
+  import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { onAction } from "$lib/keyboard";
   import { initFeatureShortcuts } from "$lib/features";
   import { t } from "$lib/i18n";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
 
+  // ---- View-level dynamic imports (first-load budget: JS+CSS ≤ 500 KB gz) ----
+  // The four main-area views are mutually exclusive {#if} branches, so each
+  // ships as its own lazy chunk; non-default views never load at startup.
+  // Loader constants + shared cache live in $lib/lazy-views.ts (module-level
+  // identity is what keeps the cache stable).
+  import {
+    workspaceLoader,
+    historyLoader,
+    tagsLoader,
+    reposTabLoader,
+    fileInspectLoader,
+    gitErrorLoader,
+    reportLoader,
+    warmupView,
+  } from "$lib/lazy-views";
+
   let restored = $state(false);
   /** PanelResizer drag state: Sidebar drops its width transition while true. */
   let sidebarResizing = $state(false);
+
+  // Warm up the default view chunk once settings are in — but only when
+  // there is (or will be, after session restore) at least one repo tab:
+  // the Welcome startup path keeps its zero-workspace-chunk property.
+  // The effect re-runs when tabs appear, so a restored session warms up
+  // right after restore lands. Fire-and-forget; LazyView reuses the same
+  // cache entry, so no double load.
+  $effect(() => {
+    if (settings.ready && repos.tabs.length > 0) warmupView(workspaceLoader);
+  });
 
   // P11: AI 生成事件订阅（幂等，全局一份）。
   wireAiEvents();
@@ -92,7 +116,7 @@
       {/if}
       <main class="flex min-w-0 flex-1 flex-col">
         {#if repos.reposTabActive}
-          <ReposTab />
+          <LazyView loader={reposTabLoader} />
         {:else if !active || active.phase === "pending" || active.phase === "loading"}
           <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
             <LoaderCircle class="size-4 animate-spin" />
@@ -111,19 +135,19 @@
             {/snippet}
           </EmptyState>
         {:else if repos.ui.view === "history"}
-          <HistoryView />
+          <LazyView loader={historyLoader} />
         {:else if repos.ui.view === "tags"}
-          <TagsView />
+          <LazyView loader={tagsLoader} />
         {:else}
-          <WorkspaceView />
+          <LazyView loader={workspaceLoader} />
         {/if}
       </main>
     </div>
     <StatusBar />
     <RefsDialogsHost />
-    <GitErrorDialog />
-    <FileInspectDialog />
-    <ReportDialog />
+    <LazyMount active={giterr.open} loader={gitErrorLoader} />
+    <LazyMount active={fileView.open} loader={fileInspectLoader} />
+    <LazyMount active={appDialogs.aiReportOpen} loader={reportLoader} />
   </div>
 {/if}
 
