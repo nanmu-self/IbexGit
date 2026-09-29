@@ -106,9 +106,12 @@ class SettingsStore {
       this.settingsHeight = (await this.#store.get<number>("settingsHeight")) ?? 0;
     } finally {
       // Apply the persisted locale before `ready` flips (UI renders t()).
-      // If the dictionary fails to load, fall back to the default locale so
-      // the settings UI stays in sync with what's actually on screen.
+      // If that dictionary fails to load, actually load the fallback one —
+      // it's a different chunk file and very likely still readable; without
+      // this the screen would show raw keys instead of Chinese. Either way
+      // the settings field must match what's really on screen.
       if (!(await setLocale(this.locale))) {
+        if (this.locale !== FALLBACK_LOCALE) await setLocale(FALLBACK_LOCALE);
         this.locale = FALLBACK_LOCALE;
       }
       this.ready = true;

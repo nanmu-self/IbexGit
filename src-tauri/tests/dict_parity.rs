@@ -31,14 +31,11 @@ fn flatten(prefix: &str, value: &Value, out: &mut BTreeSet<String>) {
 }
 
 fn dictionary_keys(file: &str) -> BTreeSet<String> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../src/lib/i18n/dictionaries/"
-    );
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/lib/i18n/dictionaries/");
     let raw = std::fs::read_to_string(format!("{path}{file}"))
         .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
-    let value: Value = serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("invalid JSON in {file}: {e}"));
+    let value: Value =
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("invalid JSON in {file}: {e}"));
     let mut out = BTreeSet::new();
     flatten("", &value, &mut out);
     out
