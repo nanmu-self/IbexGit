@@ -25,26 +25,6 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-/// 生成唯一的 marker 文件名（含 pid + 纳秒时间戳，避免并行测试冲突）。
-fn marker_name() -> String {
-    format!(
-        "ibexgit-ssh-marker-{}-{}.txt",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    )
-}
-
-/// msys sh.exe 原生路径：它会把 `/tmp/` 自动映射到 `$TEMP`
-/// （Windows 上是 `%TEMP%`，即 `C:\Users\<user>\AppData\Local\Temp`）。
-/// shim 里写这个路径，Rust 端用 `std::env::temp_dir().join(marker_name)`
-/// 读取——两边对同一个物理文件，平台无关。
-fn msys_tmp_path(name: &str) -> String {
-    format!("/tmp/{name}")
-}
-
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
         .arg("-C")
@@ -77,7 +57,6 @@ fn git_init(dir: &Path) {
 
 #[allow(dead_code)]
 /// `git` 包装脚本：隔离全局/系统配置，保证解析只看仓库本地配置。
-/// 返回包装器路径（配合调用方自建的 runner 使用）。
 /// 当前 runner 自带 `with_git_config` 直接注入 env，不再需要；保留作备选。
 fn isolated_git_wrapper(dir: &Path) -> String {
     let cfg = dir.join("gitconfig");
@@ -109,18 +88,19 @@ fn isolated_git_wrapper(dir: &Path) -> String {
     wrapper.display().to_string()
 }
 
-/// `ssh` 垫片：把参数原样写入 marker 后 exit 1（fetch 因此报错，无妨）。
+/// `ssh` 垫片：把参数原样写入 `$IBEXGIT_SSH_MARKER` 环境变量指定的路径，
+/// 然后 exit 1（fetch 因此报错，无妨）。
+///
 /// 所有平台都用无扩展名 + shebang 的 sh 脚本：git 总是经 `sh -c` 执行
 /// GIT_SSH_COMMAND / core.sshCommand，msys sh（Windows）按 shebang 识别
 /// 可执行文件；.cmd 垫片不会被 sh 的 PATH 搜索命中。
 ///
-/// marker 用 msys sh.exe 原生 `/tmp/<name>` 路径（它自动映射到 `$TEMP`），
-/// 而不是 Windows 原生绝对路径——因为 Rust 把 `PathBuf` 字符串化时
-/// 在 Windows 上可能触发 8.3 短路径名（如 `ADMINI~1`），msys sh.exe
-/// 处理这种短路径时 `printf >> '...'` 会静默失败（见 CI 调试）。
-/// `/tmp/` 没有这些问题，跨平台可靠。
-fn write_ssh_shim(dir: &Path, msys_marker_path: &str) {
-    let body = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{msys_marker_path}'\nexit 1\n");
+/// marker 路径不硬编码在 shim 里，而是通过 env var 传入——这样：
+/// - 不依赖 macOS `/tmp` 和 `$TMPDIR` 映射一致（两者在 macOS 上完全不同）
+/// - 不依赖 msys sh.exe 正确处理 Windows 8.3 短路径
+/// - 跨平台（Win/macOS/Linux）统一可靠
+fn write_ssh_shim(dir: &Path) {
+    let body = "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$IBEXGIT_SSH_MARKER\"\nexit 1\n";
     let shim = dir.join("ssh");
     std::fs::write(&shim, body).unwrap();
     #[cfg(unix)]
@@ -140,13 +120,12 @@ async fn fetch_resolves_ssh_override_per_repo() {
         &["remote", "add", "origin", "git@example.invalid:foo/bar.git"],
     );
 
-    // marker 双路径：msys sh.exe 写 msys 路径，Rust 读平台原生路径。
-    let m_name = marker_name();
-    let msys_marker = msys_tmp_path(&m_name);
-    let marker = std::env::temp_dir().join(&m_name);
+    // marker 放在测试自己创建的 work 目录里（不是系统 temp），
+    // 路径跨平台一致、短、不会触发 Windows 8.3 短路径名。
+    let marker = work.join("ssh-marker.txt");
+    let marker_str = marker.display().to_string();
 
-    write_ssh_shim(&shims, &msys_marker);
-    // 清理上一次运行可能的残留
+    write_ssh_shim(&shims);
     std::fs::remove_file(&marker).ok();
 
     // PATH 前插垫片目录：git 子进程解析出的 ssh 即垫片。
@@ -154,6 +133,9 @@ async fn fetch_resolves_ssh_override_per_repo() {
     let mut new_path = std::env::split_paths(&shims).collect::<Vec<_>>();
     new_path.extend(std::env::split_paths(&old_path));
     std::env::set_var("PATH", std::env::join_paths(&new_path).unwrap());
+
+    // 告诉 shim 把参数写到哪里（通过 env var 传入完整平台原生路径）。
+    std::env::set_var("IBEXGIT_SSH_MARKER", &marker_str);
 
     // 全局活动密钥（带空格路径：同时验证 runner 侧的引号处理）。
     // runner 自注入 GIT_CONFIG_GLOBAL/NOSYSTEM，绕开 .cmd wrapper 中间层。
@@ -214,8 +196,9 @@ async fn fetch_resolves_ssh_override_per_repo() {
         "case4 expected user core.sshCommand honored, got: {args}"
     );
 
+    // 清理
     std::env::set_var("PATH", old_path);
+    std::env::remove_var("IBEXGIT_SSH_MARKER");
     std::fs::remove_dir_all(&work).ok();
     std::fs::remove_dir_all(&shims).ok();
-    std::fs::remove_file(&marker).ok();
 }
