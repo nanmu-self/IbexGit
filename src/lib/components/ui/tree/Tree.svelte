@@ -4,13 +4,14 @@
   import { browser } from "$app/environment";
 
   // Subtree expand/collapse bridge: children drop in from the parent row
-  // (4px) and fade, 150ms. Reduced motion → 80ms, opacity-led (y: 0).
+  // (6px) and fade, 220ms — slow enough to read as motion, quick enough to
+  // never feel in the way. Reduced motion → 100ms, opacity-led (y: 0).
   const reduceMotion =
     browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const subtreeFly = reduceMotion
-    ? { y: 0, duration: 80, easing: cubicOut }
-    : { y: -4, duration: 150, easing: cubicOut };
+    ? { y: 0, duration: 100, easing: cubicOut }
+    : { y: -6, duration: 220, easing: cubicOut };
 </script>
 
 <script lang="ts">
