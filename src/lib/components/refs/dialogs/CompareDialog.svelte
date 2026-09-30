@@ -45,8 +45,19 @@
   let fileLoading = $state(false);
   let statsLoading = $state(false);
 
+  /** Monotonic token — only the newest load may write results; stale loads are discarded. */
+  let loadSeq = 0;
+  /** "left\0right" of the last load actually started; dedupes the change effect. */
+  let loadedRefs = "";
+
   $effect(() => {
     if (open) {
+      // Deliberately do NOT read `left`/`right` here — not even transitively.
+      // reload()'s synchronous prologue reads them, so calling reload() from
+      // this effect would track them as dependencies and snap the selects
+      // back to the initial values on every dropdown/swap change. Just reset
+      // the state; clearing loadedRefs makes the change effect below (which
+      // runs after this one in the same flush) kick off the load.
       left = initialLeft;
       right = initialRight;
       ahead = 0;
@@ -56,7 +67,7 @@
       files = [];
       selectedFile = null;
       fileModel = null;
-      if (left && right) void reload();
+      loadedRefs = "";
     }
   });
 
@@ -69,37 +80,46 @@
   });
 
   $effect(() => {
-    // Reload when either ref changes while the dialog is open.
+    // Reload whenever either ref changes while the dialog is open.
     const l = left;
     const r = right;
-    if (open && l && r && (l !== initialLeft || r !== initialRight)) void reload();
+    if (open && l && r && `${l}\u0000${r}` !== loadedRefs) void reload();
   });
 
   async function reload(): Promise<void> {
     const id = repoId;
-    if (!id || !left || !right || left === right) return;
+    // Capture the ref pair up front: every query below must address the SAME
+    // pair, and no await may observe a ref changed mid-flight.
+    const l = left;
+    const r = right;
+    if (!id || !l || !r || l === r) return;
+    const seq = ++loadSeq;
+    loadedRefs = `${l}\u0000${r}`;
     statsLoading = true;
     selectedFile = null;
     fileModel = null;
     try {
-      const cmp = await git.branchCompare(id, left, right);
+      const cmp = await git.branchCompare(id, l, r);
+      if (seq !== loadSeq) return; // superseded by a newer load
       ahead = cmp.ahead;
       behind = cmp.behind;
       const [inc, outg] = await Promise.all([
-        git.revList(id, `${left}..${right}`, 200, 0),
-        git.revList(id, `${right}..${left}`, 200, 0),
+        git.revList(id, `${l}..${r}`, 200, 0),
+        git.revList(id, `${r}..${l}`, 200, 0),
       ]);
+      if (seq !== loadSeq) return;
       incoming = inc;
       outgoing = outg;
-      const model = await git.diff(id, "commit", left, right);
+      const model = await git.diff(id, "commit", l, r);
+      if (seq !== loadSeq) return;
       files = model.files.map((f) => ({
         path: f.new_path ?? f.old_path ?? "?",
         status: f.binary ? "B" : f.similarity !== null && f.similarity !== undefined ? "R" : "M",
       }));
     } catch (e) {
-      normalizeError(e);
+      if (seq === loadSeq) normalizeError(e);
     } finally {
-      statsLoading = false;
+      if (seq === loadSeq) statsLoading = false;
     }
   }
 
@@ -109,6 +129,7 @@
     right = l;
   }
 
+  let fileSeq = 0;
   $effect(() => {
     const f = selectedFile;
     const id = repoId;
@@ -116,12 +137,21 @@
       fileModel = null;
       return;
     }
+    const l = left;
+    const r = right;
+    const seq = ++fileSeq;
     fileLoading = true;
     git
-      .diff(id, "commit", left, right, [f])
-      .then((m) => (fileModel = m))
-      .catch((e) => normalizeError(e))
-      .finally(() => (fileLoading = false));
+      .diff(id, "commit", l, r, [f])
+      .then((m) => {
+        if (seq === fileSeq) fileModel = m;
+      })
+      .catch((e) => {
+        if (seq === fileSeq) normalizeError(e);
+      })
+      .finally(() => {
+        if (seq === fileSeq) fileLoading = false;
+      });
   });
 
   async function copyHash(hash: string): Promise<void> {
