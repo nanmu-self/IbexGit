@@ -61,8 +61,13 @@
   // Build one section's tree model. Pure — Svelte 5 forbids writing $state
   // inside $derived, so the dir-id list rides along in the return value
   // instead of being assigned to component state (state_unsafe_mutation).
+  // `section` namespaces dir ids per section ("staged:src") so same-named
+  // directories in different sections expand/collapse independently.
+  // (Named `section`, not `prefix` — the recursive build() below takes a
+  // `prefix` parent-path parameter and would shadow it.)
   function buildModel(
     leaves: FileLeaf[],
+    section: "conflict" | "staged" | "unstaged",
     badgeTone: "red" | "muted" = "muted",
   ): { nodes: TreeNode[]; ids: string[] } {
     interface DirNode {
@@ -109,9 +114,9 @@
         .sort();
       for (const path of level) {
         const node = dirs.get(path)!;
-        ids.push(path);
+        ids.push(`${section}:${path}`);
         out.push({
-          id: path,
+          id: `${section}:${path}`,
           // Root level has no parent prefix to strip — slicing would chop
           // the first character ("src" → "rc").
           label: prefix === "" ? path : path.slice(prefix.length + 1),
@@ -139,19 +144,27 @@
   }
 
   // One tree per section, mirroring the list view's information layout
-  // (a path both staged and unstaged appears in both sections).
+  // (a path both staged and unstaged appears in both sections). Dir ids
+  // carry a section prefix, so each section keeps its own expand state.
   const conflictModel = $derived(
-    buildModel(conflicts.map((f) => ({ file: f, source: "worktree" as const })), "red"),
+    buildModel(
+      conflicts.map((f) => ({ file: f, source: "worktree" as const })),
+      "conflict",
+      "red",
+    ),
   );
   const stagedModel = $derived(
-    buildModel(staged.map((f) => ({ file: f, source: "staged" as const }))),
+    buildModel(staged.map((f) => ({ file: f, source: "staged" as const })), "staged"),
   );
   const unstagedModel = $derived(
-    buildModel(unstaged.map((f) => ({ file: f, source: "worktree" as const }))),
+    buildModel(
+      unstaged.map((f) => ({ file: f, source: "worktree" as const })),
+      "unstaged",
+    ),
   );
 
-  // Expanded = every directory minus the persisted collapsed list (shared
-  // across sections: collapsing "src" hides it in every section's tree).
+  // Expanded = every directory minus the persisted collapsed list
+  // (namespaced per section — see buildModel).
   const expanded = $derived(
     new Set(
       [...conflictModel.ids, ...stagedModel.ids, ...unstagedModel.ids].filter(

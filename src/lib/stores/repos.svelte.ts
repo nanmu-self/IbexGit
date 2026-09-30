@@ -101,7 +101,13 @@ function coerceUi(raw: Partial<RepoUiState> | null | undefined): UiState {
   }
   if (raw.view_mode === "list" || raw.view_mode === "tree") ui.view_mode = raw.view_mode;
   if (Array.isArray(raw.tree_collapsed)) {
-    ui.tree_collapsed = raw.tree_collapsed.filter((s) => typeof s === "string");
+    // Dir ids are namespaced per section ("staged:src"); entries from the
+    // older shared-id format are bare paths and no longer match any node.
+    ui.tree_collapsed = raw.tree_collapsed.filter(
+      (s) =>
+        typeof s === "string" &&
+        (s.startsWith("conflict:") || s.startsWith("staged:") || s.startsWith("unstaged:")),
+    );
   }
   return ui;
 }
