@@ -76,21 +76,26 @@ jobs:
 
             ## 下载
 
-            | 平台 | 文件 | 自动更新 |
-            |------|------|---------|
-            | Windows x64 (NSIS) | `ibexgit-*-setup.exe` + `latest.windows-x86_64.json` | ✅ 支持 |
-            | macOS Apple Silicon (DMG) | `ibexgit-*.dmg` + `latest.darwin-aarch64.json` | ❌ DMG 不支持 updater |
-            | Linux x64 (AppImage) | `ibexgit-*.AppImage` + `latest.linux-x86_64.json` | ✅ 支持 |
+            | 平台 | 安装包 | 自动更新 |
+            |------|--------|---------|
+            | Windows x64 (NSIS) | `ibexgit-*-setup.exe` | ✅ 支持 |
+            | macOS Apple Silicon (DMG) | `ibexgit-*.dmg` | ❌ DMG 不支持 updater |
+            | Linux x64 (AppImage) | `ibexgit-*.AppImage` | ✅ 支持 |
             | Linux x64 (deb) | `ibexgit-*.deb` | ❌ 不支持 |
+
+            > 💡 **macOS 自动更新说明**：Tauri updater 不支持 DMG，只有 App (.app.tar.gz) 格式可用。
+            > 后续如需 macOS 自动更新，可在 tauri.conf.json targets 中加 `app` 目标。
 
             ## 自动更新机制
 
-            本 Release 包含各平台的 `latest.<target>.json` + `.sig` 文件。
-            客户端内置 updater 会从 `https://github.com/nanmu-self/IbexGit/releases/latest/download/latest.{target}.json`
-            获取对应平台的更新元数据并校验签名。
+            本 Release 包含一个聚合的 `latest.json` 文件（由官方 tauri-action 自动生成），
+            内含所有平台的 updater bundle URL + minisign 签名。客户端内置 updater 会从：
 
-            > 💡 **macOS DMG 说明**：Tauri updater 不支持 DMG，仅 App (.app.tar.gz) 格式可用。
-            > 如需 macOS 自动更新，后续可在 tauri.conf.json targets 中加 `app`。
+            ```
+            https://github.com/nanmu-self/IbexGit/releases/latest/download/latest.json
+            ```
+
+            拉取元数据，根据当前 OS 在 `platforms` 对象里找到对应 entry，下载 bundle 并校验签名。
 
             ## 构建信息
 
