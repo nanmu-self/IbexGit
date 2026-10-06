@@ -77,7 +77,7 @@ PathBuf::from("C:/repos/a/b").file_name() = Some("b")
 ### 4.1 首要理由：全库既有约定就是「前端构造完整路径、后端按字面接收」
 
 这不是本 ADR 新立的规则，而是**已经在全库生效的事实**。
-`bindings.ts` 中 `path: string` / `dest: string` 型参数共 **44 处**，
+`bindings.ts` 中 `path: string` / `dest: string` 型命令参数共 **34 处**，
 **无一处**使用 `(parent, name)` 结构：
 
 | 命令 | 路径参数 | 形态 |
@@ -89,8 +89,15 @@ PathBuf::from("C:/repos/a/b").file_name() = Some("b")
 | `app_check_git_path` | `path: string` | 同上 |
 | `git_file_content` / `blame` / … | `path: string` × 十余处 | 同上 |
 
+> 计数口径：`grep -E "\b(path\|dest)\??: string"` 得 **45** 行匹配，其中
+> **2 处不是命令参数**——第 486 行 `AppError::InvalidRepo { path }`（错误载荷
+> 字段）与第 825 行 https 认证请求的 `path: string | null`（URL 路径，非文件
+> 系统路径）。有效命令参数 = 45 − 2 = **33**；另`git_clone` 的 `dest` 写在
+> 多行结构体里未被上述grep 计入，合计 **34 处**。改这个数字前先按此口径复核
+> —— `grep -c` 数的是行数，直接当参数个数会多算。
+
 单改 `clone` / `init` 两三个 DTO **统一不了约定**，只会造成“两类命令并存”：
-44 处里改 2 处，其余 42 处照旧。之后**每个新带路径参数的命令都要重新
+34 处里改 2 处，其余 32 处照旧。之后**每个新带路径参数的命令都要重新
 纠结一次**，且开发者无从判断该跟哪类看。
 
 一致性论据，而非风险论据。
