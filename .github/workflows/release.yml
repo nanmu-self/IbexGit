@@ -76,15 +76,16 @@ jobs:
 
             ## 下载
 
-            | 平台 | 安装包 | 自动更新 |
-            |------|--------|---------|
+            | 平台 | 安装包 | 应用内更新 |
+            |------|--------|-----------|
             | Windows x64 (NSIS) | `ibexgit-*-setup.exe` | ✅ 支持 |
-            | macOS Apple Silicon (DMG) | `ibexgit-*.dmg` | ❌ DMG 不支持 updater |
+            | macOS Apple Silicon (DMG) | `ibexgit-*.dmg` | ✅ 支持 |
             | Linux x64 (AppImage) | `ibexgit-*.AppImage` | ✅ 支持 |
             | Linux x64 (deb) | `ibexgit-*.deb` | ❌ 不支持 |
 
-            > 💡 **macOS 自动更新说明**：Tauri updater 不支持 DMG，只有 App (.app.tar.gz) 格式可用。
-            > 后续如需 macOS 自动更新，可在 tauri.conf.json targets 中加 `app` 目标。
+            > 💡 **macOS 说明**：目前仅提供 Apple Silicon (arm64) 构建，Intel Mac 请继续手动使用。
+            > macOS 版尚未做 Apple 公证（ad-hoc 签名）：首次启动需在访达里**右键 → 打开**，
+            > 且请先把 App 拖入「应用程序」再运行（应用内更新只能替换可写位置的应用）。
 
             ## 自动更新机制
 
@@ -96,6 +97,8 @@ jobs:
             ```
 
             拉取元数据，根据当前 OS 在 `platforms` 对象里找到对应 entry，下载 bundle 并校验签名。
+            macOS 的 updater 产物由 bundle 的 `app` 目标生成（`*.app.tar.gz`，非 DMG），
+            所以 `tauri.conf.json` 的 `bundle.targets` 必须包含 `"app"`。
 
             ## 构建信息
 
@@ -107,3 +110,26 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
+
+      # 守卫：macOS 的 updater 产物只由 bundle 的 `app` 目标产出；targets 里漏了
+      # `"app"` 时 DMG 照常发布，但 latest.json 不会有 darwin-* 条目，
+      # macOS 客户端的 check() 直接报「platform not found」。这里显式堵住。
+      - name: Assert darwin entry in latest.json
+        if: matrix.os == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download "${GITHUB_REF_NAME}" -p latest.json -D "${RUNNER_TEMP}/updater" --clobber -R "${GITHUB_REPOSITORY}"
+          node -e '
+            const fs = require("fs");
+            const p = process.env.RUNNER_TEMP + "/updater/latest.json";
+            const latest = JSON.parse(fs.readFileSync(p, "utf8"));
+            const key = "darwin-aarch64";
+            if (!latest.platforms || !latest.platforms[key]) {
+              console.error("latest.json 缺少 " + key + "，macOS 应用内更新不可用。");
+              console.error("请检查 src-tauri/tauri.conf.json 的 bundle.targets 是否包含 \"app\"。");
+              process.exit(1);
+            }
+            console.log("OK latest.json[" + key + "] = " + latest.platforms[key].url.split("/").pop());
+          '

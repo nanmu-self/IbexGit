@@ -56,6 +56,10 @@ IbexGit 是一款对齐 Fork / GitButler / SmartGit 核心工作流的开源 Git
 
 > ⚠️ 项目处于活跃开发期（v0.1.0，内部 alpha）。核心功能已齐备但尚未提供正式安装包，欢迎 clone 源码体验 / 参与共建。
 
+> 📦 alpha 构建产物见 [Releases](https://github.com/nanmu-self/IbexGit/releases)：Windows（NSIS）、macOS（Apple Silicon 的 DMG）、Linux（AppImage）均支持应用内更新。
+>
+> **macOS 提示**：目前只提供 Apple Silicon（arm64）构建，Intel Mac 暂不支持应用内更新；版本尚未做 Apple 公证（ad-hoc 签名），首次启动请在访达里**右键 → 打开**；并请先把 App 拖入「应用程序」再运行（应用内更新只能替换可写位置的应用）。
+
 开发按 P0–P12 阶段推进，当前进度：
 
 | 阶段 | 内容 | 状态 |

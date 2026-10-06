@@ -9,6 +9,8 @@
  *   （防 dev 模式真实请求端点/误装更新）。
  * - 手动检查：关于对话框「检查更新」按钮；无更新时 toast 提示。
  * - 有更新时 Toolbar 显示角标按钮，点击打开 UpdateDialog。
+ * - 平台未发布产物（如 Intel Mac：latest.json 只有 darwin-aarch64）按「无更新」
+ *   处理，不进 error 态——否则每次启动都会卡在失败状态。
  *
  * 注意：`Update` 实例（含下载流）不放进 $state，避免被 proxy 包裹；只存可序列化的展示字段。
  */
@@ -30,6 +32,14 @@ export type UpdateStatus =
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/**
+ * latest.json 里没有当前平台条目（插件的 TargetNotFound / TargetsNotFound）。
+ * 这是「该平台没发产物」而非故障：Intel Mac、未发布的平台都会命中。
+ */
+function isPlatformMissing(message: string): boolean {
+  return /was not found in the response|fallback platforms/i.test(message);
 }
 
 /** Update 对象不进 $state（防 proxy 化），仅持引用；展示字段单独存。 */
@@ -100,8 +110,15 @@ class UpdaterStore {
       }
       return true;
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (isPlatformMissing(message)) {
+        this.status = "idle";
+        this.error = "";
+        if (!options.silent) showToast("info", t("update.unsupportedPlatform"));
+        return false;
+      }
       this.status = "error";
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = message;
       if (!options.silent) showToast("error", t("update.failed"));
       return false;
     }

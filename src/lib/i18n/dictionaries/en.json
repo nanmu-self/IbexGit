@@ -259,6 +259,8 @@
   "update.retry": "Retry",
   "update.failed": "Failed to check for updates",
   "update.error": "Update failed",
+  "update.errorHint": "If the install fails, make sure the app is in /Applications and writable by the current user",
+  "update.unsupportedPlatform": "No update package is published for this platform yet — please download it manually",
   "update.badge": "Update",
   "update.badgeTip": "New version v{version} available — click to view",
   "dialog.shortcuts.title": "Keyboard Shortcuts",

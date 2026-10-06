@@ -259,6 +259,8 @@
   "update.retry": "重试",
   "update.failed": "检查更新失败",
   "update.error": "更新失败",
+  "update.errorHint": "若安装失败，请确认应用已拖入「应用程序」目录，且当前用户对其有写入权限",
+  "update.unsupportedPlatform": "当前平台暂无更新包，请手动下载安装",
   "update.badge": "更新",
   "update.badgeTip": "发现新版本 v{version}，点击查看",
   "dialog.shortcuts.title": "键盘快捷键",

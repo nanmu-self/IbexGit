@@ -70,6 +70,7 @@
 
     {#if isError}
       <p class="text-sm text-danger" role="alert">{t("update.error")}：{updater.error}</p>
+      <p class="text-xs text-muted-foreground">{t("update.errorHint")}</p>
     {/if}
 
     <Dialog.Footer>
