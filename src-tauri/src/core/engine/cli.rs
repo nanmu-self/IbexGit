@@ -94,6 +94,19 @@ fn log_net(op: &str, detail: &str, res: &ProcessResult) {
     );
 }
 
+/// NUL-separated pathspec feed for `--pathspec-from-file=-` +
+/// `--pathspec-file-nul`. Keeps the command line short on Windows
+/// (CreateProcessW caps at 32k chars — hundreds of paths overflow the
+/// spawn) and treats entries literally (no glob magic, no quoting).
+fn pathspec_feed(paths: &[String]) -> Vec<u8> {
+    let mut feed = Vec::new();
+    for p in paths {
+        feed.extend_from_slice(p.as_bytes());
+        feed.push(0);
+    }
+    feed
+}
+
 /// Log format shared by `log`, `graph` and `commit_detail` (8 lines per
 /// commit, see `parse_log`).
 const LOG_FORMAT: &str = "%H%n%h%n%an%n%ae%n%aI%n%s%n%d%n%P";
@@ -490,9 +503,17 @@ impl engine::GitEngine for CliEngine {
         if paths.is_empty() {
             return Ok(());
         }
-        let mut args = vec!["-C", repo, "add"];
-        args.extend(paths.iter().map(|s| s.as_str()));
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let args = [
+            "-C",
+            repo,
+            "add",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ];
+        let feed = pathspec_feed(paths);
+        let res = self
+            .run(args, StdinMode::Feed, Some(feed.as_slice()), None)
+            .await?;
         self.ensure_success(&res)
     }
 
@@ -500,9 +521,18 @@ impl engine::GitEngine for CliEngine {
         if paths.is_empty() {
             return Ok(());
         }
-        let mut args = vec!["-C", repo, "restore", "--staged"];
-        args.extend(paths.iter().map(|s| s.as_str()));
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let args = [
+            "-C",
+            repo,
+            "restore",
+            "--staged",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ];
+        let feed = pathspec_feed(paths);
+        let res = self
+            .run(args, StdinMode::Feed, Some(feed.as_slice()), None)
+            .await?;
         self.ensure_success(&res)
     }
 
@@ -510,9 +540,17 @@ impl engine::GitEngine for CliEngine {
         if paths.is_empty() {
             return Ok(());
         }
-        let mut args = vec!["-C", repo, "restore"];
-        args.extend(paths.iter().map(|s| s.as_str()));
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let args = [
+            "-C",
+            repo,
+            "restore",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ];
+        let feed = pathspec_feed(paths);
+        let res = self
+            .run(args, StdinMode::Feed, Some(feed.as_slice()), None)
+            .await?;
         self.ensure_success(&res)
     }
 
@@ -522,16 +560,20 @@ impl engine::GitEngine for CliEngine {
         }
         // `--source=HEAD -S -W` drops staged + unstaged in one go and also
         // clears unmerged entries (the documented conflict-reset route).
-        let mut args = vec![
+        let args = [
             "-C",
             repo,
             "restore",
             "--source=HEAD",
             "--staged",
             "--worktree",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
         ];
-        args.extend(paths.iter().map(|s| s.as_str()));
-        let res = self.run(args, StdinMode::Null, None, None).await?;
+        let feed = pathspec_feed(paths);
+        let res = self
+            .run(args, StdinMode::Feed, Some(feed.as_slice()), None)
+            .await?;
         self.ensure_success(&res)
     }
 
