@@ -14,6 +14,7 @@
   import { netDialogs } from "$lib/stores/netdialogs.svelte";
   import { showToast } from "$lib/stores/toast";
   import { repos } from "$lib/stores/repos.svelte";
+  import { joinPath, isSafeRepoName } from "$lib/path";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
 
   let { open: dialogOpen = $bindable(false) }: { open?: boolean } = $props();
@@ -35,6 +36,12 @@
   });
 
   const valid = $derived(parentDir.trim().length > 0 && name.trim().length > 0);
+  /**
+   * 名称合法性：与 CloneDialog 共用 `$lib/path` 的同一份规则。
+   * 缺这道校验时手输 `a/b` 会让 `create_dir_all` 静默建出嵌套目录 ——
+   * UI 回显 `base\a/b`，实际落点却少一层前缀。
+   */
+  const nameInvalid = $derived(name.trim().length > 0 && !isSafeRepoName(name));
 
   async function browse(): Promise<void> {
     const picked = await open({ directory: true, multiple: false });
@@ -45,8 +52,8 @@
 
   async function submit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
-    if (!valid || busy) return;
-    const path = parentDir.trim() + sep() + name.trim();
+    if (!valid || nameInvalid || busy) return;
+    const path = joinPath(parentDir, name);
     busy = true;
     try {
       await net.initRepo(path, readme, gitignore);
@@ -59,10 +66,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  function sep(): string {
-    return parentDir.includes("\\") || navigator.userAgent.includes("Windows") ? "\\" : "/";
   }
 </script>
 
@@ -84,7 +87,15 @@
       </div>
       <label class="block space-y-1">
         <span class="text-xs text-muted-foreground">{t("net.initName")}</span>
-        <Input bind:value={name} placeholder="my-project" class="h-8" />
+        <Input
+          bind:value={name}
+          placeholder="my-project"
+          class="h-8"
+          aria-invalid={nameInvalid}
+        />
+        {#if nameInvalid}
+          <span class="text-[11px] text-destructive">{t("net.repoNameInvalid")}</span>
+        {/if}
       </label>
       <div class="space-y-1.5 text-[13px]">
         <label class="flex items-center gap-2">
@@ -97,7 +108,7 @@
         </label>
       </div>
       {#if valid}
-        <p class="font-mono text-[11px] break-all text-muted-foreground">{parentDir + sep() + name}</p>
+        <p class="font-mono text-[11px] break-all text-muted-foreground">{joinPath(parentDir, name)}</p>
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="ghost" size="sm" onclick={() => (dialogOpen = false)}>

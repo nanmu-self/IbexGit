@@ -3,6 +3,11 @@
    * CloneDialog (P7)：克隆远程仓库。两页式 —— 表单 → 实时进度。
    * URL 校验（https/ssh/scp/local）、目标路径选择、深度/单分支/递归子模块；
    * 进度经 CloneEvent 事件驱动（netdialogs store），取消经 clone_cancel。
+   *
+   * 目标位置 = 父文件夹 + 仓库名两字段（与 NewRepoDialog 同构）：文件夹
+   * 选择器只负责选**父目录**，仓库名从 URL 推导且可改，最终路径实时回显。
+   * 早先这里只有一个 dest 字段，选择器返回的目录被原样当作仓库根 ——
+   * 而文案却写着"选择父文件夹 / 将创建文件夹 {name}"，承诺与行为不一致。
    */
   import * as Dialog from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
@@ -13,13 +18,21 @@
   import { net, normalizeError } from "$lib/git";
   import { netDialogs } from "$lib/stores/netdialogs.svelte";
   import { showToast } from "$lib/stores/toast";
+  import { joinPath, isSafeRepoName } from "$lib/path";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
   let { open: dialogOpen = $bindable(false) }: { open?: boolean } = $props();
 
   let url = $state("");
-  let dest = $state("");
+  let parentDir = $state("");
+  /**
+   * 仓库名：未手改时跟随 URL 推导（`autoName`），手改后固定为用户值
+   * （`customName`）。用派生而非 $effect 同步 —— 效应里读 url 再写仓库名
+   * 会把两者绑进同一 flush，URL 逐字输入时名字跟着抖。
+   */
+  let nameTouched = $state(false);
+  let customName = $state("");
   let depth = $state("");
   let singleBranch = $state(false);
   let recurseSubmodules = $state(false);
@@ -33,7 +46,9 @@
   $effect(() => {
     if (dialogOpen && !showProgress) {
       url = "";
-      dest = "";
+      parentDir = "";
+      nameTouched = false;
+      customName = "";
       depth = "";
       singleBranch = false;
       recurseSubmodules = false;
@@ -59,28 +74,44 @@
       (!url.includes("://") && /[\\/:]/.test(url) && !url.startsWith("-"))
   );
 
-  // 从 URL 推导默认目标目录（未手选路径时）。
-  function guessRepoName(): string {
-    const tail = url.replace(/\/+$/, "").split(/[/:]/).pop() ?? "";
+  /** 从 URL 推导仓库名（末段去 .git）。 */
+  function guessRepoName(raw: string): string {
+    const tail = raw.replace(/[/\\]+$/, "").split(/[\\/]/).pop() ?? "";
     return tail.replace(/\.git$/, "");
   }
+
+  const autoName = $derived(urlValid ? guessRepoName(url) : "");
+  const repoName = $derived(nameTouched ? customName : autoName);
+  /** 名称合法性由 `$lib/path` 统一判定，与 NewRepoDialog 同一份规则。 */
+  const nameValid = $derived(isSafeRepoName(repoName));
+  /** 空输入是"还没填"，不是"填错了"——不报错，只禁用提交。 */
+  const nameInvalid = $derived(repoName.trim().length > 0 && !nameValid);
+  const cleanName = $derived(repoName.trim());
+
+  /**
+ * 最终克隆路径 = 父目录 + 仓库名。尾斜杠由 `joinPath` 归一，分隔符判据
+ * 与 NewRepoDialog 共用 `$lib/path`（同一份路径在两处必须拼出同样结果）。
+ */
+const finalPath = $derived(joinPath(parentDir, cleanName));
+
+  const canSubmit = $derived(urlValid && !nameInvalid && finalPath.length > 0);
 
   async function browse(): Promise<void> {
     const picked = await open({ directory: true, multiple: false });
     if (typeof picked === "string" && picked.length > 0) {
-      dest = picked;
+      parentDir = picked;
     }
   }
 
   async function submit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
-    if (!urlValid || busy) return;
-    let target = dest.trim();
-    if (!target) {
+    if (busy) return;
+    if (!urlValid || !finalPath || nameInvalid) {
       showToast("warning", t("net.cloneNeedDest"));
       return;
     }
     busy = true;
+    const target = finalPath;
     try {
       const taskId = await net.clone({
         url: url.trim(),
@@ -134,19 +165,35 @@
         </label>
 
         <div class="space-y-1">
-          <span class="text-xs text-muted-foreground">{t("net.cloneDest")}</span>
+          <span class="text-xs text-muted-foreground">{t("net.cloneParent")}</span>
           <div class="flex gap-1.5">
-            <Input bind:value={dest} placeholder={t("net.cloneDestHint")} class="h-8 flex-1 font-mono text-[12px]" />
+            <Input bind:value={parentDir} placeholder="C:\repos" class="h-8 flex-1 font-mono text-[12px]" />
             <Button type="button" variant="outline" size="sm" class="h-8 px-2" onclick={browse}>
               <FolderOpen class="size-3.5" />
             </Button>
           </div>
-          {#if url && urlValid}
-            <p class="text-[11px] text-muted-foreground">
-              {t("net.cloneRepoName", { name: guessRepoName() })}
-            </p>
-          {/if}
         </div>
+
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{t("net.cloneName")}</span>
+          <Input
+            value={repoName}
+            oninput={(e) => {
+              nameTouched = true;
+              customName = e.currentTarget.value;
+            }}
+            placeholder="my-project"
+            class="h-8 font-mono text-[12px]"
+            aria-invalid={nameInvalid}
+          />
+          {#if nameInvalid}
+            <span class="text-[11px] text-destructive">{t("net.repoNameInvalid")}</span>
+          {/if}
+        </label>
+
+        {#if finalPath}
+          <p class="font-mono text-[11px] break-all text-muted-foreground">{finalPath}</p>
+        {/if}
 
         <div class="flex items-end gap-3">
           <label class="block w-24 space-y-1">
@@ -169,7 +216,7 @@
           <Button type="button" variant="ghost" size="sm" onclick={close}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" size="sm" disabled={!urlValid || busy}>
+          <Button type="submit" size="sm" disabled={!canSubmit || busy}>
             {t("net.cloneGo")}
           </Button>
         </Dialog.Footer>
