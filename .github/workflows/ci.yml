@@ -31,6 +31,9 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      - name: Unit tests (path.ts, ADR-015)
+        run: pnpm test:unit
+
       - name: Build
         run: pnpm build
 

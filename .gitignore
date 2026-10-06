@@ -11,5 +11,9 @@ vite.config.ts.timestamp-*
 .codegraph/
 .workbuddy/
 .monkeycode/
-scripts/
-docs/
+# 例外需用「/* + !name」形态：目录级规则（scripts/、docs/）会让 git
+# 不下沉，!例外 永远不生效（git 不重新包含被忽略目录里的路径）。
+scripts/*
+!scripts/path.test.ts
+docs/*
+!docs/adr/

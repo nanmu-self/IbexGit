@@ -15,6 +15,7 @@ IbexGit：本地优先的 Git 图形客户端（Tauri 2 + SvelteKit 5 + TypeScri
 pnpm install              # 用 pnpm，CI 用 frozen-lockfile
 pnpm check                # svelte-check，必须 0 error
 pnpm build                # 前端构建
+pnpm test:unit           # path.ts 纯函数断言（node 直跑，需 Node ≥ 22.6）
 pnpm tauri dev            # 桌面开发模式
 
 cd src-tauri
@@ -82,7 +83,7 @@ src-tauri/tests/      # 集成测试（含 bindings.rs 同步校验）
 
 ## CI（.github/workflows/ci.yml）
 
-- Frontend（ubuntu）：`pnpm check` + `pnpm build` + 包体积报告
+- Frontend（ubuntu）：`pnpm check` + `pnpm test:unit` + `pnpm build` + 包体积报告
 - Rust（windows/macos/ubuntu 矩阵）：`fmt --check` + `clippy -D warnings` + `cargo test`
 
 ## 其他注意
