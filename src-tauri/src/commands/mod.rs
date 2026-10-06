@@ -247,14 +247,31 @@ pub async fn git_commit(
     amend: bool,
     no_verify: bool,
     repos: State<'_, RepoManager>,
+    tasks: State<'_, TaskManager>,
 ) -> Result<crate::core::engine::CommitResult, AppError> {
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
-    repos
+    // 任务中心条目：描述取提交信息首行（截断到 60 字符）。
+    let subject = message.lines().next().unwrap_or("").trim();
+    let truncated: String = subject.chars().take(60).collect();
+    let suffix = if subject.chars().count() > 60 {
+        "…"
+    } else {
+        ""
+    };
+    let desc = if truncated.is_empty() {
+        "commit".to_string()
+    } else {
+        format!("commit {truncated}{suffix}")
+    };
+    let task = begin_task(&tasks, "commit", Some(id.0.to_string()), desc).await;
+    let result = repos
         .engine()
         .commit(&path, &message, amend, no_verify)
-        .await
+        .await;
+    tasks.complete(task, result.as_ref().err().cloned()).await;
+    result
 }
 
 #[tauri::command]

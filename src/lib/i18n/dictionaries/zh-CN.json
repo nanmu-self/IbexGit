@@ -96,6 +96,7 @@
   "task.kind.pull": "拉取",
   "task.kind.push": "推送",
   "task.kind.clone": "克隆",
+  "task.kind.commit": "提交",
   "task.status.queued": "排队中",
   "task.status.running": "进行中",
   "task.status.cancelling": "取消中",

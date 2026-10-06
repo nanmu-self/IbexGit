@@ -96,6 +96,7 @@
   "task.kind.pull": "Pull",
   "task.kind.push": "Push",
   "task.kind.clone": "Clone",
+  "task.kind.commit": "Commit",
   "task.status.queued": "Queued",
   "task.status.running": "Running",
   "task.status.cancelling": "Cancelling",
