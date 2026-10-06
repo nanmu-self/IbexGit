@@ -2245,6 +2245,9 @@ impl engine::GitEngine for CliEngine {
         on_line: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<(), AppError> {
         // 目标目录存在且非空 → 提前拒绝（git 的报错体验差且会留下半成品）。
+        // 说明里带上"选父目录 + 仓库名"的正确用法：前端现在把两个字段拼成
+        // 一个最终路径传进来，用户若指向了一个装过东西的目录，多半是把父
+        // 目录当成了仓库目录。
         let dest = Path::new(&opts.dest);
         if dest.exists() {
             let non_empty = std::fs::read_dir(dest)
@@ -2252,7 +2255,8 @@ impl engine::GitEngine for CliEngine {
                 .unwrap_or(false);
             if non_empty {
                 return Err(AppError::parse(format!(
-                    "destination path '{}' already exists and is not empty",
+                    "destination path '{}' already exists and is not empty \
+                     (pick an empty folder or a different name)",
                     opts.dest
                 )));
             }
