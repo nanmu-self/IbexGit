@@ -942,6 +942,11 @@ impl engine::GitEngine for CliEngine {
             "--no-color".into(),
             format!("--format={}", LOG_FORMAT),
         ];
+        // 所有分支视图：与 hash-jump（start 显式给了提交）互相排斥——前者
+        // 定义浏览范围，后者定义起点。
+        if filter.all && start.is_none() {
+            args.push("--all".into());
+        }
         if let Some(s) = &start {
             args.push(s.clone());
         }

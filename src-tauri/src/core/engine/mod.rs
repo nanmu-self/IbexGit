@@ -77,6 +77,9 @@ pub struct GraphFilter {
     pub until: Option<String>,
     /// History touching any of these paths.
     pub paths: Vec<String>,
+    /// Show all refs (`--all`)：跨分支视图，可浏览其它分支的提交并
+    /// 直接遴选。
+    pub all: bool,
 }
 
 impl GraphFilter {

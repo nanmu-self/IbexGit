@@ -49,6 +49,7 @@
   import Search from "@lucide/svelte/icons/search";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import GitBranch from "@lucide/svelte/icons/git-branch";
+  import GitFork from "@lucide/svelte/icons/git-fork";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import BarChart3 from "@lucide/svelte/icons/bar-chart-3";
   import StatsDialog from "$lib/components/stats/StatsDialog.svelte";
@@ -96,11 +97,21 @@
   let untilText = $state("");
   let pathText = $state("");
   let filtersOpen = $state(false);
+  /** 所有分支视图（git log --all）：跨分支浏览/遥选的主入口。切换时
+   *  GraphFilter 变化 → cache 重建。 */
+  let allBranches = $state(false);
 
   const active = $derived(repos.active);
 
   const filter = $derived.by<GraphFilter>(() => {
-    const f: GraphFilter = { text: null, author: null, since: null, until: null, paths: [] };
+    const f: GraphFilter = {
+      text: null,
+      author: null,
+      since: null,
+      until: null,
+      paths: [],
+      all: allBranches,
+    };
     const text = searchText.trim();
     if (text) f.text = text;
     const author = authorText.trim();
@@ -396,6 +407,16 @@
           bind:value={searchText}
         />
       </div>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-pressed={allBranches}
+        class={allBranches ? "text-primary" : undefined}
+        title={t("history.allBranches")}
+        onclick={() => (allBranches = !allBranches)}
+      >
+        <GitFork class="size-4" />
+      </Button>
       <Button
         variant="ghost"
         size="icon-sm"

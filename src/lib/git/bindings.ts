@@ -60,6 +60,11 @@ export const commands = {
 	until: string | null,
 	/**  History touching any of these paths. */
 	paths: string[],
+	/**
+	 *  Show all refs (`--all`)：跨分支视图，可浏览其它分支的提交并
+	 *  直接遴选。
+	 */
+	all: boolean,
 } | null) => __TAURI_INVOKE<GraphPage>("git_graph", { id, filter }),
 	/**
 	 *  Next graph page (`start` = row index of the returned rows in the full
@@ -80,6 +85,11 @@ export const commands = {
 	until: string | null,
 	/**  History touching any of these paths. */
 	paths: string[],
+	/**
+	 *  Show all refs (`--all`)：跨分支视图，可浏览其它分支的提交并
+	 *  直接遴选。
+	 */
+	all: boolean,
 } | null) => __TAURI_INVOKE<GraphPage>("git_graph_more", { id, filter }),
 	/**
 	 *  Commit metadata + changed files (详情面板)。Merge commits diff against
@@ -1010,6 +1020,11 @@ export type GraphFilter = {
 	until: string | null,
 	/**  History touching any of these paths. */
 	paths: string[],
+	/**
+	 *  Show all refs (`--all`)：跨分支视图，可浏览其它分支的提交并
+	 *  直接遴选。
+	 */
+	all: boolean,
 };
 
 /**
