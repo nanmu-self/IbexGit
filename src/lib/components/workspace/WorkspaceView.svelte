@@ -434,7 +434,15 @@
     commitBusy = true;
     try {
       const res = await git.commit(id, message, amend, noVerify);
-      showToast("success", t("commit.done", { hash: res.short_hash }));
+      // 操作模式提交（merge/cherry-pick/revert）给专属完成提示，普通提交
+      // 保持原样——否则用户不清楚遴选序列是否已收尾。
+      const mode = commitMode;
+      showToast(
+        "success",
+        mode === "normal"
+          ? t("commit.done", { hash: res.short_hash })
+          : `${t(`conflict.commitDone.${mode}`)} (${res.short_hash})`,
+      );
       if (andPush) {
         // P6: 真实推送（凭据接管在 P7 接入；HTTPS 公仓 / 已存凭据场景可用）。
         const tab = repos.active;

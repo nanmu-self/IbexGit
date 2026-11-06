@@ -36,6 +36,9 @@
 
   let busy = $state(false);
   let abortOpen = $state(false);
+  /** continue/skip 遇到“空提交”时置位：横幅内联指引（比一闪而过的
+   *  toast 更可靠，且直到下一动作成功才消除）。 */
+  let emptyStuck = $state(false);
 
   const short = (sha: string | null): string => (sha ? sha.slice(0, 7) : "");
 
@@ -83,12 +86,20 @@
       if (action === "continue") await git.operationContinue(repoId);
       else if (action === "skip") await git.operationSkip(repoId);
       else await git.operationAbort(repoId);
+      emptyStuck = false; // 任何成功动作都消除空提交内联提示
       if (action === "continue") showToast("success", t("conflict.op.continueDone"));
       else if (action === "skip") showToast("success", t("conflict.op.skipDone"));
       else showToast("info", t("conflict.op.abortDone"));
       onchanged();
     } catch (e) {
-      normalizeError(e);
+      const err = normalizeError(e);
+      // 空提交：序列中剩余提交的变更已全部存在于目标分支（常见于
+      // 已遴选过/冲突解决吸收了变更），git 拒绝 --continue。原生
+      // stderr 可读性差，除 toast 提示外在横幅内联持久指引。
+      if (err.message.includes("is now empty")) {
+        emptyStuck = true;
+        showToast("warning", t("conflict.op.emptyHint"));
+      }
     } finally {
       busy = false;
     }
@@ -102,6 +113,11 @@
   <span class="min-w-0 flex-1 truncate text-warning dark:text-warning">
     {summary.text}
   </span>
+  {#if emptyStuck}
+    <span class="text-xs font-medium text-warning dark:text-warning" title={t("conflict.op.emptyHint")}>
+      ⚠{t("conflict.op.emptyHint")}
+    </span>
+  {/if}
 
   {#if conflictCount > 0}
     <Button

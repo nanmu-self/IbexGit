@@ -14,7 +14,9 @@
     type TagInfo,
   } from "$lib/git";
   import { showToast } from "$lib/stores/toast";
+  import { repos } from "$lib/stores/repos.svelte";
   import ArrowRightLeft from "@lucide/svelte/icons/arrow-right-left";
+  import Cherry from "@lucide/svelte/icons/cherry";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
 
   let {
@@ -162,6 +164,28 @@
       /* clipboard unavailable */
     }
   }
+
+  // 跨分支遴选（P11 增强）：历史视图只列当前分支，这是把其他分支提交
+  // 遥选到当前分支的主要入口。单提交按序，冲突交给错误 toast + 窗口
+  // watcher 刷新出操作横幅。
+  let pickBusy = $state(false);
+  async function cherryPickOne(hash: string): Promise<void> {
+    const id = repoId;
+    if (!id || pickBusy) return;
+    pickBusy = true;
+    try {
+      await git.cherryPick(id, [hash]);
+      showToast("success", t("history.cherryPickDone", { n: 1 }));
+      await reload(); // ahead/behind + 提交列表重算
+    } catch (e) {
+      normalizeError(e);
+    } finally {
+      pickBusy = false;
+    }
+  }
+  const pickTitle = $derived(
+    `${t("history.ctx.cherryPick")} → ${repos.active?.branch ?? ""}`,
+  );
 </script>
 
 <Dialog.Root bind:open>
@@ -201,6 +225,18 @@
       </div>
 
       <div class="grid min-h-0 grid-cols-2 gap-3">
+        <!-- 跨分支遴选入口：任一侧独有提交都可遥选到当前分支 -->
+        {#snippet pickAction(hash: string)}
+          <button
+            type="button"
+            class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            title={pickTitle}
+            disabled={pickBusy}
+            onclick={() => void cherryPickOne(hash)}
+          >
+            <Cherry class="size-3.5" />
+          </button>
+        {/snippet}
         <div class="min-w-0">
           <div class="mb-1 text-xs font-medium text-muted-foreground">
             {t("refs.compare.outgoing", { n: outgoing.length, ref: left })}
@@ -211,7 +247,8 @@
                 <button class="font-mono text-muted-foreground hover:underline" onclick={() => copyHash(c.hash)}>
                   {c.short_hash}
                 </button>
-                <span class="truncate">{c.message}</span>
+                <span class="min-w-0 flex-1 truncate">{c.message}</span>
+                {@render pickAction(c.hash)}
               </li>
             {:else}
               <li class="px-2 py-2 text-muted-foreground">{t("refs.compare.none")}</li>
@@ -228,7 +265,8 @@
                 <button class="font-mono text-muted-foreground hover:underline" onclick={() => copyHash(c.hash)}>
                   {c.short_hash}
                 </button>
-                <span class="truncate">{c.message}</span>
+                <span class="min-w-0 flex-1 truncate">{c.message}</span>
+                {@render pickAction(c.hash)}
               </li>
             {:else}
               <li class="px-2 py-2 text-muted-foreground">{t("refs.compare.none")}</li>

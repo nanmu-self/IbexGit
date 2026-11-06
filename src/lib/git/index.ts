@@ -110,6 +110,15 @@ export function normalizeError(raw: unknown): AppError {
     return { code: "internal", message: raw, detail: null };
   }
   const e = (raw ?? {}) as Record<string, unknown>;
+  // 幂等守卫：wrap() 已经对一个-backend-错误 normalize 过并弹过 toast，
+  // 调用方 catch 后再次 normalize 同一对象时会二次 humanize——规范化形状
+  // 很少带 stderr/command，会退化成「git failed: ?」这条重复 toast，且让
+  // 调用方拿不到原始 stderr 做匹配。已带 code+message 的对象直接透传。
+  const alreadyNormalized =
+    typeof e.code === "string" && typeof e.message === "string" && !("stderr" in e);
+  if (alreadyNormalized) {
+    return { code: e.code as string, message: e.message as string, detail: str(e.detail) };
+  }
   const code = typeof e.code === "string" ? e.code : "internal";
   const message = humanize(code, e);
   // Structured variants carry their own raw output (stderr); avoid duplicating

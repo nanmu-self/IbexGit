@@ -152,32 +152,32 @@ const baseLine = () => Decoration.line({ class: "cm-conflict-base" });
 const theirsLine = () => Decoration.line({ class: "cm-conflict-theirs" });
 
 function buildDecorations(blocks: ConflictBlockVm[], state: EditorState): DecorationSet {
+  // Rust ConflictBlock fields are 0-based line indexes; CodeMirror
+  // decorations (line AND widget) anchor to a POSITION in the document,
+  // not a line number — use the anchor line's `from` offset. (传行号会
+  // 把所有着色/内嵌按钮错置进首行。)
+  const at = (n: number): number | null => {
+    if (n < 0 || n >= state.doc.lines) return null; // edits may shrink the doc
+    return state.doc.line(n + 1).from;
+  };
   const ranges: { from: number; to: number; deco: Decoration }[] = [];
-  const maxLine = state.doc.lines;
-  const push = (from: number, to: number, deco: Decoration): void => {
-    if (from >= maxLine) return;
-    ranges.push({ from, to, deco });
+  const push = (n: number, deco: Decoration): void => {
+    const p = at(n);
+    if (p === null) return;
+    ranges.push({ from: p, to: p, deco });
   };
   for (const blk of blocks) {
-    push(blk.start, blk.start, oursLine());
-    push(
-      blk.start,
-      blk.start,
-      Decoration.widget({ widget: new BlockButtons("start"), side: -1 }),
-    );
+    push(blk.start, oursLine());
+    push(blk.start, Decoration.widget({ widget: new BlockButtons("start"), side: -1 }));
     if (blk.end !== blk.start) {
-      push(blk.end, blk.end, theirsLine());
-      push(
-        blk.end,
-        blk.end,
-        Decoration.widget({ widget: new BlockButtons("end"), side: 1 }),
-      );
+      push(blk.end, theirsLine());
+      push(blk.end, Decoration.widget({ widget: new BlockButtons("end"), side: 1 }));
     }
-    for (let i = blk.current_start; i < blk.current_end; i++) push(i, i, oursLine());
+    for (let i = blk.current_start; i < blk.current_end; i++) push(i, oursLine());
     if (blk.base_start !== null && blk.base_end !== null) {
-      for (let i = blk.base_start; i < blk.base_end; i++) push(i, i, baseLine());
+      for (let i = blk.base_start; i < blk.base_end; i++) push(i, baseLine());
     }
-    for (let i = blk.incoming_start; i < blk.incoming_end; i++) push(i, i, theirsLine());
+    for (let i = blk.incoming_start; i < blk.incoming_end; i++) push(i, theirsLine());
   }
   return Decoration.set(
     ranges.map((r) => r.deco.range(r.from, r.to)),

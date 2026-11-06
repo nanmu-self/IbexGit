@@ -141,6 +141,12 @@
     const id = repoId;
     const m = model;
     if (!m || !m.editable || busy) return;
+    // 前置校验：仍残留未处理的冲突块时给出持久提示（后端校验只有一个
+    // 一闪而过的错误 toast，用户会误以为按钮失效）。
+    if ((editorText ?? m.worktree_text ?? "").includes("<<<<<<<")) {
+      showToast("warning", t("conflict.unresolvedMarkers", { path: m.path }));
+      return;
+    }
     busy = true;
     try {
       let text = editorText ?? (m.crlf ? m.worktree_text!.replace(/\r\n/g, "\n") : m.worktree_text!);
