@@ -271,7 +271,7 @@ pub fn run() {
     prune_stale_logs(&ctx.config().identifier);
     let builder = specta_builder::<tauri::Wry>();
 
-    tauri::Builder::default()
+    let app_builder = tauri::Builder::default()
         // Single instance must be registered FIRST (tauri-plugin docs):
         // the callback runs on the primary instance when a second launch
         // arrives — focus the window and open any repo paths from argv.
@@ -303,7 +303,14 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+    // MCP bridge（hypothesi/mcp-server-tauri，AI 编码代理 UI 测试用）：起本地
+    // WebSocket(9223) 桥接 webview（截图/点击/日志/IPC）。仅调试构建注册。
+    // 依赖 tauri.conf.json 的 app.withGlobalTauri 与 capabilities 的
+    // mcp-bridge:default（release 下插件未注册，多余权限无效果）。
+    #[cfg(debug_assertions)]
+    let app_builder = app_builder.plugin(tauri_plugin_mcp_bridge::init());
+    app_builder
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             // Regenerate TS bindings on every dev run (committed via cargo test too).

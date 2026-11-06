@@ -69,6 +69,7 @@ tauri-plugin-clipboard-manager = "2.4.0"
 # 私钥在 ~/.tauri/ibexgit-updater.key（绝不入库），CI 用 TAURI_SIGNING_PRIVATE_KEY 注入。
 tauri-plugin-updater = "2.13.0"
 tauri-plugin-process = "2.4.0"
+tauri-plugin-mcp-bridge = "0.13.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
