@@ -186,6 +186,13 @@
       selections = new Map();
       exhausted = new Map();
       prevSigs.clear();
+      // The token cache is keyed by `file.index:hunkIndex`, which collides
+      // across different files (a single-file diff always has index 0). Not
+      // clearing it here made the newly-selected file render the previous
+      // file's highlighted tokens — header showed fileA while the body still
+      // showed indexB. Drop stale tokens and re-highlight for the new file.
+      tokenCache.clear();
+      tokenVersion += 1;
     }
     if (model) {
       for (const fc of fileContexts) {

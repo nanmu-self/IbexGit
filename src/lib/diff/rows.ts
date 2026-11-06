@@ -142,9 +142,25 @@ function buildFileRows(fc: FileCtx, opts: BuildOpts): Row[] {
   const exhaustedDown = opts.exhausted.get(fc.path)?.down ?? false;
 
   file.hunks.forEach((hunk, hunkIndex) => {
+    // When this is the only hunk, `new_count` is the whole new-file length
+    // and `old_count` the whole old-file length. If the hunk body already
+    // accounts for every line on a side, that side is fully shown and there
+    // is no context left to expand into (e.g. a brand-new one-line file:
+    // old_count=0/new_count=1 both fully covered). Without this the expand
+    // button showed on such files and did nothing when clicked.
+    const bodyNewLines = hunk.lines.filter(
+      (l) => l.kind === "context" || l.kind === "add",
+    ).length;
+    const bodyOldLines = hunk.lines.filter(
+      (l) => l.kind === "context" || l.kind === "remove",
+    ).length;
+    const sole = file.hunks.length === 1;
+    const coversNew = sole && hunk.new_start <= 1 && bodyNewLines >= hunk.new_count;
+    const coversOld = sole && hunk.old_start <= 1 && bodyOldLines >= hunk.old_count;
+
     // Expand-up zone: content exists above when the hunk doesn't start at
     // the top of the file.
-    if (hunk.old_start > 1 && !exhaustedUp) {
+    if (hunk.old_start > 1 && !exhaustedUp && !coversOld) {
       rows.push({ t: "expand", file: fc, hunkIndex, dir: "up", label: "↑" });
     }
 
@@ -209,8 +225,9 @@ function buildFileRows(fc: FileCtx, opts: BuildOpts): Row[] {
     }
 
     // Expand-down zone: heuristic — always offer unless the file is
-    // exhausted (the refetch result decides).
-    if (!exhaustedDown) {
+    // exhausted (the refetch result decides) or this sole hunk already
+    // covers the entire file content.
+    if (!exhaustedDown && !coversNew) {
       rows.push({ t: "expand", file: fc, hunkIndex, dir: "down", label: "↓" });
     }
   });
