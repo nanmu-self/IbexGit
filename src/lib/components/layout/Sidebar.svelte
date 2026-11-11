@@ -28,8 +28,8 @@
     {#each views as v (v.id)}
       <div
         class="flex items-center gap-2 rounded px-2 py-1 text-[13px] {repos.ui.view === v.id
-          ? 'bg-accent font-medium text-foreground'
-          : 'hover:bg-accent/60'}"
+          ? 'bg-selection font-medium text-foreground sel-accent-bar'
+          : 'hover:bg-muted/70'}"
         role="button"
         tabindex="0"
         onclick={() => repos.updateUi({ view: v.id })}

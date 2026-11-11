@@ -670,6 +670,8 @@
   "settings.general.font": "编辑器字体",
   "settings.general.fontHint": "留空使用默认等宽字体",
   "settings.general.tabSize": "Tab 宽度",
+  "settings.general.accent": "高亮色跟随系统强调色",
+  "settings.general.accentHint": "选中高亮使用系统强调色（Windows 个性化→颜色）；关闭则使用应用默认蓝色",
   "settings.git.pullStrategy": "默认拉取策略",
   "settings.git.pullHint": "作为 Pull 对话框的默认选择",
   "settings.git.pushUpstream": "默认设置上游",

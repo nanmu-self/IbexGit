@@ -211,6 +211,20 @@
             </div>
           </div>
           <div class="space-y-1.5">
+            <label class="flex items-center gap-2 text-[13px]">
+              <Checkbox
+                checked={settings.accentSource === "system"}
+                onCheckedChange={(v) =>
+                  void settings.setAccentSource(v === true ? "system" : "theme")
+                }
+              />
+              {t("settings.general.accent")}
+            </label>
+            <p class="text-[11px] text-muted-foreground">
+              {t("settings.general.accentHint")}
+            </p>
+          </div>
+          <div class="space-y-1.5">
             <span class="text-xs text-muted-foreground">{t("settings.general.language")}</span>
             <div class="grid grid-cols-2 gap-1.5">
               {#each ["zh-CN", "en"] as loc}

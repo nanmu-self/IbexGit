@@ -670,6 +670,8 @@
   "settings.general.font": "Editor font",
   "settings.general.fontHint": "Leave empty for the default monospace font",
   "settings.general.tabSize": "Tab width",
+  "settings.general.accent": "Highlight color follows system accent",
+  "settings.general.accentHint": "Selection highlights use the OS accent color (Windows Personalize → Colors); off uses the app default blue",
   "settings.git.pullStrategy": "Default pull strategy",
   "settings.git.pullHint": "Preselected in the Pull dialog",
   "settings.git.pushUpstream": "Set upstream by default",

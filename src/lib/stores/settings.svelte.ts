@@ -12,6 +12,8 @@ export type ThemeMode = "light" | "dark" | "system";
 class SettingsStore {
   ready = $state(false);
   theme = $state<ThemeMode>("system");
+  /** Highlight color for selections: OS accent color or app default blue. */
+  accentSource = $state<"system" | "theme">("system");
   locale = $state<Locale>("zh-CN");
   showSidebar = $state(true);
   /** Sidebar width in px (global panel state). */
@@ -67,6 +69,8 @@ class SettingsStore {
     try {
       this.#store = await load("settings.json", { autoSave: true });
       this.theme = (await this.#store.get<ThemeMode>("theme")) ?? "system";
+      this.accentSource =
+        (await this.#store.get<"system" | "theme">("accentSource")) ?? "system";
       this.locale = (await this.#store.get<Locale>("locale")) ?? "zh-CN";
       this.showSidebar = (await this.#store.get<boolean>("showSidebar")) ?? true;
       this.sidebarWidth =
@@ -129,6 +133,11 @@ class SettingsStore {
   async setTheme(theme: ThemeMode): Promise<void> {
     this.theme = theme;
     await this.#store?.set("theme", theme);
+  }
+
+  async setAccentSource(source: "system" | "theme"): Promise<void> {
+    this.accentSource = source;
+    await this.#store?.set("accentSource", source);
   }
 
   async setLocale(locale: Locale): Promise<void> {

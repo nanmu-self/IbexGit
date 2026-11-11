@@ -330,7 +330,9 @@
       {#if viewMode === "list"}
         {#each detail.files as f (f.path)}
           <div
-            class="group flex cursor-pointer items-center gap-2 px-3 py-1 text-xs hover:bg-muted/60 {selectedFile === f.path ? 'bg-muted' : ''}"
+            class="group flex cursor-pointer items-center gap-2 px-3 py-1 text-xs {selectedFile === f.path
+              ? 'bg-selection sel-accent-bar'
+              : 'hover:bg-muted/60'}"
             onclick={() => (selectedFile = f.path)}
             role="button"
             tabindex="0"

@@ -97,3 +97,97 @@ pub async fn app_open_folder(path: String) -> Result<(), AppError> {
     .map_err(|e| AppError::internal(format!("open folder task join failed: {e}")))?
     .map_err(AppError::from)
 }
+
+/// Read the system accent color as `#RRGGBB` — the "颜色/Colors" pick in
+/// Windows 个性化 / macOS 系统设置, which native apps use for focus &
+/// selection highlights. Selection rows in the UI tint with this color so
+/// they match the OS instead of a hardcoded app blue.
+///
+/// - Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent`
+///   value `Accent` (stored as 0xAARRGGBB).
+/// - macOS: `NSColor.controlAccentColor`.
+/// - Linux: no standard API → None, frontend falls back to the theme blue.
+///
+/// Returns None when the platform has no readable value (or the registry
+/// read fails); the frontend then keeps its CSS fallback.
+#[tauri::command]
+#[specta::specta]
+pub fn app_system_accent_color() -> Option<String> {
+    let color = read_system_accent().map(|(r, g, b)| format!("#{:02X}{:02X}{:02X}", r, g, b));
+    tracing::debug!(accent = ?color, "system accent color resolved");
+    color
+}
+
+#[cfg(target_os = "windows")]
+fn read_system_accent() -> Option<(u8, u8, u8)> {
+    // Explicit user pick (HKCU Explorer\Accent value `Accent`, ARGB).
+    if let Some(v) = read_accent_registry_value() {
+        return Some(v);
+    }
+    // Wallpaper-derived mode: the `Accent` value is absent and Windows
+    // computes the palette from the wallpaper — fall back to the DWM
+    // colorization color, which is what the shell tints UI with.
+    read_accent_dwm()
+}
+
+#[cfg(target_os = "windows")]
+fn read_accent_registry_value() -> Option<(u8, u8, u8)> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent")
+        .ok()?;
+    let value: u32 = key.get_value("Accent").ok()?;
+    // The Accent DWORD is ARGB (alpha first, always 0xFF).
+    Some((
+        ((value >> 16) & 0xFF) as u8,
+        ((value >> 8) & 0xFF) as u8,
+        (value & 0xFF) as u8,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn read_accent_dwm() -> Option<(u8, u8, u8)> {
+    use std::os::raw::c_long;
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmGetColorizationColor(
+            colorization_color: *mut u32,
+            colorization_color_balance: *mut u32,
+        ) -> c_long;
+    }
+    let mut color: u32 = 0;
+    let mut balance: u32 = 0;
+    let hr = unsafe { DwmGetColorizationColor(&mut color, &mut balance) };
+    if hr == 0 { // S_OK
+        Some((
+            ((color >> 16) & 0xFF) as u8,
+            ((color >> 8) & 0xFF) as u8,
+            (color & 0xFF) as u8,
+        ))
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_system_accent() -> Option<(u8, u8, u8)> {
+    use objc::msg_send;
+    use objc::runtime::{Class, Object};
+    // + (NSColor *)controlAccentColor — class method.
+    let color: *mut Object = unsafe { msg_send![Class::get("NSColor")?, controlAccentColor] };
+    if color.is_null() {
+        return None;
+    }
+    // redComponent / greenComponent / blueComponent — CGFloat (f64), 0..1.
+    let r: f64 = unsafe { msg_send![color, redComponent] };
+    let g: f64 = unsafe { msg_send![color, greenComponent] };
+    let b: f64 = unsafe { msg_send![color, blueComponent] };
+    let to_byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    Some((to_byte(r), to_byte(g), to_byte(b)))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn read_system_accent() -> Option<(u8, u8, u8)> {
+    None
+}

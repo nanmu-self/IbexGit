@@ -11,6 +11,7 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { installFrontendLogging } from "$lib/logging";
   import { t } from "$lib/i18n";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { commands } from "$lib/git/bindings";
   import UpdateDialog from "$lib/components/updater/UpdateDialog.svelte";
   import { updater } from "$lib/updater/useAppUpdater.svelte";
 
@@ -53,6 +54,36 @@ import { appDialogs } from "$lib/stores/appdialogs.svelte";
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
+  });
+
+  // System accent color: selection highlights follow the OS accent color
+  // (Windows 个性化→颜色 / macOS 系统设置) when enabled, otherwise keep
+  // the theme blue. Re-fetched on window focus — the OS may change it
+  // while the app is running.
+  $effect(() => {
+    const root = document.documentElement;
+    const apply = (color: string | null): void => {
+      if (color) root.style.setProperty("--sys-accent", color);
+      else root.style.removeProperty("--sys-accent");
+    };
+    if (settings.accentSource !== "system") {
+      apply(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = (): void => {
+      if (cancelled) return;
+      commands
+        .appSystemAccentColor()
+        .then((c) => apply(c))
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+    };
   });
 
   // P10 设置中心：可配置的编辑器字体与 tab 宽度（diff 正文 / 冲突编辑器）。

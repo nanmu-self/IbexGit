@@ -214,6 +214,7 @@ pub fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
             commands::app::app_check_git_path,
             commands::app::app_open_terminal,
             commands::app::app_open_folder,
+            commands::app::app_system_accent_color,
             commands::ai::ai_config_get,
             commands::ai::ai_config_set,
             commands::ai::ai_set_key,

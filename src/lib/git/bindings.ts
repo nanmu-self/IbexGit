@@ -336,6 +336,21 @@ export const commands = {
 	 *  "enter" — and silently no-ops when that window already exists.
 	 */
 	appOpenFolder: (path: string) => __TAURI_INVOKE<null>("app_open_folder", { path }),
+	/**
+	 *  Read the system accent color as `#RRGGBB` — the "颜色/Colors" pick in
+	 *  Windows 个性化 / macOS 系统设置, which native apps use for focus &
+	 *  selection highlights. Selection rows in the UI tint with this color so
+	 *  they match the OS instead of a hardcoded app blue.
+	 * 
+	 *  - Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent`
+	 *    value `Accent` (stored as 0xAARRGGBB).
+	 *  - macOS: `NSColor.controlAccentColor`.
+	 *  - Linux: no standard API → None, frontend falls back to the theme blue.
+	 * 
+	 *  Returns None when the platform has no readable value (or the registry
+	 *  read fails); the frontend then keeps its CSS fallback.
+	 */
+	appSystemAccentColor: () => __TAURI_INVOKE<string | null>("app_system_accent_color"),
 	aiConfigGet: () => __TAURI_INVOKE<AiConfigDto>("ai_config_get"),
 	aiConfigSet: (config: AiConfigDto) => __TAURI_INVOKE<AiConfigDto>("ai_config_set", { config }),
 	aiSetKey: (key: string) => __TAURI_INVOKE<null>("ai_set_key", { key }),

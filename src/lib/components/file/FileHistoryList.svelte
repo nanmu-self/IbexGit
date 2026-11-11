@@ -203,12 +203,13 @@
         onNearBottom={() => void loadMore()}
       >
         {#snippet row(entry: FileCommit, index: number)}
+          {@const selected = selectedHash === entry.hash}
           <div
-            class="flex cursor-default flex-col justify-center gap-0.5 px-3 {selectedHash === entry.hash
-              ? 'bg-accent/60'
+            class="flex cursor-default flex-col justify-center gap-0.5 px-3 {selected
+              ? 'bg-selection hover:bg-selection-hover sel-accent-bar'
               : index % 2 === 1
-                ? 'bg-muted/20'
-                : ''} hover:bg-muted/50"
+                ? 'bg-muted/20 hover:bg-muted/50'
+                : 'hover:bg-muted/50'}"
             style="height: {ROW_H}px"
             onclick={() => select(entry, index)}
             role="button"
@@ -219,7 +220,7 @@
               <span class="w-3 shrink-0 text-center font-mono text-[11px] font-bold {statusColor(entry.status)}">
                 {entry.status}
               </span>
-              <span class="min-w-0 flex-1 truncate text-[13px]" title={entry.message}>
+              <span class="min-w-0 flex-1 truncate text-[13px] {selected ? 'font-semibold' : ''}" title={entry.message}>
                 {entry.message}
               </span>
             </div>

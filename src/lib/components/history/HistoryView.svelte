@@ -512,13 +512,13 @@
             onNearBottom={() => void loadMore()}
           >
             {#snippet row(row: GraphRow, index: number)}
+              {@const selected = selectedHash === row.commit.hash || multi.includes(row.commit.hash)}
               <div
-                class="flex cursor-default items-center {selectedHash === row.commit.hash ||
-                multi.includes(row.commit.hash)
-                  ? 'bg-accent/60'
+                class="flex cursor-default items-center {selected
+                  ? 'bg-selection hover:bg-selection-hover sel-accent-bar'
                   : index % 2 === 1
-                    ? 'bg-muted/20'
-                    : ''} hover:bg-muted/50"
+                    ? 'bg-muted/20 hover:bg-muted/50'
+                    : 'hover:bg-muted/50'}"
                 style="height: {ROW_H}px"
                 onclick={(e) => rowClick(row, e)}
                 role="button"
@@ -534,7 +534,7 @@
                 />
                 <div class="flex min-w-0 flex-1 items-center gap-2 pr-3">
                   <RefBadges refs={row.commit.refs} />
-                  <span class="min-w-0 flex-1 truncate text-[13px]">
+                  <span class="min-w-0 flex-1 truncate text-[13px] {selected ? 'font-semibold' : ''}">
                     {row.commit.message}
                   </span>
                   <span class="shrink-0 text-xs text-muted-foreground">

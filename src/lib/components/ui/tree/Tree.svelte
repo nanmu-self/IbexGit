@@ -45,12 +45,13 @@
 
 {#each nodes as node (node.id)}
   {@const open = isOpen(node)}
+  {@const active = node.current || (activeId !== null && activeId === node.id)}
   <button
     type="button"
     class="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-[13px] leading-5 {node.muted
       ? 'cursor-default text-muted-foreground/50'
-      : 'cursor-pointer hover:bg-accent/60'} {node.current
-      ? 'bg-accent font-medium text-accent-foreground'
+      : 'cursor-pointer hover:bg-accent/60'} {active
+      ? 'bg-selection font-medium text-foreground sel-accent-bar'
       : ''}"
     style="padding-left: {depth * 12 + 6}px"
     onclick={(e) => handleClick(node, e)}
@@ -73,7 +74,7 @@
     {/if}
     {#if node.icon}
       {@const Icon = node.icon}
-      <Icon class="size-4 shrink-0 {node.current ? '' : 'text-muted-foreground'}" />
+      <Icon class="size-4 shrink-0 {active ? '' : 'text-muted-foreground'}" />
     {/if}
     <span class="min-w-0 flex-1 truncate" title={node.label}>{node.label}</span>
     {#if node.badge !== undefined && node.badge !== null && node.badge !== ""}

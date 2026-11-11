@@ -104,6 +104,14 @@
     --danger: hsl(0 72% 51%);
     --danger-foreground: hsl(0 0% 100%);
     --danger-surface: #FEE2E5;     /* 用户指定的浅粉红 — diff 删除底 */
+
+    /* 系统强调色：JS 从 OS 读取后覆盖（见 +layout.svelte）；
+       未设置/读取失败时回退到主题蓝 --info。 */
+    --sys-accent: var(--info);
+    /* 选中态有效强调色：浅色主题直接用原始色；
+       选中面 = 有效强调色混入背景，文字继续用 --foreground 保证可读。 */
+    --sel-tint: var(--sys-accent);
+    --sel-surface: color-mix(in oklab, var(--sys-accent) 14%, var(--background));
   }
 
   .dark {
@@ -141,6 +149,11 @@
     --danger: hsl(0 84% 68%);
     --danger-foreground: hsl(240 10% 3.9%);
     --danger-surface: #67060C;     /* GitHub dark diff 删除底 */
+
+    /* 深色主题：暗/低饱和的系统强调色（如壁纸取色）直接用会看不见，
+       先向白色提亮再作为选中高亮。 */
+    --sel-tint: color-mix(in oklab, var(--sys-accent) 55%, white);
+    --sel-surface: color-mix(in oklab, var(--sel-tint) 16%, var(--background));
   }
 }
 
@@ -288,4 +301,18 @@ html.theme-anim * {
   .animate-out {
     animation: none !important;
   }
+}
+
+/* ===================== 选中高亮（跟随系统强调色） ===================== */
+/* 选中行 = 强调色背景色块 + 2px 原始强调色左侧色条：色块负责整体氛围，
+   色条保证暗色/低饱和强调色（壁纸取色模式）下也一眼可见。
+   提交列表 / 侧栏导航 / 文件行 / 树节点共用。 */
+.bg-selection {
+  background: var(--sel-surface);
+}
+.bg-selection-hover {
+  background: color-mix(in oklab, var(--sel-tint) 26%, var(--background));
+}
+.sel-accent-bar {
+  border-left: 2px solid var(--sel-tint);
 }
