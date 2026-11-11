@@ -56,6 +56,12 @@
 
   const ROW_H = 28;
 
+  // ---- 列宽（表头与行共用，保证纵向对齐）----
+  // 消息列是 flex-1 吸收剩余宽度；其余列固定宽，表头文字才能与数据列对齐。
+  const COL_AUTHOR_W = 88;
+  const COL_HASH_W = 72;
+  const COL_DATE_W = 116;
+
   // ---- graph state ----
   let rows = $state<GraphRow[]>([]);
   let graphWidth = $state(0);
@@ -102,6 +108,9 @@
   let allBranches = $state(false);
 
   const active = $derived(repos.active);
+
+  // 图占据的列数：与行内 GraphLane 用同一套算法，表头左侧占位才能对齐。
+  const graphCols = $derived(Math.min(Math.max(graphWidth, 1), 16));
 
   const filter = $derived.by<GraphFilter>(() => {
     const f: GraphFilter = {
@@ -383,11 +392,14 @@
   // ---- misc ----
   function fmtDate(iso: string): string {
     const d = new Date(iso);
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    return sameDay
-      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleDateString([], { month: "short", day: "numeric" });
+    // 具体到时分秒，便于区分同一天内的连续提交。
+    const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
+    const time = d.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    return `${date} ${time}`;
   }
 
   const listKey = $derived((r: GraphRow) => r.commit.hash);
@@ -504,6 +516,21 @@
         {#if rows.length === 0 && !loading}
           <EmptyState icon={GitBranch} title={t("history.empty")} hint={t("history.emptyHint")} />
         {:else}
+          <!-- 表头：固定在虚拟列表上方，不随滚动。列宽/间距与下方行严格一致，
+               左侧先占掉与图等宽的格子，消息列同样 flex-1，纵向才能对齐。 -->
+          <div
+            class="flex shrink-0 items-center border-b bg-muted/30 text-[11px] font-medium text-muted-foreground"
+            style="height: {ROW_H}px"
+            aria-hidden="true"
+          >
+            <div style="width: {graphCols * 14}px" class="shrink-0"></div>
+            <div class="flex min-w-0 flex-1 items-center gap-2 pr-3">
+              <span class="min-w-0 flex-1 pl-0.5">{t("history.col.message")}</span>
+              <span class="shrink-0 truncate" style="width: {COL_AUTHOR_W}px">{t("history.col.author")}</span>
+              <span class="shrink-0 text-right font-mono" style="width: {COL_HASH_W}px">{t("history.col.hash")}</span>
+              <span class="shrink-0 text-right" style="width: {COL_DATE_W}px">{t("history.col.date")}</span>
+            </div>
+          </div>
           <VirtualList
             items={rows}
             itemHeight={ROW_H}
@@ -537,10 +564,17 @@
                   <span class="min-w-0 flex-1 truncate text-[13px] {selected ? 'font-semibold' : ''}">
                     {row.commit.message}
                   </span>
-                  <span class="shrink-0 text-xs text-muted-foreground">
+                  <span class="shrink-0 truncate text-xs text-muted-foreground" style="width: {COL_AUTHOR_W}px" title={row.commit.author}>
                     {row.commit.author}
                   </span>
-                  <span class="w-16 shrink-0 text-right text-xs text-muted-foreground">
+                  <span
+                    class="shrink-0 text-right font-mono text-xs text-muted-foreground/80"
+                    style="width: {COL_HASH_W}px"
+                    title={row.commit.hash}
+                  >
+                    {row.commit.short_hash}
+                  </span>
+                  <span class="shrink-0 text-right text-xs tabular-nums text-muted-foreground" style="width: {COL_DATE_W}px">
                     {fmtDate(row.commit.date)}
                   </span>
                 </div>
