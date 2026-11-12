@@ -17,3 +17,8 @@ scripts/*
 !scripts/path.test.ts
 docs/*
 !docs/adr/
+
+# Loomy 会话附件（聊天图片等临时产物）
+.loomy-attachments/
+# 本地隔离构建缓存（cargo CARGO_TARGET_DIR 临时目录）
+src-tauri/target-check/
