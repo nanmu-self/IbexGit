@@ -631,6 +631,7 @@ pub trait GitEngine: Send + Sync {
         repo: &str,
         name: &str,
         start_point: Option<&str>,
+        force: bool,
     ) -> Result<(), AppError>;
     async fn delete_branch(&self, repo: &str, name: &str, force: bool) -> Result<(), AppError>;
     async fn rename_branch(

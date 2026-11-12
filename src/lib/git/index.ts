@@ -279,8 +279,9 @@ export const git = {
   /** Check out a remote-tracking branch as a (new or existing) local branch. */
   checkoutRemoteBranch: (id: RepoId, remote: string, branch: string) =>
     wrap(commands.gitCheckoutRemoteBranch(id, remote, branch)),
-  createBranch: (id: RepoId, name: string, startPoint?: string) =>
-    wrap(commands.gitCreateBranch(id, name, startPoint ?? null)),
+  /** force resets an existing ref (`git branch -f`); git refuses for HEAD. */
+  createBranch: (id: RepoId, name: string, startPoint?: string, force = false) =>
+    wrap(commands.gitCreateBranch(id, name, startPoint ?? null, force)),
   deleteBranch: (id: RepoId, name: string, force = false) =>
     wrap(commands.gitDeleteBranch(id, name, force)),
   renameBranch: (id: RepoId, oldName: string, newName: string) =>

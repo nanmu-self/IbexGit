@@ -748,17 +748,19 @@ async fn stash_diff_includes_untracked() {
         .filter_map(|f| f.new_path.as_deref())
         .collect::<Vec<_>>();
     paths.sort_unstable();
-    assert_eq!(paths, vec!["a.txt", "note.txt"], "mixed stash diff: {paths:?}");
+    assert_eq!(
+        paths,
+        vec!["a.txt", "note.txt"],
+        "mixed stash diff: {paths:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Stash diff must include files parked in the stash's third parent (the
-/// untracked commit created by `stash push -u`) — a plain
-/// `git diff stash@{N}^ stash@{N}` shows nothing for untracked-only stashes,
-/// which rendered an empty viewer (贮藏差异空白).
+/// `git branch -f` resets an existing branch to the start point; without
+/// force a duplicate name is refused.
 #[tokio::test(flavor = "multi_thread")]
-async fn stash_diff_includes_untracked() {
+async fn create_branch_force_resets_existing() {
     let dir = temp_repo();
     git_init(&dir);
     git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
@@ -770,69 +772,29 @@ async fn stash_diff_includes_untracked() {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
     engine.commit(&path, "c1", false, false).await.unwrap();
-
-    // Untracked-only stash: `stash push -u` with nothing tracked dirty.
-    std::fs::write(dir.join("note.txt"), "hidden\n").unwrap();
-    let idx = engine
-        .stash_push(&path, None, StashPushMode::All, true)
-        .await
-        .unwrap();
-    assert_eq!(idx, 0);
-
-    let model = engine
-        .diff(
-            &path,
-            DiffSource::Stash,
-            Some(("stash@{0}^", "stash@{0}")),
-            &[],
-            DiffOptions::default(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        model.files.len(),
-        1,
-        "untracked-only stash must not render empty: {:?}",
-        model.files
-    );
-    assert_eq!(model.files[0].new_path.as_deref(), Some("note.txt"));
-    let content = model.files[0]
-        .hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .map(|l| l.content.as_str())
-        .collect::<Vec<_>>()
-        .join("");
-    assert!(content.contains("hidden"), "content lines: {content:?}");
-
-    // Mixed stash: tracked modification + untracked file both show up.
-    engine.stash_drop(&path, 0).await.unwrap();
-    std::fs::write(dir.join("a.txt"), "one-modified\n").unwrap();
-    std::fs::write(dir.join("note.txt"), "hidden\n").unwrap();
     engine
-        .stash_push(&path, None, StashPushMode::All, true)
+        .create_branch(&path, "b1", None, false)
         .await
         .unwrap();
-    let model = engine
-        .diff(
-            &path,
-            DiffSource::Stash,
-            Some(("stash@{0}^", "stash@{0}")),
-            &[],
-            DiffOptions::default(),
-        )
+    let c1_hash = git(&dir, &["rev-parse", "b1"]);
+
+    // New commit on main; recreating b1 without force must fail (the ref
+    // still sits at c1).
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "c2", false, false).await.unwrap();
+    let res = engine.create_branch(&path, "b1", Some("main"), false).await;
+    assert!(res.is_err(), "duplicate branch without force must fail");
+    assert_eq!(git(&dir, &["rev-parse", "b1"]).trim(), c1_hash.trim());
+
+    // With force b1 is reset onto main's tip (c2).
+    engine
+        .create_branch(&path, "b1", Some("main"), true)
         .await
         .unwrap();
-    let mut paths = model
-        .files
-        .iter()
-        .filter_map(|f| f.new_path.as_deref())
-        .collect::<Vec<_>>();
-    paths.sort_unstable();
     assert_eq!(
-        paths,
-        vec!["a.txt", "note.txt"],
-        "mixed stash diff: {paths:?}"
+        git(&dir, &["rev-parse", "b1"]).trim(),
+        git(&dir, &["rev-parse", "main"]).trim()
     );
 
     let _ = std::fs::remove_dir_all(&dir);

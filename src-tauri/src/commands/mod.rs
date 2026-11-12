@@ -859,14 +859,15 @@ pub async fn git_restore_file_version(
     }
 }
 
-/// Create a branch (used by the detached-HEAD guidance banner and later
-/// the branch panel).
+/// Create a branch. `force` resets an existing ref to the start point
+/// (`git branch -f`); git itself refuses to force-move the checked-out one.
 #[tauri::command]
 #[specta::specta]
 pub async fn git_create_branch(
     id: RepoId,
     name: String,
     start_point: Option<String>,
+    force: bool,
     repos: State<'_, RepoManager>,
 ) -> Result<(), AppError> {
     let gate = repos.write_gate(id).await?;
@@ -874,7 +875,7 @@ pub async fn git_create_branch(
     let path = resolve(&repos, id).await?;
     repos
         .engine()
-        .create_branch(&path, &name, start_point.as_deref())
+        .create_branch(&path, &name, start_point.as_deref(), force)
         .await
 }
 

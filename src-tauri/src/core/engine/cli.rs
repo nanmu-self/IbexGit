@@ -1137,8 +1137,15 @@ impl engine::GitEngine for CliEngine {
         repo: &str,
         name: &str,
         start_point: Option<&str>,
+        force: bool,
     ) -> Result<(), AppError> {
-        let mut args = vec!["-C", repo, "branch", name];
+        // `-f` also creates when the branch does not exist; it only resets
+        // an existing ref (and git itself refuses for the checked-out one).
+        let mut args = vec!["-C", repo, "branch"];
+        if force {
+            args.push("-f");
+        }
+        args.push(name);
         if let Some(start) = start_point {
             args.push(start);
         }

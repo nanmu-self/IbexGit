@@ -622,7 +622,13 @@ mod tests {
         async fn list_branches(&self, _: &str) -> Result<Vec<BranchInfo>, AppError> {
             Err(err("branches"))
         }
-        async fn create_branch(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), AppError> {
+        async fn create_branch(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: bool,
+        ) -> Result<(), AppError> {
             Err(err("create_branch"))
         }
         async fn delete_branch(&self, _: &str, _: &str, _: bool) -> Result<(), AppError> {

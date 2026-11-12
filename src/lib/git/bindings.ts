@@ -119,10 +119,10 @@ export const commands = {
 	 */
 	gitRestoreFileVersion: (id: RepoId_Deserialize, rev: string, paths: string[]) => __TAURI_INVOKE<string | null>("git_restore_file_version", { id, rev, paths }),
 	/**
-	 *  Create a branch (used by the detached-HEAD guidance banner and later
-	 *  the branch panel).
+	 *  Create a branch. `force` resets an existing ref to the start point
+	 *  (`git branch -f`); git itself refuses to force-move the checked-out one.
 	 */
-	gitCreateBranch: (id: RepoId_Deserialize, name: string, startPoint: string | null) => __TAURI_INVOKE<null>("git_create_branch", { id, name, startPoint }),
+	gitCreateBranch: (id: RepoId_Deserialize, name: string, startPoint: string | null, force: boolean) => __TAURI_INVOKE<null>("git_create_branch", { id, name, startPoint, force }),
 	gitCheckoutBranch: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_checkout_branch", { id, name }),
 	gitRemoteBranches: (id: RepoId_Deserialize) => __TAURI_INVOKE<BranchInfo[]>("git_remote_branches", { id }),
 	/**  Check out a remote-tracking branch as a (new or existing) local branch. */

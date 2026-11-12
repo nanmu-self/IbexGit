@@ -7,6 +7,7 @@
    */
   import ConfirmDialog from "$lib/components/ui/confirm-dialog/ConfirmDialog.svelte";
   import InputDialog from "./dialogs/InputDialog.svelte";
+  import NewBranchDialog from "./dialogs/NewBranchDialog.svelte";
   import NewTagDialog from "./dialogs/NewTagDialog.svelte";
   import ResetDialog from "./dialogs/ResetDialog.svelte";
   import CleanDialog from "./dialogs/CleanDialog.svelte";
@@ -74,7 +75,6 @@
     }
     switch (a.kind) {
       case "newBranch":
-        newBranchValue = "";
         newBranchStart = a.start ?? "";
         newBranchOpen = true;
         break;
@@ -153,18 +153,46 @@
 
   // ===================== branch =====================
   let newBranchOpen = $state(false);
-  let newBranchValue = $state("");
   /** Optional start point (branch/tag/commit the new branch should point at). */
   let newBranchStart = $state("");
   let branchBusy = $state(false);
 
-  async function submitNewBranch(name: string): Promise<void> {
+  async function submitNewBranch(
+    name: string,
+    dirty: "keep" | "stash" | "discard",
+    force: boolean,
+    checkout: boolean
+  ): Promise<void> {
     if (repoId === null) return;
     branchBusy = true;
     try {
-      await git.createBranch(repoId, name, newBranchStart || undefined);
+      let stashed = false;
+      if (dirty === "stash") {
+        // Only stash when there is something to stash — an empty `stash
+        // push` creates no entry and a subsequent pop would fail.
+        const status = await git.status(repoId);
+        const hasChanges = status.some(
+          (f) => f.staged || f.unstaged || f.conflict || f.untracked
+        );
+        if (hasChanges) {
+          await git.stashPush(repoId, null, "all", true);
+          stashed = true;
+        }
+      } else if (dirty === "discard") {
+        // `reset --hard HEAD` via the recovery-backed command: the discarded
+        // changes stay undoable (backup ref + track-A snapshot).
+        await git.reset(repoId, "hard", "HEAD");
+      }
+      await git.createBranch(repoId, name, newBranchStart || undefined, force);
+      if (checkout) {
+        await git.checkoutBranch(repoId, name);
+        if (stashed) await git.stashPop(repoId, 0);
+      }
       newBranchOpen = false;
-      showToast("success", t("refs.branchCreated", { name }));
+      showToast(
+        "success",
+        t(checkout ? "refs.newBranch.createdSwitched" : "refs.branchCreated", { name })
+      );
       await refreshAll();
     } catch (e) {
       normalizeError(e);
@@ -598,17 +626,10 @@
 </script>
 
 <!-- branch dialogs -->
-<InputDialog
+<NewBranchDialog
   bind:open={newBranchOpen}
-  bind:value={newBranchValue}
-  title={t("refs.newBranch.title")}
-  description={newBranchStart
-    ? t("refs.newBranch.startDesc", { start: newBranchStart })
-    : ""}
-  label={t("history.branchName")}
-  placeholder="feature/…"
   busy={branchBusy}
-  validate={(v) => (/[\s~^:?*\[\\]{2,}/.test(v) ? t("refs.errors.badRefName") : null)}
+  base={newBranchStart || repos.active?.branch || ""}
   onsubmit={submitNewBranch}
 />
 <InputDialog
