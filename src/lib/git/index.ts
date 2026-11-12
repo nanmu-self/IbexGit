@@ -9,6 +9,7 @@ import type {
   GraphFilter,
   LineSelection,
   NetConfig,
+  StashPushMode,
 } from "./bindings";
 import { addToast } from "$lib/stores/toast";
 import type { AppError } from "$lib/stores/toast";
@@ -88,6 +89,7 @@ export type {
   SshKeyGenerateRequest,
   SshKeyInfo,
   StashEntry,
+  StashPushMode,
   TagInfo,
   Task,
   TaskEvent,
@@ -295,8 +297,13 @@ export const git = {
 
   // ---- stash (P6) ----
   stashList: (id: RepoId) => wrap(commands.gitStashList(id)),
-  stashPush: (id: RepoId, message: string | null) =>
-    wrap(commands.gitStashPush(id, message)),
+  /** mode: "all" | "staged" | "unstaged_only" (defaults to all on the backend). */
+  stashPush: (
+    id: RepoId,
+    message: string | null,
+    mode?: StashPushMode | null,
+    includeUntracked?: boolean | null
+  ) => wrap(commands.gitStashPush(id, message, mode ?? null, includeUntracked ?? null)),
   stashApply: (id: RepoId, index: number) => wrap(commands.gitStashApply(id, index)),
   stashPop: (id: RepoId, index: number) => wrap(commands.gitStashPop(id, index)),
   stashDrop: (id: RepoId, index: number) => wrap(commands.gitStashDrop(id, index)),

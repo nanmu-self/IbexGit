@@ -1002,13 +1002,16 @@ pub async fn git_stash_list(
     repos.engine().list_stash(&path).await
 }
 
-/// Stash all changes (including untracked, matching the discard snapshot
-/// philosophy) and return the new entry's index.
+/// Stash changes and return the new entry's index. `mode` selects the scope
+/// (all / staged only / unstaged only); untracked inclusion (`-u`) only
+/// applies to the all/unstaged scopes (git refuses `--staged` with `-u`).
 #[tauri::command]
 #[specta::specta]
 pub async fn git_stash_push(
     id: RepoId,
     message: Option<String>,
+    mode: Option<crate::core::engine::StashPushMode>,
+    include_untracked: Option<bool>,
     repos: State<'_, RepoManager>,
 ) -> Result<u32, AppError> {
     let gate = repos.write_gate(id).await?;
@@ -1016,7 +1019,12 @@ pub async fn git_stash_push(
     let path = resolve(&repos, id).await?;
     repos
         .engine()
-        .stash_push(&path, message.as_deref())
+        .stash_push(
+            &path,
+            message.as_deref(),
+            mode.unwrap_or(crate::core::engine::StashPushMode::All),
+            include_untracked.unwrap_or(true),
+        )
         .await
         .map(|i| i as u32)
 }

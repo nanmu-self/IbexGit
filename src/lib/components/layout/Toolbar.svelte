@@ -4,8 +4,7 @@
   import { t } from "$lib/i18n";
   import { repos } from "$lib/stores/repos.svelte";
   import { pickRepo } from "$lib/repo-picker";
-  import { normalizeError, git, app } from "$lib/git";
-  import { showToast } from "$lib/stores/toast";
+  import { normalizeError, app } from "$lib/git";
   import { runFetch, isBusy } from "$lib/stores/netops.svelte";
   import { requestRefAction } from "$lib/stores/refbus";
   import { updater } from "$lib/updater/useAppUpdater.svelte";
@@ -37,18 +36,6 @@
     if (!path) return;
     try {
       await app.openTerminal(path);
-    } catch (e) {
-      normalizeError(e);
-    }
-  }
-
-  async function stashAll(): Promise<void> {
-    const id = repos.activeId;
-    if (id === null) return;
-    try {
-      await git.stashPush(id, null);
-      showToast("success", t("refs.stash.pushed"));
-      await repos.refresh(id);
     } catch (e) {
       normalizeError(e);
     }
@@ -147,7 +134,7 @@
             size="icon"
             class="flex h-11 w-12 flex-col gap-0.5 text-[10px] font-normal"
             disabled={!active}
-            onclick={stashAll}
+            onclick={() => requestRefAction({ kind: "stashPush" })}
           >
             <Archive class="size-4" />
             {t("toolbar.stash")}

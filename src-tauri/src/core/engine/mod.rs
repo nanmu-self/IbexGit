@@ -290,6 +290,18 @@ pub struct StashEntry {
     pub date: String,
 }
 
+/// Scope of `git stash push` (贮藏对话框的模式选择)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum StashPushMode {
+    /// Working tree + index tracked changes (plain `git stash push`).
+    All,
+    /// Staged changes only (`git stash push --staged`); unstaged stay.
+    Staged,
+    /// Unstaged changes only; the index is kept intact (three-step recipe).
+    UnstagedOnly,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ReflogEntry {
     pub hash: String,
@@ -663,7 +675,16 @@ pub trait GitEngine: Send + Sync {
 
     // Stash
     async fn list_stash(&self, repo: &str) -> Result<Vec<StashEntry>, AppError>;
-    async fn stash_push(&self, repo: &str, message: Option<&str>) -> Result<usize, AppError>;
+    /// Push a stash with the selected scope. `include_untracked` maps to `-u`
+    /// and is ignored for [`StashPushMode::Staged`] (git refuses `--staged`
+    /// combined with `--include-untracked`). Returns the new entry's index.
+    async fn stash_push(
+        &self,
+        repo: &str,
+        message: Option<&str>,
+        mode: StashPushMode,
+        include_untracked: bool,
+    ) -> Result<usize, AppError>;
     /// Apply a stash without dropping it (`git stash apply`).
     async fn stash_apply(&self, repo: &str, index: usize) -> Result<(), AppError>;
     async fn stash_pop(&self, repo: &str, index: usize) -> Result<(), AppError>;

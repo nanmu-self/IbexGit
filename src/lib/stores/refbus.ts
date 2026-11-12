@@ -25,6 +25,8 @@ export type RefAction =
   | { kind: "compare"; left: string; right?: string }
   | { kind: "stashView"; index: number }
   | { kind: "stashDrop"; index: number }
+  /** Open the scoped stash-push dialog (贮藏本地变更). */
+  | { kind: "stashPush" }
   /** Reset the branch hard to a reflog/backup record (track B UI). */
   | { kind: "reflogRestore"; hash: string; subject: string };
 

@@ -1273,16 +1273,119 @@ impl engine::GitEngine for CliEngine {
         Ok(entries)
     }
 
-    async fn stash_push(&self, repo: &str, message: Option<&str>) -> Result<usize, AppError> {
-        let mut args = vec!["-C", repo, "stash", "push", "-u"];
-        if let Some(msg) = message {
-            args.push("-m");
-            args.push(msg);
+    async fn stash_push(
+        &self,
+        repo: &str,
+        message: Option<&str>,
+        mode: engine::StashPushMode,
+        include_untracked: bool,
+    ) -> Result<usize, AppError> {
+        match mode {
+            engine::StashPushMode::All => {
+                let args = stash_push_plain_args(repo, include_untracked, message);
+                let res = self.run(args, StdinMode::Null, None, None).await?;
+                self.ensure_success(&res)?;
+                Ok(extract_stash_index(&res.stderr).unwrap_or(0))
+            }
+            engine::StashPushMode::Staged => {
+                // `--staged` is incompatible with `--include-untracked`
+                // (git dies on the combination), so `-u` never applies here.
+                let mut args = vec!["-C", repo, "stash", "push", "--staged"];
+                if let Some(m) = message {
+                    args.push("-m");
+                    args.push(m);
+                }
+                let res = self.run(args, StdinMode::Null, None, None).await?;
+                self.ensure_success(&res)?;
+                Ok(extract_stash_index(&res.stderr).unwrap_or(0))
+            }
+            engine::StashPushMode::UnstagedOnly => {
+                // `--keep-index` would leave a copy of the staged changes in
+                // the stash entry (they come back unstaged on pop), which
+                // does not match the "stash only the unstaged remainder"
+                // contract. Recipe: park staged → stash the rest → restore
+                // the parked entry with its staged state intact.
+                let probe = self
+                    .run(
+                        ["-C", repo, "diff", "--cached", "--quiet"],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                let has_staged = probe.exit_code.is_some_and(|c| c != 0);
+                if !has_staged {
+                    // Nothing staged: a plain push IS "unstaged only".
+                    let args = stash_push_plain_args(repo, include_untracked, message);
+                    let res = self.run(args, StdinMode::Null, None, None).await?;
+                    self.ensure_success(&res)?;
+                    return Ok(extract_stash_index(&res.stderr).unwrap_or(0));
+                }
+
+                // 1) Park the staged changes in a temporary entry.
+                let res = self
+                    .run(
+                        [
+                            "-C",
+                            repo,
+                            "stash",
+                            "push",
+                            "--staged",
+                            "-m",
+                            STASH_PARKED_STAGED_MSG,
+                        ],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                self.ensure_success(&res)?;
+
+                // 2) Stash the unstaged remainder → this becomes stash@{0}.
+                let args = stash_push_plain_args(repo, include_untracked, message);
+                let res = self.run(args, StdinMode::Null, None, None).await;
+                if let Err(e) = res.and_then(|r| {
+                    self.ensure_success(&r)?;
+                    Ok(())
+                }) {
+                    // Roll the parked entry back into the index so nothing is
+                    // stuck inside a temporary stash entry.
+                    let _ = self
+                        .run(
+                            ["-C", repo, "stash", "pop", "--index", "stash@{0}"],
+                            StdinMode::Null,
+                            None,
+                            None,
+                        )
+                        .await;
+                    return Err(e);
+                }
+
+                // 3) Restore the parked staged changes (index state kept).
+                let res = self
+                    .run(
+                        ["-C", repo, "stash", "apply", "--index", "stash@{1}"],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                self.ensure_success(&res)?;
+
+                // 4) Drop the temporary entry; a failure here is harmless
+                // (the entry is identifiable and empty of effect).
+                let res = self
+                    .run(
+                        ["-C", repo, "stash", "drop", "stash@{1}"],
+                        StdinMode::Null,
+                        None,
+                        None,
+                    )
+                    .await?;
+                self.ensure_success(&res)?;
+                Ok(0)
+            }
         }
-        let res = self.run(args, StdinMode::Null, None, None).await?;
-        self.ensure_success(&res)?;
-        let idx = extract_stash_index(&res.stderr).unwrap_or(0);
-        Ok(idx)
     }
 
     async fn stash_apply(&self, repo: &str, index: usize) -> Result<(), AppError> {
@@ -2378,6 +2481,29 @@ impl engine::GitEngine for CliEngine {
 // =====================
 // Parsers (P1 minimal)
 // =====================
+
+/// Temporary message parked on the staged-only entry while performing the
+/// "unstaged only" three-step dance; identifiable if a crash leaves it
+/// behind.
+const STASH_PARKED_STAGED_MSG: &str = "ibexgit: parked staged changes";
+
+/// `git stash push` arg list shared by the plain (all/unstaged-only) paths:
+/// `[-u] [-m <msg>]` after `stash push`.
+fn stash_push_plain_args<'a>(
+    repo: &'a str,
+    include_untracked: bool,
+    message: Option<&'a str>,
+) -> Vec<&'a str> {
+    let mut args = vec!["-C", repo, "stash", "push"];
+    if include_untracked {
+        args.push("-u");
+    }
+    if let Some(m) = message {
+        args.push("-m");
+        args.push(m);
+    }
+    args
+}
 
 fn extract_stash_index(stderr: &str) -> Option<usize> {
     for line in stderr.lines() {

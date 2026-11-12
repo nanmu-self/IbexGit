@@ -136,10 +136,17 @@ export const commands = {
 	gitDeleteTag: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_delete_tag", { id, name }),
 	gitStashList: (id: RepoId_Deserialize) => __TAURI_INVOKE<StashEntry[]>("git_stash_list", { id }),
 	/**
-	 *  Stash all changes (including untracked, matching the discard snapshot
-	 *  philosophy) and return the new entry's index.
+	 *  Stash changes and return the new entry's index. `mode` selects the scope
+	 *  (all / staged only / unstaged only); untracked inclusion (`-u`) only
+	 *  applies to the all/unstaged scopes (git refuses `--staged` with `-u`).
 	 */
-	gitStashPush: (id: RepoId_Deserialize, message: string | null) => __TAURI_INVOKE<number>("git_stash_push", { id, message }),
+	gitStashPush: (id: RepoId_Deserialize, message: string | null, mode: 
+/**  Working tree + index tracked changes (plain `git stash push`). */
+"all" | 
+/**  Staged changes only (`git stash push --staged`); unstaged stay. */
+"staged" | 
+/**  Unstaged changes only; the index is kept intact (three-step recipe). */
+"unstaged_only" | null, includeUntracked: boolean | null) => __TAURI_INVOKE<number>("git_stash_push", { id, message, mode, includeUntracked }),
 	gitStashApply: (id: RepoId_Deserialize, index: number) => __TAURI_INVOKE<null>("git_stash_apply", { id, index }),
 	gitStashPop: (id: RepoId_Deserialize, index: number) => __TAURI_INVOKE<null>("git_stash_pop", { id, index }),
 	gitStashDrop: (id: RepoId_Deserialize, index: number) => __TAURI_INVOKE<null>("git_stash_drop", { id, index }),
@@ -1422,6 +1429,15 @@ export type StashEntry = {
 	branch: string | null,
 	date: string,
 };
+
+/**  Scope of `git stash push` (贮藏对话框的模式选择)。 */
+export type StashPushMode = 
+/**  Working tree + index tracked changes (plain `git stash push`). */
+"all" | 
+/**  Staged changes only (`git stash push --staged`); unstaged stay. */
+"staged" | 
+/**  Unstaged changes only; the index is kept intact (three-step recipe). */
+"unstaged_only";
 
 /**
  *  一个时间桶。`key` 是规范键（月 `2026-08`、日 `2026-08-05`、小时 `14`，

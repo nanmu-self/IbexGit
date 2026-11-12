@@ -148,19 +148,6 @@
     }
   }
 
-  async function stashAll(): Promise<void> {
-    const id = repos.activeId;
-    if (id === null) return;
-    try {
-      await git.stashPush(id, null);
-      showToast("success", t("refs.stash.pushed"));
-      await repos.refresh(id);
-      await loadRefsData(id);
-    } catch (e) {
-      normalizeError(e);
-    }
-  }
-
   async function stashApply(index: number, pop: boolean): Promise<void> {
     const id = repos.activeId;
     if (id === null) return;
@@ -456,9 +443,9 @@
           title={t("refs.stash.pushTitle")}
           onclick={(e) => {
             e.stopPropagation();
-            void stashAll();
+            requestRefAction({ kind: "stashPush" });
           }}
-          onkeydown={(e) => e.key === "Enter" && void stashAll()}
+          onkeydown={(e) => e.key === "Enter" && requestRefAction({ kind: "stashPush" })}
         >
           <Plus class="size-3.5" />
         </span>

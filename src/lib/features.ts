@@ -14,9 +14,6 @@ import { netDialogs } from "$lib/stores/netdialogs.svelte";
 import { appDialogs } from "$lib/stores/appdialogs.svelte";
 import { runFetch } from "$lib/stores/netops.svelte";
 import { tasks } from "$lib/stores/tasks.svelte";
-import { git, normalizeError } from "$lib/git";
-import { showToast } from "$lib/stores/toast";
-import { t } from "$lib/i18n";
 import { emitAction, onAction, type ActionId } from "$lib/keyboard";
 import { pickRepo } from "$lib/repo-picker";
 import { copyPrimaryRemoteUrl } from "$lib/clipboard";
@@ -46,18 +43,6 @@ function refAction(a: Parameters<typeof requestRefAction>[0]): () => void {
   return () => {
     if (needsActiveRepo()) requestRefAction(a);
   };
-}
-
-function stashAll(): void {
-  const id = repos.activeId;
-  if (id === null) return;
-  git
-    .stashPush(id, null)
-    .then(() => {
-      showToast("success", t("refs.stash.pushed"));
-      return repos.refresh(id);
-    })
-    .catch((e) => normalizeError(e));
 }
 
 export const FEATURES: Feature[] = [
@@ -242,8 +227,8 @@ export const FEATURES: Feature[] = [
     order: 0,
     needsRepo: true,
     shortcut: "repo.stash",
-    keywords: "stash all changes",
-    run: stashAll,
+    keywords: "stash changes",
+    run: refAction({ kind: "stashPush" }),
   },
   {
     id: "repo.newBranch",

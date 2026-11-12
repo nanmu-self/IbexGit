@@ -2,7 +2,7 @@
 //! (track A snapshot + track B backup ref + undo), clean preview/delete,
 //! backup ref lifecycle, branch compare, remotes, tags, stash and upstream.
 
-use ibexgit_lib::core::engine::{CliEngine, GitEngine};
+use ibexgit_lib::core::engine::{CliEngine, GitEngine, StashPushMode};
 use ibexgit_lib::core::recovery::RecoveryManager;
 use ibexgit_lib::core::runner::GitProcessRunner;
 use std::path::PathBuf;
@@ -436,7 +436,10 @@ async fn remotes_tags_stash_upstream_roundtrip() {
     // Stash: push (with untracked) → apply (kept) → drop.
     std::fs::write(dir.join("w.txt"), "dirty\n").unwrap();
     engine.stage(&path, &["w.txt".to_string()]).await.unwrap();
-    let idx = engine.stash_push(&path, Some("wip")).await.unwrap();
+    let idx = engine
+        .stash_push(&path, Some("wip"), StashPushMode::All, true)
+        .await
+        .unwrap();
     assert_eq!(idx, 0);
     let stashed = engine.list_stash(&path).await.unwrap();
     assert_eq!(stashed.len(), 1);
@@ -565,5 +568,191 @@ async fn merge_ff_only_and_reflog() {
         .any(|e| e.message.contains("checkout") || e.message.contains("merge")));
     // Selector parsing keeps the ref part.
     assert_eq!(entries[0].ref_name, "HEAD");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Scoped stash pushes (贮藏对话框三种模式) against a tree that mixes a
+/// staged change (b.txt), an unstaged one (a.txt) and an untracked file
+/// (c.txt). Porcelain columns: X = staged, Y = unstaged.
+#[tokio::test(flavor = "multi_thread")]
+async fn stash_push_scoped_modes() {
+    let dir = temp_repo();
+    git_init(&dir);
+    git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "P6"]);
+    git(&dir, &["config", "core.autocrlf", "false"]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "c1", false, false).await.unwrap();
+
+    // Mode B — staged only: the staged b.txt goes away (worktree + index),
+    // while the unstaged a.txt change and untracked c.txt stay untouched.
+    // (`--staged` cannot be combined with `-u`.)
+    std::fs::write(dir.join("b.txt"), "staged\n").unwrap();
+    engine.stage(&path, &["b.txt".to_string()]).await.unwrap();
+    std::fs::write(dir.join("a.txt"), "one-modified\n").unwrap();
+    std::fs::write(dir.join("c.txt"), "untracked\n").unwrap();
+
+    let idx = engine
+        .stash_push(&path, Some("staged-only"), StashPushMode::Staged, false)
+        .await
+        .unwrap();
+    assert_eq!(idx, 0);
+    let st = git(&dir, &["status", "--porcelain"]);
+    assert!(st.contains(" M a.txt"), "unstaged kept: {st:?}");
+    assert!(st.contains("?? c.txt"), "untracked kept: {st:?}");
+    assert!(!st.contains("b.txt"), "staged stashed: {st:?}");
+    assert!(
+        !dir.join("b.txt").exists(),
+        "staged new file leaves worktree"
+    );
+    assert_eq!(engine.list_stash(&path).await.unwrap().len(), 1);
+    engine.stash_apply(&path, 0).await.unwrap();
+    engine.stash_drop(&path, 0).await.unwrap();
+
+    // Mode C — unstaged only: the staged b.txt (re-added after the apply)
+    // stays intact in the index; a.txt is stashed and c.txt follows via -u.
+    // Exactly one stash entry must remain (the parked-staged temp entry is
+    // consumed by the three-step recipe).
+    engine.stage(&path, &["b.txt".to_string()]).await.unwrap();
+    let idx = engine
+        .stash_push(
+            &path,
+            Some("unstaged-only"),
+            StashPushMode::UnstagedOnly,
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(idx, 0);
+    let st = git(&dir, &["status", "--porcelain"]);
+    assert!(st.contains("A  b.txt"), "staged kept: {st:?}");
+    assert!(!st.contains("a.txt"), "unstaged stashed: {st:?}");
+    assert!(!st.contains("c.txt"), "untracked stashed with -u: {st:?}");
+    assert_eq!(
+        engine.list_stash(&path).await.unwrap().len(),
+        1,
+        "temp parked entry must be gone"
+    );
+    engine.stash_apply(&path, 0).await.unwrap();
+    engine.stash_drop(&path, 0).await.unwrap();
+
+    // Mode A — all: everything (including untracked) goes into one entry.
+    let idx = engine
+        .stash_push(&path, None, StashPushMode::All, true)
+        .await
+        .unwrap();
+    assert_eq!(idx, 0);
+    assert!(
+        git(&dir, &["status", "--porcelain"]).trim().is_empty(),
+        "worktree fully clean after stash-all"
+    );
+    assert_eq!(engine.list_stash(&path).await.unwrap().len(), 1);
+    engine.stash_pop(&path, 0).await.unwrap();
+    assert!(engine.list_stash(&path).await.unwrap().is_empty());
+
+    // Mode C with a truly empty index degenerates to a plain push (no
+    // staged probe hit): only unstaged + untracked are parked. `stash pop`
+    // restored b.txt's staged state above, so unstage it first.
+    git(&dir, &["restore", "--staged", "b.txt"]);
+    let idx = engine
+        .stash_push(&path, None, StashPushMode::UnstagedOnly, true)
+        .await
+        .unwrap();
+    assert_eq!(idx, 0);
+    assert!(
+        git(&dir, &["status", "--porcelain"]).trim().is_empty(),
+        "nothing staged → plain push covers unstaged-only"
+    );
+    assert_eq!(engine.list_stash(&path).await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Stash diff must include files parked in the stash's third parent (the
+/// untracked commit created by `stash push -u`) — a plain
+/// `git diff stash@{N}^ stash@{N}` shows nothing for untracked-only stashes,
+/// which rendered an empty viewer (贮藏差异空白).
+#[tokio::test(flavor = "multi_thread")]
+async fn stash_diff_includes_untracked() {
+    let dir = temp_repo();
+    git_init(&dir);
+    git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "P6"]);
+    git(&dir, &["config", "core.autocrlf", "false"]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "c1", false, false).await.unwrap();
+
+    // Untracked-only stash: `stash push -u` with nothing tracked dirty.
+    std::fs::write(dir.join("note.txt"), "hidden\n").unwrap();
+    let idx = engine
+        .stash_push(&path, None, StashPushMode::All, true)
+        .await
+        .unwrap();
+    assert_eq!(idx, 0);
+
+    let model = engine
+        .diff(
+            &path,
+            DiffSource::Stash,
+            Some(("stash@{0}^", "stash@{0}")),
+            &[],
+            DiffOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        model.files.len(),
+        1,
+        "untracked-only stash must not render empty: {:?}",
+        model.files
+    );
+    assert_eq!(model.files[0].new_path.as_deref(), Some("note.txt"));
+    let content = model.files[0]
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .map(|l| l.content.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(content.contains("hidden"), "content lines: {content:?}");
+
+    // Mixed stash: tracked modification + untracked file both show up.
+    engine.stash_drop(&path, 0).await.unwrap();
+    std::fs::write(dir.join("a.txt"), "one-modified\n").unwrap();
+    std::fs::write(dir.join("note.txt"), "hidden\n").unwrap();
+    engine
+        .stash_push(&path, None, StashPushMode::All, true)
+        .await
+        .unwrap();
+    let model = engine
+        .diff(
+            &path,
+            DiffSource::Stash,
+            Some(("stash@{0}^", "stash@{0}")),
+            &[],
+            DiffOptions::default(),
+        )
+        .await
+        .unwrap();
+    let mut paths = model
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.as_deref())
+        .collect::<Vec<_>>();
+    paths.sort_unstable();
+    assert_eq!(
+        paths,
+        vec!["a.txt", "note.txt"],
+        "mixed stash diff: {paths:?}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }

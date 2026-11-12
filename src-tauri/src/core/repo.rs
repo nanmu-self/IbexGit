@@ -482,7 +482,8 @@ mod tests {
     use crate::core::engine::{
         BackupRef, BlameResult, BranchInfo, CloneOptions, CommitInfo, CommitResult, CommitStatsDto,
         CommitTemplate, ConfigEntry, DiffModel, DiffSource, FileCommit, GitignoreFile, IndexEntry,
-        NumstatCommit, PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, TagInfo,
+        NumstatCommit, PullResult, RebaseState, ReflogEntry, RemoteInfo, StashEntry, StashPushMode,
+        TagInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -665,7 +666,13 @@ mod tests {
         async fn list_stash(&self, _: &str) -> Result<Vec<StashEntry>, AppError> {
             Err(err("stash"))
         }
-        async fn stash_push(&self, _: &str, _: Option<&str>) -> Result<usize, AppError> {
+        async fn stash_push(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: StashPushMode,
+            _: bool,
+        ) -> Result<usize, AppError> {
             Err(err("stash_push"))
         }
         async fn stash_apply(&self, _: &str, _: usize) -> Result<(), AppError> {

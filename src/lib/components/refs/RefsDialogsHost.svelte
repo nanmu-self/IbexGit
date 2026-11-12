@@ -14,6 +14,7 @@
   import PushDialog from "./dialogs/PushDialog.svelte";
   import PullDialog from "./dialogs/PullDialog.svelte";
   import MergeRebaseDialog from "./dialogs/MergeRebaseDialog.svelte";
+  import StashDialog from "./dialogs/StashDialog.svelte";
   import StashDiffDialog from "./dialogs/StashDiffDialog.svelte";
   import BackupListDialog from "./dialogs/BackupListDialog.svelte";
   import RemoteDialog from "./dialogs/RemoteDialog.svelte";
@@ -24,7 +25,7 @@
   import { conflictEntered, runFetch, runPull, runPush } from "$lib/stores/netops.svelte";
   import { showToast } from "$lib/stores/toast";
   import { git, recovery, normalizeError, type StashEntry } from "$lib/git";
-  import type { BackupRef } from "$lib/git/bindings";
+  import type { BackupRef, StashPushMode } from "$lib/git/bindings";
 
   const active = $derived(repos.active);
   const repoId = $derived(repos.activeId);
@@ -96,6 +97,9 @@
         break;
       case "clean":
         await openClean();
+        break;
+      case "stashPush":
+        stashPushOpen = true;
         break;
       case "backups":
         await openBackups();
@@ -530,6 +534,29 @@
   let stashDropOpen = $state(false);
   let stashDropIndex = $state(0);
 
+  // 贮藏本地变更对话框（三种模式：全部 / 仅暂存 / 仅未暂存）。
+  let stashPushOpen = $state(false);
+  let stashPushBusy = $state(false);
+
+  async function doStashPush(
+    mode: StashPushMode,
+    message: string | null,
+    includeUntracked: boolean
+  ): Promise<void> {
+    if (repoId === null) return;
+    stashPushBusy = true;
+    try {
+      await git.stashPush(repoId, message, mode, includeUntracked);
+      stashPushOpen = false;
+      showToast("success", t("refs.stash.pushed"));
+      await refreshAll();
+    } catch (e) {
+      normalizeError(e);
+    } finally {
+      stashPushBusy = false;
+    }
+  }
+
   async function confirmStashDrop(): Promise<void> {
     if (repoId === null) return;
     try {
@@ -705,6 +732,7 @@
 />
 
 <!-- stash -->
+<StashDialog bind:open={stashPushOpen} busy={stashPushBusy} onsubmit={doStashPush} />
 <StashDiffDialog bind:open={stashDiffOpen} entry={stashDiffEntry} {repoId} />
 <ConfirmDialog
   bind:open={stashDropOpen}
