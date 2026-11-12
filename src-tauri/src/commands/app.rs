@@ -159,7 +159,8 @@ fn read_accent_dwm() -> Option<(u8, u8, u8)> {
     let mut color: u32 = 0;
     let mut balance: u32 = 0;
     let hr = unsafe { DwmGetColorizationColor(&mut color, &mut balance) };
-    if hr == 0 { // S_OK
+    if hr == 0 {
+        // S_OK
         Some((
             ((color >> 16) & 0xFF) as u8,
             ((color >> 8) & 0xFF) as u8,
