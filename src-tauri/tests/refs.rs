@@ -2,7 +2,7 @@
 //! (track A snapshot + track B backup ref + undo), clean preview/delete,
 //! backup ref lifecycle, branch compare, remotes, tags, stash and upstream.
 
-use ibexgit_lib::core::engine::{CliEngine, GitEngine, StashPushMode};
+use ibexgit_lib::core::engine::{CliEngine, DiffOptions, DiffSource, GitEngine, StashPushMode};
 use ibexgit_lib::core::recovery::RecoveryManager;
 use ibexgit_lib::core::runner::GitProcessRunner;
 use std::path::PathBuf;
@@ -668,6 +668,87 @@ async fn stash_push_scoped_modes() {
         "nothing staged → plain push covers unstaged-only"
     );
     assert_eq!(engine.list_stash(&path).await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Stash diff must include files parked in the stash's third parent (the
+/// untracked commit created by `stash push -u`) — a plain
+/// `git diff stash@{N}^ stash@{N}` shows nothing for untracked-only stashes,
+/// which rendered an empty viewer (贮藏差异空白).
+#[tokio::test(flavor = "multi_thread")]
+async fn stash_diff_includes_untracked() {
+    let dir = temp_repo();
+    git_init(&dir);
+    git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "P6"]);
+    git(&dir, &["config", "core.autocrlf", "false"]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "c1", false, false).await.unwrap();
+
+    // Untracked-only stash: `stash push -u` with nothing tracked dirty.
+    std::fs::write(dir.join("note.txt"), "hidden\n").unwrap();
+    let idx = engine
+        .stash_push(&path, None, StashPushMode::All, true)
+        .await
+        .unwrap();
+    assert_eq!(idx, 0);
+
+    let model = engine
+        .diff(
+            &path,
+            DiffSource::Stash,
+            Some(("stash@{0}^", "stash@{0}")),
+            &[],
+            DiffOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        model.files.len(),
+        1,
+        "untracked-only stash must not render empty: {:?}",
+        model.files
+    );
+    assert_eq!(model.files[0].new_path.as_deref(), Some("note.txt"));
+    let content = model.files[0]
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .map(|l| l.content.as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(content.contains("hidden"), "content lines: {content:?}");
+
+    // Mixed stash: tracked modification + untracked file both show up.
+    engine.stash_drop(&path, 0).await.unwrap();
+    std::fs::write(dir.join("a.txt"), "one-modified\n").unwrap();
+    std::fs::write(dir.join("note.txt"), "hidden\n").unwrap();
+    engine
+        .stash_push(&path, None, StashPushMode::All, true)
+        .await
+        .unwrap();
+    let model = engine
+        .diff(
+            &path,
+            DiffSource::Stash,
+            Some(("stash@{0}^", "stash@{0}")),
+            &[],
+            DiffOptions::default(),
+        )
+        .await
+        .unwrap();
+    let mut paths = model
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.as_deref())
+        .collect::<Vec<_>>();
+    paths.sort_unstable();
+    assert_eq!(paths, vec!["a.txt", "note.txt"], "mixed stash diff: {paths:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

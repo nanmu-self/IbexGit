@@ -773,9 +773,20 @@ impl engine::GitEngine for CliEngine {
             // Stash content diff: `stash@{N}^..stash@{N}` when the caller
             // selects an entry, otherwise the whole-latest `git diff stash`.
             DiffSource::Stash => {
-                if let Some((a, b)) = rev_range {
-                    args.push(a.to_string());
-                    args.push(b.to_string());
+                if let Some((_base, stash_ref)) = rev_range {
+                    // A plain `git diff stash@{N}^ stash@{N}` cannot see
+                    // files parked in the stash's third parent (the
+                    // untracked commit created by `stash push -u`), which
+                    // made untracked-only stashes render empty in the
+                    // viewer. `stash show -p --include-untracked` emits the
+                    // same diff shape merged over tracked + untracked
+                    // (git ≥ 2.32; floor is 2.40), and transparently accepts
+                    // the diff options already assembled above.
+                    args[2] = "stash".to_string();
+                    args.insert(3, "show".to_string());
+                    args.insert(4, "-p".to_string());
+                    args.insert(5, "--include-untracked".to_string());
+                    args.push(stash_ref.to_string());
                 } else {
                     args.push("stash".to_string());
                 }
