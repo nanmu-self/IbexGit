@@ -29,6 +29,7 @@ export interface Binding {
  */
 export const keymap = {
   "repo.open": { mod: true, key: "o" },
+  "repo.search": { mod: true, key: "k" },
   "repo.refresh": { key: "f5" },
   "repo.closeTab": { mod: true, key: "w", mac: { ctrl: true, key: "w" } },
   "repo.nextTab": { mod: true, alt: true, key: "arrowright" },

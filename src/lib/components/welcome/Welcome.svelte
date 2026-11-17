@@ -11,7 +11,7 @@
   import X from "@lucide/svelte/icons/x";
 </script>
 
-<div class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-8">
+<div class="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-8 animate-in fade-in slide-in-from-bottom-1 duration-150">
   <div class="w-full max-w-md space-y-8">
     <div class="welcome-enter space-y-2 text-center">
       <div class="flex  place-items-center justify-center"> <img data-tauri-drag-region src="/logo.svg" alt="" draggable="false" class="size-20" /></div>

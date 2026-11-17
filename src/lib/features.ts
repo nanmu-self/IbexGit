@@ -79,6 +79,32 @@ export const FEATURES: Feature[] = [
     run: () => netDialogs.openNewRepo(),
   },
   {
+    // Ctrl+K：打开/聚焦仓库总览页并聚焦搜索框（Web 应用搜索惯例）。
+    // 总览 tab 是懒加载 chunk：rAF 轮询等搜索框挂载后聚焦，超时放弃。
+    id: "repo.search",
+    labelKey: "menu.file.searchRepo",
+    section: "file",
+    group: 0,
+    order: 3,
+    needsRepo: false,
+    shortcut: "repo.search",
+    keywords: "search repos quick switch 仓库 搜索",
+    run: () => {
+      repos.openReposTab();
+      const deadline = performance.now() + 2000;
+      const tryFocus = (): void => {
+        const input = document.querySelector<HTMLInputElement>("input[data-repos-search]");
+        if (input) {
+          input.focus();
+          input.select();
+          return;
+        }
+        if (performance.now() < deadline) requestAnimationFrame(tryFocus);
+      };
+      requestAnimationFrame(tryFocus);
+    },
+  },
+  {
     id: "app.settings",
     labelKey: "settings.title",
     section: "file",

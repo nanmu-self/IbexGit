@@ -20,6 +20,9 @@
   import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { onAction } from "$lib/keyboard";
   import { initFeatureShortcuts } from "$lib/features";
+  import { slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { browser } from "$app/environment";
   import { t } from "$lib/i18n";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
@@ -43,6 +46,16 @@
   let restored = $state(false);
   /** PanelResizer drag state: Sidebar drops its width transition while true. */
   let sidebarResizing = $state(false);
+
+  // 尊重系统“减少动态效果”：动效降级为 80ms 快切（沿用 HistoryView 约定）。
+  const reduceMotion =
+    browser && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /** 侧栏滑入/滑出（进仓库总览页、Ctrl+B 切侧栏）：水平展开/收拢。 */
+  const sidebarSlide = {
+    axis: "x" as const,
+    duration: reduceMotion ? 80 : 160,
+    easing: cubicOut,
+  };
 
   // Warm up the default view chunk once settings are in — but only when
   // there is (or will be, after session restore) at least one repo tab:
@@ -104,21 +117,24 @@
     <RepoTabs />
     <Toolbar />
     <div class="flex min-h-0 flex-1">
-      {#if settings.showSidebar}
-        <Sidebar resizing={sidebarResizing} />
-        <PanelResizer
-          bind:width={settings.sidebarWidth}
-          bind:dragging={sidebarResizing}
-          min={200}
-          max={420}
-          onCommit={(w) => void settings.setSidebarWidth(w)}
-        />
+      <!-- 仓库总览 tab（“+”）无活动仓库：侧栏隐藏，总览页全宽展示。 -->
+      {#if settings.showSidebar && !repos.reposTabActive}
+        <div class="flex min-h-0 shrink-0" transition:slide={sidebarSlide}>
+          <Sidebar resizing={sidebarResizing} />
+          <PanelResizer
+            bind:width={settings.sidebarWidth}
+            bind:dragging={sidebarResizing}
+            min={200}
+            max={420}
+            onCommit={(w) => void settings.setSidebarWidth(w)}
+          />
+        </div>
       {/if}
       <main class="flex min-w-0 flex-1 flex-col">
         {#if repos.reposTabActive}
           <LazyView loader={reposTabLoader} />
         {:else if !active || active.phase === "pending" || active.phase === "loading"}
-          <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <div class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground animate-in fade-in duration-150">
             <LoaderCircle class="size-4 animate-spin" />
             {t("common.loading")}
           </div>

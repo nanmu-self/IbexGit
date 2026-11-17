@@ -43,7 +43,11 @@
 </script>
 
 {#if Comp}
-  <Comp />
+  <!-- 视图入场：150ms 淡入 + 4px 上浮，纯合成层动画（虚拟滚动安全）；
+       prefers-reduced-motion 由 app.css 全局禁用 .animate-in。 -->
+  <div class="flex min-h-0 flex-1 flex-col animate-in fade-in slide-in-from-bottom-1 duration-150">
+    <Comp />
+  </div>
 {:else if failed}
   <div class="flex flex-1 items-center justify-center text-sm text-muted-foreground">
     {t("common.viewLoadFailed")}

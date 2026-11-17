@@ -13,6 +13,8 @@
   import { Input } from "$lib/components/ui/input";
   import { t } from "$lib/i18n";
   import { repos, samePath } from "$lib/stores/repos.svelte";
+  import { fuzzyScore } from "$lib/fuzzy";
+  import { keymap, formatBinding, getPlatform } from "$lib/keyboard";
   import { pickRepo } from "$lib/repo-picker";
   import { showToast } from "$lib/stores/toast";
   import { netDialogs } from "$lib/stores/netdialogs.svelte";
@@ -31,6 +33,9 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
 
   let query = $state("");
+
+  /** 搜索框右侧 kbd 提示：Win/Linux "Ctrl+K"，macOS "⌘K"。 */
+  const searchShortcut = formatBinding(keymap["repo.search"], getPlatform());
 
   // Group name prompt (create / rename).
   let promptOpen = $state(false);
@@ -83,12 +88,37 @@
   const byRecency = (a: RepoEntry, b: RepoEntry) =>
     b.lastOpened - a.lastOpened || a.name.localeCompare(b.name);
 
-  const filtered = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter(
-      (e) => e.name.toLowerCase().includes(q) || e.path.toLowerCase().includes(q),
+  /** 有查询词时按相关度降序，无查询词时维持近期优先。 */
+  const byRelevance = (a: RepoEntry, b: RepoEntry): number => {
+    const scores = queryScores;
+    if (!scores) return byRecency(a, b);
+    return (
+      (scores.get(b.path) ?? Number.NEGATIVE_INFINITY) -
+        (scores.get(a.path) ?? Number.NEGATIVE_INFINITY) || byRecency(a, b)
     );
+  };
+
+  /**
+   * 模糊搜索（共享 fuzzyScore）：仓库名优先，路径次之（分数打一折，
+   * 避免深层目录路径蹭过仓库名的匹配）。有查询时各分组内按相关度排序。
+   */
+  const queryScores = $derived.by(() => {
+    const q = query.trim();
+    if (!q) return null;
+    const scores = new Map<string, number>();
+    for (const e of entries) {
+      const name = fuzzyScore(q, e.name);
+      const path = fuzzyScore(q, e.path);
+      if (name === null && path === null) continue;
+      scores.set(e.path, Math.max(name ?? Number.NEGATIVE_INFINITY, (path ?? Number.NEGATIVE_INFINITY) / 10));
+    }
+    return scores;
+  });
+
+  const filtered = $derived.by(() => {
+    const scores = queryScores;
+    if (!scores) return entries;
+    return entries.filter((e) => scores.has(e.path));
   });
 
   const bookmarkOrder = (id: string | null): number =>
@@ -97,14 +127,16 @@
   const sections = $derived.by(() => {
     const bookmarks = filtered
       .filter((e) => e.bookmark)
-      .sort((a, b) => bookmarkOrder(a.bookmark) - bookmarkOrder(b.bookmark) || byRecency(a, b));
+      .sort(
+        (a, b) => bookmarkOrder(a.bookmark) - bookmarkOrder(b.bookmark) || byRelevance(a, b),
+      );
     const groups = repos.groups
       .map((g) => ({
         group: g,
-        items: filtered.filter((e) => e.groupId === g.id).sort(byRecency),
+        items: filtered.filter((e) => e.groupId === g.id).sort(byRelevance),
       }))
       .filter((s) => s.items.length > 0);
-    const ungrouped = filtered.filter((e) => !e.groupId).sort(byRecency);
+    const ungrouped = filtered.filter((e) => !e.groupId).sort(byRelevance);
     return { bookmarks, groups, ungrouped };
   });
 
@@ -214,11 +246,15 @@
       <input
         bind:value={query}
         onkeydown={onSearchKeydown}
+        data-repos-search
         aria-label={t("repos.search")}
         placeholder={t("repos.search")}
         spellcheck="false"
-        class="h-full w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        class="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
       />
+      <kbd
+        class="shrink-0 rounded border bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground"
+      >{searchShortcut}</kbd>
     </div>
 
     <!-- Lists -->

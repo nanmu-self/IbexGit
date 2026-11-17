@@ -10,6 +10,7 @@
   import { appDialogs } from "$lib/stores/appdialogs.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { repos } from "$lib/stores/repos.svelte";
+  import { fuzzyScore as score } from "$lib/fuzzy";
   import { t } from "$lib/i18n";
   import Search from "@lucide/svelte/icons/search";
   import CornerDownLeft from "@lucide/svelte/icons/corner-down-left";
@@ -26,31 +27,6 @@
     if (!action) return "";
     const binding = keymap[action];
     return binding ? formatBinding(binding, platform) : "";
-  }
-
-  function score(query: string, target: string): number | null {
-    const q = query.toLowerCase().trim();
-    const s = target.toLowerCase();
-    if (!q) return 0;
-    const idx = s.indexOf(q);
-    if (idx >= 0) return 1000 - idx * 5 - (s.length - q.length) + (idx === 0 ? 200 : 0);
-    // Subsequence match (fuzzy).
-    let ti = 0;
-    let last = -2;
-    let sc = 0;
-    let gaps = 0;
-    for (const ch of q) {
-      const found = s.indexOf(ch, ti);
-      if (found === -1) return null;
-      if (found === last + 1) sc += 15;
-      else {
-        sc += 5;
-        gaps++;
-      }
-      last = found;
-      ti = found + 1;
-    }
-    return sc - gaps * 10;
   }
 
   const matches = $derived.by(() => {

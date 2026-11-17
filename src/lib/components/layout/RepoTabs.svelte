@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as ContextMenu from "$lib/components/ui/context-menu";
+  import * as Tooltip from "$lib/components/ui/tooltip";
   import { t } from "$lib/i18n";
   import { repos, samePath, REPOS_TAB_ID } from "$lib/stores/repos.svelte";
 import { appDialogs } from "$lib/stores/appdialogs.svelte";
@@ -191,14 +192,23 @@ import { copyPrimaryRemoteUrl } from "$lib/clipboard";
   {/if}
 
   <!-- "+": open the repositories overview tab (P3.5). -->
-  <div class="flex items-stretch border-l border-border/40">
-    <button
-      type="button"
-      class="flex w-9 items-center justify-center text-muted-foreground hover:bg-background/70 hover:text-foreground"
-      onclick={() => repos.openReposTab()}
-      title={t("tabs.addTab")}
-    >
-      <Plus class="size-4" />
-    </button>
-  </div>
+  <Tooltip.Provider delayDuration={400}>
+    <div class="flex items-stretch border-l border-border/40">
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <button
+              {...props}
+              type="button"
+              class="flex w-9 items-center justify-center text-muted-foreground hover:bg-background/70 hover:text-foreground"
+              onclick={() => repos.openReposTab()}
+            >
+              <Plus class="size-4" />
+            </button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="bottom">{t("tabs.addTab")}</Tooltip.Content>
+      </Tooltip.Root>
+    </div>
+  </Tooltip.Provider>
 </div>
