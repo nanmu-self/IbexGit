@@ -56,8 +56,40 @@ src-tauri/tests/      # 集成测试（含 bindings.rs 同步校验）
 2. **git 子进程永不交互**：stdin 只允许 `Null`（默认）或 `Feed`（一次写入即关）；
    强制 `GIT_TERMINAL_PROMPT=0`、`GIT_EDITOR=true`、`-c core.quotepath=false`。
    凭据走 helper-first（ADR-014，追加链尾注入，独立进程回连 CredentialBroker）。
+   **只读命令一律带 `--no-optional-locks`**：否则 `status` / `diff` 会把刷新后的
+   stat 缓存写回 `.git/index`，而我们正 watch 这个文件——读操作自己触发一次
+   INDEX 事件，把即将填好的缓存作废，等于每次操作多一次全量重读（实测单次外部
+   `git add` 从 3 次失效降到 1 次）。读不得写。
 3. **缓存只作展示加速，`.git` 与工作区是唯一真相源**。所有变更（含自身写操作）
    走 watcher 失效 → `repo://changed`，不为内部写操作开快速通道。
+   唯一例外是**写后失效**：写命令的 `WriteGate` guard 析构时清空本仓展示缓存
+   （只清、不预读），让紧随其后的读取必然穿透到 git——否则写命令返回后那次
+   刷新会命中写前快照，要等 watcher 防抖（300ms–1s）+ 全量重读才纠正。
+   它不写入任何数据，缓存只会比 git 旧、不会更新，真相源方向不变；watcher
+   链路照旧兜底。
+   派生规则见 `RepoManager::invalidate`：失效时的**防抖重读是投机性的**，
+   仅当「最后一次 status 读取的起点晚于该批事件的最新观测时刻」时才跳过——
+   那次读取已经覆盖了这批变更，重读只会得到同一答案（`Session.last_read_started`
+   vs `RepoEvent.observed_at`）。反过来，读取起点早于变更时结果不入缓存
+   （`Session.last_change_at`），避免把读到 index 中间态的快照固化成"新鲜"。
+   与此配套，watcher 的事件处理**先等 `WriteGate::wait_idle()`**（按事件 spawn，
+   不阻塞其它仓库）：自家写引起的 fs 事件通常在命令还在跑时就到了，此时重读会
+   和 git 抢 index，而且结果马上被 guard 析构作废（实测 276ms 的 commit 被拖到
+   637ms）。
+   推论：**git 子进程数才是第一成本**，而单个子进程的成本几乎全在"创建"上
+   （实测 78ms 里 40ms 是 CreateProcess + 线程恢复，git 本身只占 ~20ms）。
+   所以"少起子进程"优先于"换更便宜的读法"或"加并发"：`mark_eol_only` 只在
+   确实可能存在纯行尾变更时才发第二次探针；`conflict_list`（一次 `ls-files -u`
+   约 80ms）只在 status 已含冲突条目时才请求；refs 五连（tags / remotes /
+   remote-branches / stash / reflog）只在事件种类涉及 head/refs/config/
+   merge_state 时重读（`RepoTab.refsEpoch`），纯 worktree/index 事件不碰它。
+   进程创建本身（`core/proctree.rs`）同理：恢复 `CREATE_SUSPENDED` 子进程
+   **必须**用 `NtResumeProcess`，不能用 `CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD)`
+   ——后者为了一个已知 pid 去扫全系统线程表，且在全局快照锁下串行（实测每次
+   spawn 白花 40ms，五个并发时每个涨到 400ms+，并行反而更慢）。也不要换成
+   `DETACHED_PROCESS`：省不了时间（开销全在恢复那步），却会让 `git.cmd` 这类
+   批处理 wrapper 里的 `set VAR=…` 失效（`tests/config_view.rs` 立刻变红，
+   `proctree::batch_wrapper_propagates_env` 专门守这两点）。
 4. **写操作持 per-repo `WriteGate`，读操作取 `read_permit()`**（并发 ≤ 8），
    照 commands/mod.rs 现有模式。
 5. **AppError** 序列化为 `{ "code": "<variant>", ...fields }`（serde tag），前端

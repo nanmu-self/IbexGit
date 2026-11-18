@@ -469,29 +469,45 @@ pub fn run() {
             ));
 
             // State invalidation system (PLAN §4.3):
-            // fs event → classify → debounce(300ms, cap 1s) → invalidate caches
-            // → re-read status → emit repo://changed to the frontend.
+            // fs event → classify → debounce(300ms, cap 1s) → wait for our own
+            // writes to finish → invalidate caches → re-read status (unless a
+            // read already covers it) → emit repo://changed to the frontend.
             let hub = crate::core::watcher::WatcherHub::new();
             if let Some(mut events) = hub.take_receiver() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     while let Some(ev) = events.recv().await {
-                        let generation = {
-                            let repos = handle.state::<crate::core::repo::RepoManager>();
-                            repos.invalidate(ev.repo_id, ev.kinds).await
-                        };
-                        let Some(generation) = generation else {
-                            continue; // event for a repo we no longer know
-                        };
-                        use tauri_specta::Event as _;
-                        let event = crate::core::watcher::RepoChanged {
-                            repo_id: ev.repo_id,
-                            kinds: ev.kinds.names(),
-                            generation: generation as u32,
-                        };
-                        if let Err(e) = event.emit(&handle) {
-                            tracing::warn!("failed to emit RepoChanged: {}", e);
-                        }
+                        let handle = handle.clone();
+                        // One task per event: waiting on a write gate must not
+                        // stall other repositories' events.
+                        tauri::async_runtime::spawn(async move {
+                            let repos = handle
+                                .state::<crate::core::repo::RepoManager>()
+                                .inner()
+                                .clone();
+                            // Never race our own write: the debounced event of
+                            // `git commit` lands while the commit is usually
+                            // still running, and a speculative re-read there
+                            // competes with git for the index while its result
+                            // gets discarded by the write guard a moment later.
+                            if let Ok(gate) = repos.write_gate(ev.repo_id).await {
+                                gate.wait_idle().await;
+                            }
+                            let Some(generation) =
+                                repos.invalidate(ev.repo_id, ev.kinds, ev.observed_at).await
+                            else {
+                                return; // event for a repo we no longer know
+                            };
+                            use tauri_specta::Event as _;
+                            let event = crate::core::watcher::RepoChanged {
+                                repo_id: ev.repo_id,
+                                kinds: ev.kinds.names(),
+                                generation: generation as u32,
+                            };
+                            if let Err(e) = event.emit(&handle) {
+                                tracing::warn!("failed to emit RepoChanged: {}", e);
+                            }
+                        });
                     }
                 });
             }

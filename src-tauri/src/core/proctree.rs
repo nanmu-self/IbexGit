@@ -140,6 +140,11 @@ impl TreeChild {
         // 继承，缺此标志时每个 git.exe 都会新建一个 conhost——即用户看到的
         // "黑窗口一闪而过"。子进程（ssh / hooks / credential helper）继承
         // 该隐藏控制台，同样不弹窗；与管道 stdio、Job Object 均兼容。
+        //
+        // DETACHED_PROCESS（完全不给控制台）看着更省，但实测**没有收益**
+        // （spawn 仍是 ~40 ms，全部开销在下面那条 `resume` 上），而且会打断
+        // `git.cmd` 这类批处理 wrapper：`set GIT_CONFIG_GLOBAL=… && git %*`
+        // 在无控制台的 cmd.exe 下不生效，隔离 config 的集成测试立刻变红。
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
         // The job is created up-front so a spawn failure never leaves a
@@ -157,7 +162,8 @@ impl TreeChild {
         };
 
         // Assign before first instruction runs (process is suspended).
-        let assigned = match child.raw_handle() {
+        let handle = child.raw_handle();
+        let assigned = match handle {
             Some(handle) => unsafe {
                 windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(job.0, handle) != 0
             },
@@ -175,7 +181,10 @@ impl TreeChild {
 
         // A suspended process that is never resumed would hang forever:
         // any resume failure must kill the child, never return it.
-        if let Err(e) = resume_initial_thread(pid) {
+        let resumed = handle
+            .ok_or_else(|| io::Error::other("spawned child has no handle"))
+            .and_then(resume_process);
+        if let Err(e) = resumed {
             let _ = child.start_kill();
             let _ = child.wait().await;
             return Err(e);
@@ -256,51 +265,35 @@ impl Drop for JobHandle {
 }
 
 /// Resume the (single) initial thread of a `CREATE_SUSPENDED` process.
+///
+/// Deliberately **not** the Toolhelp route. `CreateToolhelp32Snapshot(
+/// TH32CS_SNAPTHREAD)` walks *every thread on the machine* under a global
+/// snapshot lock just to find one TID we already have a process handle for.
+/// Measured on a dev box: 40 ms per spawn for a command whose actual git work
+/// is ~18 ms, and — because the snapshot serialises globally — 405–423 ms per
+/// child once five git calls are spawned concurrently (they queue up in the
+/// snapshot instead of overlapping). `NtResumeProcess` is a per-process call:
+/// it decrements the suspend count of every thread in the process, and a
+/// `CREATE_SUSPENDED` child has exactly one (its main thread), so the effect
+/// is identical at a fraction of the cost.
 #[cfg(windows)]
-fn resume_initial_thread(pid: u32) -> io::Result<()> {
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
-    };
-    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+fn resume_process(process: windows_sys::Win32::Foundation::HANDLE) -> io::Result<()> {
+    // ntdll export without a stable Win32 wrapper (windows-sys does not bind
+    // it); the process handle from `CreateProcess` carries PROCESS_SUSPEND_RESUME.
+    unsafe extern "system" {
+        fn NtResumeProcess(process_handle: windows_sys::Win32::Foundation::HANDLE) -> i32;
+    }
 
-    unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-        if snapshot == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
-        }
-
-        let mut entry: THREADENTRY32 = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-        let mut resumed = false;
-
-        if Thread32First(snapshot, &mut entry) != 0 {
-            loop {
-                if entry.th32OwnerProcessID == pid {
-                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
-                    if !thread.is_null() {
-                        let previous = ResumeThread(thread);
-                        CloseHandle(thread);
-                        if previous != u32::MAX {
-                            resumed = true;
-                        }
-                        break;
-                    }
-                }
-                if Thread32Next(snapshot, &mut entry) == 0 {
-                    break;
-                }
-            }
-        }
-
-        CloseHandle(snapshot);
-        if resumed {
-            Ok(())
-        } else {
-            Err(io::Error::other(format!(
-                "could not resume initial thread of pid {pid}"
-            )))
-        }
+    // SAFETY: `process` is the live child handle owned by `TreeChild`; ntdll
+    // only touches that process. Success is STATUS_SUCCESS (0).
+    let status = unsafe { NtResumeProcess(process) };
+    if status >= 0 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "NtResumeProcess failed (NTSTATUS 0x{:08x})",
+            status as u32
+        )))
     }
 }
 
@@ -421,6 +414,45 @@ mod windows_tests {
 
     fn job_assigned(tree: &TreeChild) -> bool {
         matches!(tree.kill, KillKind::Job(_))
+    }
+
+    /// 批处理 wrapper（`git.cmd` 就是这种形态）必须能正常跑并传下环境变量。
+    ///
+    /// 两件事一起守：(1) 创建标志必须是 `CREATE_NO_WINDOW` —— 换成
+    /// `DETACHED_PROCESS`（不给控制台）后，`set VAR=… & echo %VAR%` 在
+    /// cmd.exe 里不生效，隔离 config 的集成测试立刻变红；(2) 挂起的进程
+    /// 必须真的被恢复，否则这里会一直挂到超时（`NtResumeProcess` 失效）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn batch_wrapper_propagates_env() {
+        let dir = std::env::temp_dir().join(format!("ibex-spawn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("wrapper.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\nset IBEX_SPAWN_PROBE=hello-from-batch\r\necho %IBEX_SPAWN_PROBE%\r\n",
+        )
+        .unwrap();
+
+        let mut cmd = Command::new(&script);
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let out = tokio::time::timeout(Duration::from_secs(20), async {
+            let mut tree = TreeChild::spawn(&mut cmd)
+                .await
+                .expect("spawn batch wrapper");
+            tree.wait_with_output().await.expect("wait batch wrapper")
+        })
+        .await
+        .expect("a spawned batch wrapper must be resumed, not left suspended");
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("hello-from-batch"),
+            "batch env must reach the script: {out:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

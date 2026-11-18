@@ -107,6 +107,23 @@ fn pathspec_feed(paths: &[String]) -> Vec<u8> {
     feed
 }
 
+/// Above this many candidates the pathspec itself becomes the cost (git
+/// matches every pattern against every index entry), so the EOL probe goes
+/// back to a whole-tree diff — which is what it always did.
+const MAX_PROBE_PATHSPEC: usize = 512;
+/// ...and the paths ride on the command line (`git diff` has no
+/// `--pathspec-from-file`), so stay well below the Windows 32 767-char limit.
+const MAX_PROBE_PATHSPEC_BYTES: usize = 8_000;
+
+/// Pathspec for the CRLF/LF probe, or `None` for a whole-tree probe.
+fn probe_pathspec(candidates: &[String]) -> Option<&[String]> {
+    if candidates.len() > MAX_PROBE_PATHSPEC {
+        return None;
+    }
+    let bytes: usize = candidates.iter().map(|p| p.len() + 1).sum();
+    (bytes <= MAX_PROBE_PATHSPEC_BYTES).then_some(candidates)
+}
+
 /// Log format shared by `log`, `graph` and `commit_detail` (8 lines per
 /// commit, see `parse_log`).
 const LOG_FORMAT: &str = "%H%n%h%n%an%n%ae%n%aI%n%s%n%d%n%P";
@@ -127,6 +144,20 @@ impl CliEngine {
     /// Flag worktree-modified entries whose only difference is CRLF/LF
     /// (PLAN P3: 行尾变更展示)：a path listed by plain `diff --numstat -z`
     /// but absent from the `--ignore-cr-at-eol` variant is EOL-only.
+    ///
+    /// On Windows this probe is the most expensive part of a status read — not
+    /// because of the diff work but because **each git child costs 80–120 ms**
+    /// (measured: `git status` alone 144 ms, two probes 123 + 88 ms). So the
+    /// shape here is chosen to minimise the *number of children*, not their
+    /// size:
+    ///
+    /// 1. one probe with `--ignore-cr-at-eol`, scoped to the candidate paths;
+    /// 2. files that still show a change there are definitely not EOL-only —
+    ///    if every candidate answers that way (the normal case), we stop after
+    ///    **one** child;
+    /// 3. only the leftovers — the files that may be EOL-only — get a second,
+    ///    equally scoped probe to rule out "no textual change at all"
+    ///    (mode-only edits), which keeps the classification exact.
     async fn mark_eol_only(
         &self,
         repo: &str,
@@ -140,17 +171,23 @@ impl CliEngine {
         if candidates.is_empty() {
             return Ok(());
         }
-        let normal = self.numstat_paths(repo, false).await?;
-        if normal.is_empty() {
-            return Ok(());
-        }
-        let ignore_cr = self.numstat_paths(repo, true).await?;
-        let ignore_set: HashSet<&str> = ignore_cr.iter().map(|s| s.as_str()).collect();
-        let eol_only: HashSet<&str> = normal
+        let scope = probe_pathspec(&candidates);
+        let ignoring_cr = self.numstat_paths(repo, true, scope).await?;
+        let changed: HashSet<&str> = ignoring_cr.iter().map(|s| s.as_str()).collect();
+        let suspects: Vec<String> = candidates
             .iter()
-            .map(|s| s.as_str())
-            .filter(|p| !ignore_set.contains(p))
+            .filter(|p| !changed.contains(p.as_str()))
+            .cloned()
             .collect();
+        if suspects.is_empty() {
+            return Ok(()); // every modified file has a real (non-EOL) change
+        }
+        // Suspects are absent under `--ignore-cr-at-eol`: either EOL-only or no
+        // textual diff at all (mode-only). One more scoped probe tells them
+        // apart — and it only runs on this branch (i.e. when the UI would
+        // actually show a badge).
+        let normal = self.numstat_paths(repo, false, Some(&suspects)).await?;
+        let eol_only: HashSet<&str> = normal.iter().map(|s| s.as_str()).collect();
         for f in status.iter_mut() {
             if eol_only.contains(f.path.as_str()) {
                 f.eol_only = true;
@@ -159,12 +196,35 @@ impl CliEngine {
         Ok(())
     }
 
-    async fn numstat_paths(&self, repo: &str, ignore_cr: bool) -> Result<Vec<String>, AppError> {
-        let args: &[&str] = if ignore_cr {
-            &["-C", repo, "diff", "--numstat", "-z", "--ignore-cr-at-eol"]
-        } else {
-            &["-C", repo, "diff", "--numstat", "-z"]
-        };
+    async fn numstat_paths(
+        &self,
+        repo: &str,
+        ignore_cr: bool,
+        paths: Option<&[String]>,
+    ) -> Result<Vec<String>, AppError> {
+        // `--literal-pathspecs` (a top-level option, so it must precede the
+        // subcommand): the paths come straight from `git status`, and one that
+        // contains `*`, `?`, `[` or starts with `:` must not be re-read as a
+        // glob or pathspec magic.
+        // (`git diff` has no `--pathspec-from-file`, unlike add/restore.)
+        // `--no-optional-locks` for the same reason as in `status`: a probe
+        // must never write the index and thereby trigger its own invalidation.
+        let mut args: Vec<&str> = vec![
+            "--no-optional-locks",
+            "--literal-pathspecs",
+            "-C",
+            repo,
+            "diff",
+            "--numstat",
+            "-z",
+        ];
+        if ignore_cr {
+            args.push("--ignore-cr-at-eol");
+        }
+        if let Some(paths) = paths {
+            args.push("--");
+            args.extend(paths.iter().map(|s| s.as_str()));
+        }
         let res = self.run(args, StdinMode::Null, None, None).await?;
         self.ensure_success(&res)?;
         Ok(parse::parse_numstat_paths(&res.stdout))
@@ -484,7 +544,14 @@ impl engine::GitEngine for CliEngine {
         // `? dir/` record, which breaks the flat file list, per-file diff
         // synthesis and per-file discard. Min supported git (2.40) always
         // supports it (capability STATUS_UNTRACKED_ALL).
+        //
+        // `--no-optional-locks`: `status` may otherwise write the refreshed
+        // stat cache back into `.git/index`. We watch that file, so the write
+        // came back as an INDEX fs event that invalidated the very cache this
+        // read was about to fill — an extra full re-read per action, caused by
+        // ourselves. Reads must not write.
         let args = [
+            "--no-optional-locks",
             "-C",
             repo,
             "status",
@@ -749,6 +816,10 @@ impl engine::GitEngine for CliEngine {
         opts: DiffOptions,
     ) -> Result<DiffModel, AppError> {
         let mut args = vec![
+            // Reads must never write: without this, `git diff` refreshes the
+            // stat cache back into `.git/index`, and the INDEX fs event that
+            // follows invalidates the cache we just built (see AGENTS 红线 2).
+            "--no-optional-locks".to_string(),
             "-C".to_string(),
             repo.to_string(),
             "diff".to_string(),
@@ -782,10 +853,19 @@ impl engine::GitEngine for CliEngine {
                     // same diff shape merged over tracked + untracked
                     // (git ≥ 2.32; floor is 2.40), and transparently accepts
                     // the diff options already assembled above.
-                    args[2] = "stash".to_string();
-                    args.insert(3, "show".to_string());
-                    args.insert(4, "-p".to_string());
-                    args.insert(5, "--include-untracked".to_string());
+                    //
+                    // Located by value, not by index: the head of `args` is
+                    // global options (`--no-optional-locks -C <repo>`), and
+                    // hardcoded positions silently rewrote the repo path once.
+                    let at = args
+                        .iter()
+                        .position(|a| a == "diff")
+                        .expect("diff subcommand present");
+                    args[at] = "stash".to_string();
+                    args.splice(
+                        at + 1..at + 1,
+                        ["show", "-p", "--include-untracked"].map(String::from),
+                    );
                     args.push(stash_ref.to_string());
                 } else {
                     args.push("stash".to_string());

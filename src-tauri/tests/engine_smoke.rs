@@ -259,3 +259,67 @@ async fn commit_stats_empty_repo_and_two_authors() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// EOL 探针（`mark_eol_only`）：只改行尾的文件标 `eol_only`，真改内容的不标。
+///
+/// 该探针是 status 读取里最贵的一步（两次全树 `git diff`，实测 2.5k
+/// untracked 时占 345ms 中的 188ms），现在按候选路径限定并并发执行。这个
+/// 用例同时守住"限定 pathspec 不改变判定"：候选里既有只改行尾的文件，也有
+/// 真改内容的文件，还有一个带子目录路径（pathspec 走 stdin，不经命令行）。
+#[tokio::test(flavor = "multi_thread")]
+async fn status_flags_eol_only_changes() {
+    let dir = temp_repo();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["config", "user.email", "smoke@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "Smoke"]);
+    // 关掉自动换行转换：blob 里的 LF 必须原样留在工作区，否则没有"只改行尾"。
+    git(&dir, &["config", "core.autocrlf", "false"]);
+
+    std::fs::write(dir.join("crlf.txt"), "one\ntwo\n").unwrap();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("sub/real.txt"), "alpha\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "base"]);
+
+    // 行尾变更（内容相同）+ 真实内容变更 + 未跟踪文件。
+    std::fs::write(dir.join("crlf.txt"), "one\r\ntwo\r\n").unwrap();
+    std::fs::write(dir.join("sub/real.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(dir.join("untracked.txt"), "u\n").unwrap();
+
+    let engine = Arc::new(CliEngine::new(GitProcessRunner::new(60), "git"));
+    let status = engine
+        .status(&dir.display().to_string())
+        .await
+        .expect("status");
+
+    let get = |p: &str| {
+        status
+            .iter()
+            .find(|f| f.path == p)
+            .unwrap_or_else(|| panic!("missing status entry for {p}: {status:?}"))
+    };
+    assert!(get("crlf.txt").eol_only, "CRLF-only change must be flagged");
+    assert!(
+        !get("sub/real.txt").eol_only,
+        "real content change is not EOL-only"
+    );
+    assert!(
+        !get("untracked.txt").eol_only,
+        "untracked entries are never EOL-only"
+    );
+
+    // 同一份工作区再来一次：路径限定分支已被缓存/索引状态考验过一遍。
+    let again = engine
+        .status(&dir.display().to_string())
+        .await
+        .expect("status");
+    assert!(
+        again
+            .iter()
+            .find(|f| f.path == "crlf.txt")
+            .unwrap()
+            .eol_only
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

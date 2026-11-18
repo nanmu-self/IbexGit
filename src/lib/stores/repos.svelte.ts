@@ -30,6 +30,14 @@ export type ViewId = "changes" | "history" | "tags";
  */
 export const REPOS_TAB_ID = "__repos__";
 
+/**
+ * Watcher kinds that can move a ref (see `EventKinds` in the backend):
+ * HEAD moves (commit/checkout/reset → reflog), ref changes (tags/branches),
+ * config (remote add/remove) and merge state (merge/rebase write refs too).
+ * `index` and `worktree` events cannot, so they skip the refs reload.
+ */
+const REFS_CHANGE_KINDS = new Set(["head", "refs", "config", "merge_state"]);
+
 export interface RepoTab {
   /** Backend RepoId (FNV-1a of path, string-serialized on the wire). */
   id: string;
@@ -55,8 +63,22 @@ export interface RepoTab {
   /** Conflicted paths with type + block counts (P8 list badges). */
   conflicts: ConflictSummary[];
   refreshing: boolean;
+  /**
+   * A refresh was requested while one was in flight. Rounds are coalesced
+   * (trailing) rather than dropped: writing then refreshing must never be
+   * swallowed by a watcher-triggered round that started a moment earlier.
+   */
+  refreshPending: boolean;
   /** Last status+branches round trip (SLA 埋点: IPC + re-read portion). */
   lastRefreshMs: number | null;
+  /**
+   * Bumped only when something could have moved refs (HEAD / refs / config /
+   * merge state) or when the tab is (re)activated — *not* on an ordinary
+   * worktree edit. The refs panel keys its reload on this: tags, remotes,
+   * remote branches, stashes and the reflog are five git children, and a
+   * saved file cannot change any of them.
+   */
+  refsEpoch: number;
 }
 
 /** Frontend-facing UI state (serialized via `RepoUiState`, PLAN §4.4). */
@@ -201,7 +223,9 @@ class ReposStore {
         operation: null,
         conflicts: [],
         refreshing: false,
+        refreshPending: false,
         lastRefreshMs: null,
+        refsEpoch: 0,
       });
       if (activate) this.activate(id);
       workspace.touchRecent(resolved, name)
@@ -280,6 +304,9 @@ class ReposStore {
       void this.refresh(id);
     }
     if (this.activeId === id) return;
+    // Entering a tab re-reads its refs: another tab (or the CLI) may have
+    // moved them while this one sat in the background.
+    tab.refsEpoch += 1;
     // Save the outgoing repo's UI state, then swap in the new one's.
     if (this.active) {
       workspace.saveState(this.active.path, this.#toBinding(this.ui)).catch(() => {});
@@ -297,23 +324,42 @@ class ReposStore {
 
   // ===================== data loading / refresh =====================
 
+  /**
+   * Refresh status+branches for one repo.
+   *
+   * Concurrent requests are coalesced instead of dropped: a round that is
+   * already in flight (usually the watcher's, which carries the *pre-write*
+   * state) must not swallow the refresh the caller runs right after its own
+   * write. The queued round starts from the fresh backend cache, so the cost
+   * is one extra round trip in a rare overlap.
+   */
   async refresh(id: string): Promise<void> {
     const tab = this.tabs.find((t) => t.id === id);
-    if (!tab || tab.refreshing) return;
+    if (!tab) return;
+    if (tab.refreshing) {
+      tab.refreshPending = true;
+      return;
+    }
     tab.refreshing = true;
     const t0 = performance.now();
     try {
-      const [files, branches] = await Promise.all([
+      const [files, branches, operation] = await Promise.all([
         git.status(id),
         git.branches(id),
+        // The in-progress-operation banner reads .git marker files (no git
+        // child), so it rides the first batch instead of paying a second
+        // round trip after it.
+        git.operationState(id).catch(() => null),
       ]);
       this.#apply(id, files, branches, performance.now() - t0);
-      // P8: operation state + conflict list piggyback on the refresh
-      // cycle (cheap reads; failures must not break the status refresh).
-      const [operation, conflicts] = await Promise.all([
-        git.operationState(id).catch(() => null),
-        git.conflictList(id).catch(() => []),
-      ]);
+      // P8: conflict details (type + block counts) need the unmerged index
+      // records, i.e. one extra `ls-files -u` child on the backend. Status
+      // already tells us whether any entry is conflicted, and a repo with
+      // none cannot have a conflict summary — so the common refresh stays at
+      // two children instead of spawning a third to learn "nothing".
+      const conflicts = files.some((f) => f.conflict)
+        ? await git.conflictList(id).catch(() => [])
+        : [];
       const t = this.tabs.find((x) => x.id === id);
       if (t) {
         t.operation = operation;
@@ -328,8 +374,46 @@ class ReposStore {
       }
     } finally {
       const t = this.tabs.find((x) => x.id === id);
-      if (t) t.refreshing = false;
+      if (t) {
+        t.refreshing = false;
+        if (t.refreshPending) {
+          t.refreshPending = false;
+          void this.refresh(id);
+        }
+      }
     }
+  }
+
+  /**
+   * Apply a successful commit to the status view immediately.
+   *
+   * git defines the post-commit index as identical to the new HEAD, so no
+   * entry can still be staged — this is a certainty, not a guess. Without it
+   * the staged section keeps the just-committed files on screen until the
+   * watcher's debounce (300 ms, up to 1 s) plus a full re-read lands, which is
+   * exactly what a large working copy makes visible. The refresh that follows
+   * reconciles (hooks may have touched the worktree in the meantime).
+   */
+  applyCommitSuccess(id: string): void {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const next: FileStatus[] = [];
+    for (const f of tab.files) {
+      if (!f.staged || f.conflict) {
+        next.push(f);
+        continue;
+      }
+      // Mixed entry (staged + worktree changes): only the index half is gone.
+      if (f.unstaged || f.untracked) {
+        next.push({
+          ...f,
+          status: f.status.length >= 2 ? `.${f.status.slice(1)}` : f.status,
+          staged: false,
+        });
+      }
+      // A purely staged entry disappears from the list entirely.
+    }
+    tab.files = next;
   }
 
   #apply(id: string, files: FileStatus[], branches: BranchInfo[], ms: number): void {
@@ -547,6 +631,12 @@ class ReposStore {
     // Lazy tabs ignore change events; the first activation re-reads anyway,
     // and the backend keeps serving the probed status from cache.
     if (!tab || !tab.initialized) return;
+    // Ref data (tags / remotes / remote branches / stash / reflog) can only be
+    // affected by these kinds — a worktree or index event cannot move a ref,
+    // and re-reading it would mean five extra git children per saved file.
+    if (payload.kinds.some((k) => REFS_CHANGE_KINDS.has(k))) {
+      tab.refsEpoch += 1;
+    }
     const t0 = performance.now();
     await this.refresh(tab.id);
     // SLA 埋点 (PLAN §4.3): IPC + re-read portion of the end-to-end budget;

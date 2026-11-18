@@ -64,6 +64,12 @@ impl EventKinds {
 pub struct RepoEvent {
     pub repo_id: RepoId,
     pub kinds: EventKinds,
+    /// Observation instant of the **newest** raw event folded into this
+    /// batch (the debounce tail means it is at least one window old). The
+    /// invalidator compares it against its last status read: a read that
+    /// started after this instant already reflects every change in the
+    /// batch, so re-reading would just recompute the same answer.
+    pub observed_at: Instant,
 }
 
 /// Typed event delivered to the frontend after an invalidation cycle
@@ -282,6 +288,9 @@ async fn debounce_loop(
             return; // watcher dropped → raw channel closed
         };
         let started = Instant::now();
+        // Newest raw observation in this batch — carried to the invalidator so
+        // it can tell "a read already covers this" from "this is newer".
+        let mut observed_at = started;
         let cap = started + max;
         let mut deadline = started + window;
         loop {
@@ -310,6 +319,7 @@ async fn debounce_loop(
                 Step::More(k) => {
                     kinds |= k;
                     let now = Instant::now();
+                    observed_at = now;
                     deadline = deadline.max(now + window).min(cap);
                 }
                 Step::Closed => return,
@@ -322,7 +332,11 @@ async fn debounce_loop(
             sla = "debounce",
             "consolidated change event"
         );
-        let _ = tx.send(RepoEvent { repo_id, kinds });
+        let _ = tx.send(RepoEvent {
+            repo_id,
+            kinds,
+            observed_at,
+        });
     }
 }
 

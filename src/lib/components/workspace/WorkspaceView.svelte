@@ -434,6 +434,9 @@
     commitBusy = true;
     try {
       const res = await git.commit(id, message, amend, noVerify);
+      // 提交后 index 与 HEAD 一致：暂存条目此刻必然为空。立刻生效，不等
+      // watcher 防抖 + 全量重读（大工作区下会有一段肉眼可见的滞留）。
+      repos.applyCommitSuccess(id);
       // 操作模式提交（merge/cherry-pick/revert）给专属完成提示，普通提交
       // 保持原样——否则用户不清楚遴选序列是否已收尾。
       const mode = commitMode;

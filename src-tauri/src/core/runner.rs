@@ -243,6 +243,11 @@ pub struct RawResult {
     pub stdout: Vec<u8>,
     pub stderr: String,
     pub duration_ms: u64,
+    /// Portion of `duration_ms` spent creating the process before the child
+    /// ran (CreateProcess + job assignment + resume). Split out because on
+    /// Windows this is the dominant per-call cost and it's the thing worth
+    /// tuning — the git work itself is often a few milliseconds.
+    pub spawn_ms: u64,
 }
 
 /// 对单个参数做凭据脱敏：`scheme://user:secret@host` → `scheme://***@host`。
@@ -311,6 +316,7 @@ fn log_exit(program: &str, res: &Result<RawResult, AppError>) {
                 tracing::debug!(
                     program = %program,
                     ms = out.duration_ms,
+                    spawn_ms = out.spawn_ms,
                     stdout_bytes = out.stdout.len(),
                     stderr_bytes = out.stderr.len(),
                     "git done"
@@ -661,6 +667,7 @@ impl GitProcessRunner {
         let mut child = TreeChild::spawn(cmd)
             .await
             .map_err(|e| RunnerError::Spawn(e.to_string()))?;
+        let spawn_ms = started_at.elapsed().as_millis() as u64;
 
         // Feed mode: write once, then close. Feeding runs concurrently so a
         // large payload cannot deadlock on a full pipe; if the overall
@@ -761,6 +768,7 @@ impl GitProcessRunner {
                     stdout: output.stdout,
                     stderr,
                     duration_ms: started_at.elapsed().as_millis() as u64,
+                    spawn_ms,
                 })
             }
         }

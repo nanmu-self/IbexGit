@@ -20,11 +20,12 @@
   const active = $derived(repos.active);
   const tags = $derived(refsData.tags);
 
-  // Keep the shared refs data fresh (repo switch + watcher refresh).
+  // Keep the shared refs data fresh (repo switch + ref-moving events only —
+  // see `refsEpoch`; a worktree save must not re-read five git children).
   let lastRefreshMark: number | null = null;
   $effect(() => {
     const id = repos.activeId;
-    const mark = active?.lastRefreshMs ?? null;
+    const mark = active?.refsEpoch ?? null;
     if (id === null) return;
     if (mark !== lastRefreshMark) {
       lastRefreshMark = mark;

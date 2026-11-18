@@ -22,14 +22,105 @@ const MAX_CACHED_DIFFS: u32 = 8;
 ///
 /// [`tokio::sync::Mutex`] is FIFO-fair, so the gate doubles as an ordered
 /// operation queue: whoever requests next runs next.
-#[derive(Clone, Debug, Default)]
+///
+/// The gate also owns "写后失效" (PLAN §4.3, [`Self::mark_dirty`]): when the
+/// last holder of a mutating operation drops its guard, the repository's
+/// display cache is discarded. Without it, a caller that refreshes right after
+/// its own write would read the *pre-write* snapshot — the cache is otherwise
+/// only dropped when the watcher's debounced event finally lands
+/// (300 ms–1 s later, plus a full re-read).
+#[derive(Clone, Debug)]
 pub struct WriteGate {
-    inner: Arc<Mutex<()>>,
+    repo_id: RepoId,
+    inner: Arc<WriteGateInner>,
+    sessions: Arc<Mutex<HashMap<RepoId, Session>>>,
+}
+
+#[derive(Debug)]
+struct WriteGateInner {
+    lock: Mutex<()>,
 }
 
 impl WriteGate {
-    pub async fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.inner.lock().await
+    fn new(repo_id: RepoId, sessions: Arc<Mutex<HashMap<RepoId, Session>>>) -> Self {
+        Self {
+            repo_id,
+            inner: Arc::new(WriteGateInner {
+                lock: Mutex::new(()),
+            }),
+            sessions,
+        }
+    }
+
+    /// Enter the gate. Dropping the returned guard makes the caches stale
+    /// *before* the command's response reaches the caller.
+    pub async fn lock(&self) -> WriteGuard<'_> {
+        let guard = self.inner.lock.lock().await;
+        WriteGuard {
+            gate: self,
+            _guard: guard,
+        }
+    }
+
+    /// Wait until no mutating operation is in flight, **without** touching the
+    /// display cache (unlike [`Self::lock`], whose guard marks it dirty).
+    ///
+    /// The watcher's host loop uses this so its invalidation never races our
+    /// own write. An fs event caused by `git commit` lands while the commit is
+    /// usually still running (debounce 300 ms ≈ commit duration); re-reading
+    /// there competes with git for the index and its result is discarded
+    /// moments later when the write guard bumps the generation (measured: a
+    /// 276 ms commit grew to 637 ms, and the read itself was thrown away).
+    pub async fn wait_idle(&self) {
+        // FIFO-fair: this also queues behind writers that are already waiting,
+        // so we observe the queue drained rather than a single gap.
+        let _idle = self.inner.lock.lock().await;
+    }
+
+    /// Discard the display cache after a write.
+    ///
+    /// It only *drops* state — never fills it — so the direction of truth
+    /// (`.git` → cache) is unchanged: the next read must go to git. That is
+    /// why this is not the "内部写操作快速通道" the project forbids: nothing is
+    /// written ahead of the watcher, the stale window is merely cut short.
+    fn mark_dirty(&self) {
+        let sessions = self.sessions.clone();
+        let id = self.repo_id;
+        // The write finished *now*: everything read before this instant may
+        // predate it, so stamp it and let `status` discard superseded reads.
+        let now = Instant::now();
+        // Fast path: the lock is only ever held for a map lookup or a cache
+        // store, so contention is rare and never worth blocking a command's
+        // return on.
+        let Ok(mut map) = sessions.try_lock() else {
+            let Ok(handle) = tokio::runtime::Handle::try_current() else {
+                return; // no runtime: the watcher's invalidation still covers us
+            };
+            handle.spawn(async move {
+                let mut map = sessions.lock().await;
+                if let Some(s) = map.get_mut(&id) {
+                    s.last_change_at = Some(now);
+                    bump_generation(s);
+                }
+            });
+            return;
+        };
+        if let Some(s) = map.get_mut(&id) {
+            s.last_change_at = Some(now);
+            bump_generation(s);
+        }
+    }
+}
+
+/// Guard for a mutating operation; see [`WriteGate::mark_dirty`].
+pub struct WriteGuard<'a> {
+    gate: &'a WriteGate,
+    _guard: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl Drop for WriteGuard<'_> {
+    fn drop(&mut self) {
+        self.gate.mark_dirty();
     }
 }
 
@@ -85,6 +176,15 @@ pub const GRAPH_BATCH: u32 = 500;
 struct Session {
     generation: u64,
     status: Option<StatusSnapshot>,
+    /// Latest instant at which this repository's state is known to have
+    /// changed: a watcher event's observation time, or the completion of one
+    /// of our own writes (`WriteGate` guard drop). A status read that started
+    /// before it may have raced the change; one that started after it did not.
+    last_change_at: Option<Instant>,
+    /// Start instant of the most recent `status` read (hit or miss). Lets an
+    /// invalidation skip the speculative re-read when this read is already
+    /// newer than the event that triggered it.
+    last_read_started: Option<Instant>,
     /// Monotonic DiffModel id source (never reused within a session).
     next_diff_id: u32,
     /// Cached DiffModels for line-level operations (PLAN P4 同源保证):
@@ -106,6 +206,32 @@ struct CachedGraph {
     state: LayoutState,
     /// `git log` exhausted (no further batches).
     complete: bool,
+}
+
+/// Bump the display-cache generation and drop every cached artifact.
+/// Returns the new generation.
+fn bump_generation(s: &mut Session) -> u64 {
+    bump_generation_keeping(s, false)
+}
+
+/// [`bump_generation`] with the option to *keep* the status snapshot.
+///
+/// `keep_status` is passed when the snapshot provably already reflects the
+/// change that triggered this invalidation (it was read after the newest fs
+/// event). The generation still moves on: the graph cache is keyed by it and
+/// a refs change must rebuild the graph even though the file list is current.
+fn bump_generation_keeping(s: &mut Session, keep_status: bool) -> u64 {
+    s.generation += 1;
+    if !keep_status {
+        s.status = None;
+    }
+    // DiffModels describe a point-in-time state; after any change they are
+    // suspect and must not feed line-level patches.
+    s.diffs.clear();
+    // Graph cache key = refs generation → any event rebuilds (v1
+    // 失效即全量重算).
+    s.graph = None;
+    s.generation
 }
 
 /// A queued operation (serialized per-repo).
@@ -186,7 +312,14 @@ impl RepoManager {
                 path: id.0.to_string(),
             });
         }
-        Ok(self.gates.lock().await.entry(id).or_default().clone())
+        let gate = self
+            .gates
+            .lock()
+            .await
+            .entry(id)
+            .or_insert_with(|| WriteGate::new(id, self.sessions.clone()))
+            .clone();
+        Ok(gate)
     }
 
     /// Permit for one read-only git operation; caps global parallelism.
@@ -238,24 +371,50 @@ impl RepoManager {
     /// Invalidate caches after an fs event (external or our own writes), then
     /// re-read status (PLAN §4.3: 失效 → 防抖重读). Returns the new generation,
     /// or `None` for unknown repositories.
-    pub async fn invalidate(&self, id: RepoId, kinds: EventKinds) -> Option<u64> {
+    ///
+    /// `observed_at` is the newest raw observation folded into this event
+    /// batch. The 防抖重读 is *speculative* — it only exists to warm the cache
+    /// before the frontend asks — so it is skipped when a status read that
+    /// started after `observed_at` is already in flight or already cached:
+    /// that read is at least as fresh as the re-read would be, and repeating
+    /// it doubles the `git status` cost on exactly the path that matters
+    /// (write → 前端刷新 → watcher 尾巴 event，大仓库下每次 ~300–1000 ms).
+    pub async fn invalidate(
+        &self,
+        id: RepoId,
+        kinds: EventKinds,
+        observed_at: Instant,
+    ) -> Option<u64> {
         let path = {
             let repos = self.repos.lock().await;
             repos.get(&id)?.clone()
         };
-        let generation = {
+        let (generation, covered) = {
             let mut sessions = self.sessions.lock().await;
             let s = sessions.entry(id).or_default();
-            s.generation += 1;
-            s.status = None;
-            // DiffModels describe a point-in-time state; after any change
-            // they are suspect and must not feed line-level patches.
-            s.diffs.clear();
-            // Graph cache key = refs generation → any event rebuilds (v1
-            // 失效即全量重算).
-            s.graph = None;
-            s.generation
+            // Never move the watermark backwards: a self-write completion can
+            // be newer than the fs event that is only now reaching us.
+            let prev = s.last_change_at;
+            s.last_change_at = Some(match prev {
+                Some(p) if p > observed_at => p,
+                _ => observed_at,
+            });
+            let covered = s
+                .last_read_started
+                .is_some_and(|started| started > observed_at);
+            let keep_status = covered && s.status.is_some();
+            (bump_generation_keeping(s, keep_status), covered)
         };
+        if covered {
+            tracing::debug!(
+                repo = id.0,
+                ?kinds,
+                generation,
+                sla = "invalidate",
+                "cache invalidated; re-read skipped (a read already covers this event)"
+            );
+            return Some(generation);
+        }
         tracing::debug!(
             repo = id.0,
             ?kinds,
@@ -278,6 +437,10 @@ impl RepoManager {
                 );
                 let mut sessions = self.sessions.lock().await;
                 if let Some(s) = sessions.get_mut(&id) {
+                    // This read starts *after* the event, so it covers it —
+                    // record it even if a newer invalidation supersedes the
+                    // snapshot below.
+                    s.last_read_started = Some(started);
                     // Only store if no newer invalidation happened meanwhile.
                     if s.generation == generation {
                         s.status = Some(StatusSnapshot {
@@ -302,19 +465,22 @@ impl RepoManager {
     /// Repository status with display-cache fast path (读取即校验版本：
     /// the cache is dropped on every change event, so a hit implies freshness).
     pub async fn status(&self, id: RepoId) -> Result<Vec<FileStatus>, AppError> {
-        {
-            let sessions = self.sessions.lock().await;
-            if let Some(snap) = sessions.get(&id).and_then(|s| s.status.as_ref()) {
+        let started = Instant::now();
+        let generation = {
+            let mut sessions = self.sessions.lock().await;
+            let s = sessions.entry(id).or_default();
+            if let Some(snap) = s.status.as_ref() {
                 return Ok(snap.status.clone());
             }
-        }
+            s.last_read_started = Some(started);
+            s.generation
+        };
         let path = self
             .get_path(id)
             .await
             .ok_or_else(|| AppError::InvalidRepo {
                 path: id.0.to_string(),
             })?;
-        let started = Instant::now();
         let status = self.engine.status(&path.display().to_string()).await?;
         let duration_ms = started.elapsed().as_millis() as u64;
         tracing::debug!(
@@ -325,11 +491,19 @@ impl RepoManager {
         );
         let mut sessions = self.sessions.lock().await;
         let s = sessions.entry(id).or_default();
-        s.status = Some(StatusSnapshot {
-            generation: s.generation,
-            duration_ms,
-            status: status.clone(),
-        });
+        // A change newer than this read means the result may predate it (we
+        // read while git was rewriting the index, or a write landed mid-read):
+        // serve it to the caller but never cache it — the next read retries
+        // instead of pinning a stale snapshot under the current generation.
+        let superseded =
+            s.generation != generation && s.last_change_at.is_some_and(|t| t > started);
+        if !superseded {
+            s.status = Some(StatusSnapshot {
+                generation: s.generation,
+                duration_ms,
+                status: status.clone(),
+            });
+        }
         Ok(status)
     }
 
@@ -490,6 +664,24 @@ mod tests {
     /// Minimal in-memory engine: counts status calls, fails everything else.
     struct MockEngine {
         status_calls: AtomicUsize,
+        /// Artificial `git status` latency, for read/write race tests.
+        status_delay: Option<std::time::Duration>,
+    }
+
+    impl MockEngine {
+        fn new() -> Self {
+            Self {
+                status_calls: AtomicUsize::new(0),
+                status_delay: None,
+            }
+        }
+
+        fn slow(delay: std::time::Duration) -> Self {
+            Self {
+                status_calls: AtomicUsize::new(0),
+                status_delay: Some(delay),
+            }
+        }
     }
 
     fn err(feature: &str) -> AppError {
@@ -513,6 +705,9 @@ mod tests {
 
         async fn status(&self, _repo: &str) -> Result<Vec<FileStatus>, AppError> {
             self.status_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(d) = self.status_delay {
+                tokio::time::sleep(d).await;
+            }
             Ok(vec![FileStatus {
                 path: "a.txt".into(),
                 status: ".M".into(),
@@ -899,9 +1094,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_caches_until_invalidation() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
         let dir = temp_repo();
         let id = mgr.open(dir.clone()).await.unwrap();
@@ -913,8 +1106,12 @@ mod tests {
         assert_eq!(s1, s2);
         assert_eq!(engine.status_calls.load(Ordering::SeqCst), 1);
 
-        // Invalidation re-reads immediately (防抖重读) → call 2.
-        let gen = mgr.invalidate(id, EventKinds::INDEX).await.unwrap();
+        // Invalidation re-reads immediately (防抖重读) → call 2. `observed_at`
+        // is *now*, i.e. newer than the read above, so nothing covers it.
+        let gen = mgr
+            .invalidate(id, EventKinds::INDEX, Instant::now())
+            .await
+            .unwrap();
         assert_eq!(gen, 1);
         assert_eq!(engine.status_calls.load(Ordering::SeqCst), 2);
 
@@ -924,7 +1121,10 @@ mod tests {
         assert_eq!(engine.status_calls.load(Ordering::SeqCst), 2);
 
         // Generation monotonically increases per event.
-        let gen2 = mgr.invalidate(id, EventKinds::WORKTREE).await.unwrap();
+        let gen2 = mgr
+            .invalidate(id, EventKinds::WORKTREE, Instant::now())
+            .await
+            .unwrap();
         assert_eq!(gen2, 2);
         assert_eq!(engine.status_calls.load(Ordering::SeqCst), 3);
 
@@ -932,23 +1132,157 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 写后失效（PLAN §4.3）：写命令返回后缓存必然是脏的，下一次 status
+    /// 必须穿透到 git —— 否则调用方紧随其后的刷新会读到写前的快照，直到
+    /// watcher 防抖（300ms–1s）+ 全量重读才纠正（大仓库下肉眼可见）。
+    #[tokio::test]
+    async fn write_gate_drops_status_cache_on_guard_drop() {
+        let engine = Arc::new(MockEngine::new());
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+
+        let _ = mgr.status(id).await.unwrap(); // cold read → cached
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 1);
+
+        let gate = mgr.write_gate(id).await.unwrap();
+        {
+            let _guard = gate.lock().await;
+            // Inside the gate the pre-write cache is still served (a write
+            // does not have to pay for a read it may not need).
+            let _ = mgr.status(id).await.unwrap();
+            assert_eq!(engine.status_calls.load(Ordering::SeqCst), 1);
+        } // guard dropped → cache invalidated
+
+        let _ = mgr.status(id).await.unwrap();
+        assert_eq!(
+            engine.status_calls.load(Ordering::SeqCst),
+            2,
+            "post-write read must penetrate to git, not serve the old snapshot"
+        );
+
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 预读是投机性的（只为在 frontend 问之前把缓存焐热）：事件早于上一次
+    /// 读取起点时，重读只会得到同一个答案。这正是"提交 → 前端刷新 → watcher
+    /// 尾巴事件"的时序 —— 大仓库下重读是 300–1000 ms 的一次全量扫描。
+    #[tokio::test]
+    async fn invalidation_skips_reread_when_read_postdates_event() {
+        let engine = Arc::new(MockEngine::new());
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+
+        // Debounce 观测到的最后事件（早于下面的读取）.
+        let event_at = Instant::now() - std::time::Duration::from_millis(5);
+        let _ = mgr.status(id).await.unwrap();
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 1);
+
+        let gen = mgr
+            .invalidate(id, EventKinds::INDEX, event_at)
+            .await
+            .unwrap();
+        assert_eq!(gen, 1, "generation still moves (graph cache keys on it)");
+        assert_eq!(
+            engine.status_calls.load(Ordering::SeqCst),
+            1,
+            "snapshot post-dates the event — the re-read would be redundant"
+        );
+
+        // 快照被保留 → 前端紧随其后的刷新命中缓存。
+        let _ = mgr.status(id).await.unwrap();
+        assert_eq!(engine.status_calls.load(Ordering::SeqCst), 1);
+
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 提交后的真实时序：前端刷新先发起读取，watcher 的尾巴事件晚到但
+    /// *观测时刻早于*这次读取。此时既不该预读，也不能把在途结果丢掉 ——
+    /// 否则前端会紧接着再扫一次全量 `git status`。
+    #[tokio::test]
+    async fn in_flight_read_covers_a_late_event() {
+        let engine = Arc::new(MockEngine::slow(std::time::Duration::from_millis(120)));
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+
+        let event_at = Instant::now() - std::time::Duration::from_millis(5);
+        let reader = {
+            let mgr = mgr.clone();
+            tokio::spawn(async move { mgr.status(id).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+        let gen = mgr
+            .invalidate(id, EventKinds::INDEX, event_at)
+            .await
+            .unwrap();
+        assert_eq!(gen, 1);
+        assert_eq!(
+            engine.status_calls.load(Ordering::SeqCst),
+            1,
+            "in-flight read started after the event → no speculative re-read"
+        );
+
+        reader.await.unwrap().unwrap();
+        let _ = mgr.status(id).await.unwrap();
+        assert_eq!(
+            engine.status_calls.load(Ordering::SeqCst),
+            1,
+            "the in-flight read must be accepted, not discarded"
+        );
+
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 读与写竞争：读取在写结束前开始，可能读到 index 的中间状态，结果
+    /// 不得入缓存 —— 否则写后失效会被一次"看似成功"的写入抹掉。
+    #[tokio::test]
+    async fn read_racing_a_write_is_not_cached() {
+        let engine = Arc::new(MockEngine::slow(std::time::Duration::from_millis(120)));
+        let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
+        let dir = temp_repo();
+        let id = mgr.open(dir.clone()).await.unwrap();
+
+        let reader = {
+            let mgr = mgr.clone();
+            tokio::spawn(async move { mgr.status(id).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        {
+            let gate = mgr.write_gate(id).await.unwrap();
+            let _guard = gate.lock().await;
+        } // 写结束 → mark_dirty 把 last_change_at 推到"现在"
+
+        reader.await.unwrap().unwrap();
+        let _ = mgr.status(id).await.unwrap();
+        assert_eq!(
+            engine.status_calls.load(Ordering::SeqCst),
+            2,
+            "a read that started before the write must not seed the cache"
+        );
+
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn invalidate_unknown_repo_returns_none() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
         assert!(mgr
-            .invalidate(RepoId(999), EventKinds::INDEX)
+            .invalidate(RepoId(999), EventKinds::INDEX, Instant::now())
             .await
             .is_none());
     }
 
     #[tokio::test]
     async fn write_gate_serializes_and_rejects_unknown_repo() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
         assert!(mgr.write_gate(RepoId(42)).await.is_err());
 
@@ -1044,11 +1378,78 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 回归（P10 提交体验）：提交后立刻读 status 必须是提交后的状态。
+    ///
+    /// 没有写后失效时，这里会命中提交前的快照（暂存条目还在），前端只能
+    /// 等 watcher 防抖 + 全量重读才清空暂存区——大工作区下肉眼可见。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn commit_then_status_is_immediately_post_commit() {
+        use crate::core::engine::CliEngine;
+        use crate::core::runner::GitProcessRunner;
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join(format!(
+            "ibexgit-commit-status-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@t"],
+            vec!["config", "user.name", "t"],
+        ] {
+            assert!(Command::new("git")
+                .args(&args)
+                .current_dir(&dir)
+                .status()
+                .expect("git available")
+                .success());
+        }
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+
+        let engine: Arc<dyn GitEngine> = Arc::new(CliEngine::new(GitProcessRunner::new(60), "git"));
+        let mgr = RepoManager::new(engine);
+        let id = mgr.open(dir.clone()).await.unwrap();
+        let root = dir.display().to_string();
+
+        // 暂存（写命令区间）→ 读一次 status（缓存里留下「1 个已暂存」）。
+        {
+            let gate = mgr.write_gate(id).await.unwrap();
+            let _guard = gate.lock().await;
+            mgr.engine()
+                .stage(&root, &["a.txt".to_string()])
+                .await
+                .unwrap();
+        }
+        let staged = mgr.status(id).await.unwrap();
+        assert_eq!(staged.len(), 1, "file should be staged before commit");
+
+        // 提交（同一写闸门）→ 命令返回后立刻读。
+        {
+            let gate = mgr.write_gate(id).await.unwrap();
+            let _guard = gate.lock().await;
+            mgr.engine()
+                .commit(&root, "first", false, false)
+                .await
+                .unwrap();
+        }
+        let after = mgr.status(id).await.unwrap();
+        assert!(
+            after.is_empty(),
+            "status after commit must be empty (staged cleared), got {after:?}"
+        );
+
+        mgr.close(id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn read_permit_caps_parallelism() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
         let mut permits = Vec::new();
         for _ in 0..MAX_CONCURRENT_READS {
@@ -1072,9 +1473,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_drops_session_cache() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine.clone() as Arc<dyn GitEngine>);
         let dir = temp_repo();
         let id = mgr.open(dir.clone()).await.unwrap();
@@ -1089,9 +1488,7 @@ mod tests {
 
     #[tokio::test]
     async fn diff_cache_assigns_ids_and_expires_on_invalidate() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
         let dir = temp_repo();
         let id = mgr.open(dir.clone()).await.unwrap();
@@ -1111,7 +1508,9 @@ mod tests {
         assert!(mgr.get_diff(id, 1).await.is_ok());
 
         // Invalidation clears cached models (同源保证).
-        mgr.invalidate(id, EventKinds::WORKTREE).await.unwrap();
+        mgr.invalidate(id, EventKinds::WORKTREE, Instant::now())
+            .await
+            .unwrap();
         assert!(matches!(
             mgr.get_diff(id, 1).await,
             Err(AppError::DiffModelExpired)
@@ -1121,9 +1520,7 @@ mod tests {
 
     #[tokio::test]
     async fn diff_cache_evicts_oldest_beyond_cap() {
-        let engine = Arc::new(MockEngine {
-            status_calls: AtomicUsize::new(0),
-        });
+        let engine = Arc::new(MockEngine::new());
         let mgr = RepoManager::new(engine as Arc<dyn GitEngine>);
         let dir = temp_repo();
         let id = mgr.open(dir.clone()).await.unwrap();

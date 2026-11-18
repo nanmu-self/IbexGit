@@ -78,11 +78,13 @@
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  // Reload refs data when the repo changes or after a watcher refresh.
+  // Reload refs data on repo switch or when an event could have moved a ref.
+  // Keyed on `refsEpoch`, not `lastRefreshMs`: the latter ticks on every
+  // worktree save, and each reload costs five git children.
   let lastRefreshMark: number | null = null;
   $effect(() => {
     const id = repos.activeId;
-    const mark = repos.active?.lastRefreshMs ?? null;
+    const mark = repos.active?.refsEpoch ?? null;
     if (id === null) return;
     if (mark !== lastRefreshMark) {
       lastRefreshMark = mark;
