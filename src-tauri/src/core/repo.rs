@@ -959,6 +959,7 @@ mod tests {
             _: Option<&str>,
             _: Option<&str>,
             _: Option<&str>,
+            _: bool,
         ) -> Result<PullResult, AppError> {
             Err(err("pull"))
         }
@@ -969,6 +970,7 @@ mod tests {
             &self,
             _: &str,
             _: &str,
+            _: bool,
             _: bool,
         ) -> Result<crate::core::engine::MergeResult, AppError> {
             Err(err("merge"))

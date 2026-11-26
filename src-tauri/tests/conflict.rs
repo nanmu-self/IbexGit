@@ -506,7 +506,7 @@ async fn pull_conflict_resolves_like_merge() {
     let feature_head = git(&dir, &["rev-parse", "feature"]);
 
     let res = engine
-        .pull(&path, Some("."), Some("feature"), None)
+        .pull(&path, Some("."), Some("feature"), None, false)
         .await
         .unwrap();
     assert!(!res.success, "pull must conflict");

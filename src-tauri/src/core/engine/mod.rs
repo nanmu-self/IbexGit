@@ -778,12 +778,16 @@ pub trait GitEngine: Send + Sync {
     ) -> Result<(), AppError>;
     /// Pull with an explicit mode: `None`/"merge" → default merge,
     /// `"rebase"` → `--rebase`, `"ff_only"` → `--ff-only` (P6 策略选择).
+    /// `allow_unrelated_histories` 透传 `--allow-unrelated-histories`：远端
+    /// 主分支常由网页端初始化（首个提交与本地根不同），两边 merge_base 为
+    /// null 时普通 merge/pull 直接 fatal，必须有这个开关才能打通推回链路。
     async fn pull(
         &self,
         repo: &str,
         remote: Option<&str>,
         branch: Option<&str>,
         mode: Option<&str>,
+        allow_unrelated_histories: bool,
     ) -> Result<PullResult, AppError>;
     async fn rebase(
         &self,
@@ -793,8 +797,15 @@ pub trait GitEngine: Send + Sync {
     ) -> Result<RebaseState, AppError>;
     /// Merge `target` into the current branch; `ff_only` refuses to create
     /// a merge commit (P6 dry-run 预览由前端 rev-list 提供).
-    async fn merge(&self, repo: &str, target: &str, ff_only: bool)
-        -> Result<MergeResult, AppError>;
+    /// `allow_unrelated_histories` 透传 `--allow-unrelated-histories`，场景
+    /// 同 `pull`：merge_base 为 null 的两端只有带上它才能合并。
+    async fn merge(
+        &self,
+        repo: &str,
+        target: &str,
+        ff_only: bool,
+        allow_unrelated_histories: bool,
+    ) -> Result<MergeResult, AppError>;
 
     // Clone / Init (P7)
     /// Clone a remote repository (P7 克隆对话框)。Runs **without** `-C`

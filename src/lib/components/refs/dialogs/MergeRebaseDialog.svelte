@@ -26,11 +26,19 @@
     repoId: string | null;
     busy?: boolean;
     /** Returns a promise; the dialog closes only on success. */
-    onexecute: (mode: "merge" | "rebase", target: string, ffOnly: boolean) => Promise<void>;
+    onexecute: (
+      mode: "merge" | "rebase",
+      target: string,
+      ffOnly: boolean,
+      allowUnrelatedHistories: boolean
+    ) => Promise<void>;
   } = $props();
 
   let target = $state("");
   let ffOnly = $state(false);
+  /** merge_base 为 null（远端由网页端初始化等）：merge 必须带
+   *  --allow-unrelated-histories，否则 git 直接 fatal。预检后自动置位。 */
+  let unrelated = $state(false);
   let preview = $state<CommitInfo[] | null>(null);
   let previewLoading = $state(false);
 
@@ -38,30 +46,50 @@
     if (open) {
       target = initialTarget;
       ffOnly = false;
+      unrelated = false;
       preview = null;
     }
   });
 
-  // Dry-run preview: the commits the operation will bring in / replay.
+  // Dry-run preview: the commits the operation will bring in / replay。
+  // merge 模式顺带预检 merge_base：null → 提示横幅 + 自动带 flag（rebase
+  // 不支持不相关历史，无需预检）。
   $effect(() => {
     const tgt = target.trim();
     if (!open || !tgt || tgt === currentBranch) {
       preview = null;
+      unrelated = false;
       return;
     }
     previewLoading = true;
     const range = mode === "merge" ? `HEAD..${tgt}` : `${tgt}..HEAD`;
-    git
-      .revList(repoId ?? "", range, 50, 0)
-      .then((c) => (preview = c))
-      .catch(() => (preview = null))
-      .finally(() => (previewLoading = false));
+    const id = repoId ?? "";
+    let compare: Promise<void> = Promise.resolve();
+    if (mode === "merge" && currentBranch) {
+      compare = git
+        .branchCompare(id, currentBranch, tgt)
+        .then((c) => {
+          unrelated = c.merge_base === null;
+        })
+        .catch(() => {
+          unrelated = false;
+        });
+    } else {
+      unrelated = false;
+    }
+    Promise.all([
+      git
+        .revList(id, range, 50, 0)
+        .then((c) => (preview = c))
+        .catch(() => (preview = null)),
+      compare,
+    ]).finally(() => (previewLoading = false));
   });
 
   async function submit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
     try {
-      await onexecute(mode, target.trim(), ffOnly);
+      await onexecute(mode, target.trim(), ffOnly, mode === "merge" && unrelated);
       open = false;
     } catch (e) {
       normalizeError(e);
@@ -117,6 +145,11 @@
       {/if}
 
       {#if mode === "merge"}
+        {#if unrelated}
+          <p class="rounded-md bg-warning-surface px-2.5 py-2 text-xs text-warning dark:text-warning">
+            {t("refs.merge.unrelated")}
+          </p>
+        {/if}
         <label class="flex items-center gap-2 text-[13px]">
           <input type="checkbox" bind:checked={ffOnly} class="size-4" />
           {t("refs.merge.ffOnly")}

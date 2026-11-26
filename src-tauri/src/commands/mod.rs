@@ -1181,6 +1181,8 @@ pub async fn git_fetch(
 }
 
 /// Pull with an explicit strategy: merge (default) / rebase / ff_only.
+/// `allow_unrelated_histories` 由前端在 merge_base 为 null 时置位（对话框
+/// 预检提示后透传，见 MergeRebaseDialog/PullDialog）。
 #[tauri::command]
 #[specta::specta]
 pub async fn git_pull(
@@ -1188,6 +1190,7 @@ pub async fn git_pull(
     remote: Option<String>,
     branch: Option<String>,
     mode: Option<String>,
+    allow_unrelated_histories: bool,
     repos: State<'_, RepoManager>,
     tasks: State<'_, TaskManager>,
 ) -> Result<crate::core::engine::PullResult, AppError> {
@@ -1200,11 +1203,25 @@ pub async fn git_pull(
         (None, Some(b)) => b.to_string(),
         (None, None) => "upstream".to_string(),
     };
-    let desc = format!("pull {refspec} ({})", mode.as_deref().unwrap_or("merge"));
+    let desc = format!(
+        "pull {refspec} ({}{})",
+        mode.as_deref().unwrap_or("merge"),
+        if allow_unrelated_histories {
+            ", unrelated"
+        } else {
+            ""
+        }
+    );
     let task = begin_task(&tasks, "pull", Some(id.0.to_string()), desc).await;
     let result = repos
         .engine()
-        .pull(&path, remote.as_deref(), branch.as_deref(), mode.as_deref())
+        .pull(
+            &path,
+            remote.as_deref(),
+            branch.as_deref(),
+            mode.as_deref(),
+            allow_unrelated_histories,
+        )
         .await;
     tasks.complete(task, result.as_ref().err().cloned()).await;
     result
@@ -1258,19 +1275,25 @@ pub async fn git_push(
 }
 
 /// Merge `target` into the current branch. Conflicts surface as git errors
-/// (toast) — the visual conflict flow is P8.
+/// (toast) — the visual conflict flow is P8. `allow_unrelated_histories`
+/// 用于 merge_base 为 null 的两端（远端由网页端初始化的仓库，见
+/// MergeRebaseDialog 的预检提示）。
 #[tauri::command]
 #[specta::specta]
 pub async fn git_merge(
     id: RepoId,
     target: String,
     ff_only: bool,
+    allow_unrelated_histories: bool,
     repos: State<'_, RepoManager>,
 ) -> Result<crate::core::engine::MergeResult, AppError> {
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
-    repos.engine().merge(&path, &target, ff_only).await
+    repos
+        .engine()
+        .merge(&path, &target, ff_only, allow_unrelated_histories)
+        .await
 }
 
 #[tauri::command]

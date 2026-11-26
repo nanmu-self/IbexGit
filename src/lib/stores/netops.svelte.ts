@@ -85,13 +85,14 @@ export function runPull(
   id: RepoId,
   remote: string | null,
   branch: string | null,
-  mode: "merge" | "rebase" | "ff_only" | null
+  mode: "merge" | "rebase" | "ff_only" | null,
+  allowUnrelatedHistories = false
 ): Promise<void> {
   return runOp(
     id,
     "pull",
     async () => {
-      const res = await git.pull(id, remote, branch, mode);
+      const res = await git.pull(id, remote, branch, mode, allowUnrelatedHistories);
       await repos.refresh(id);
       if (res.success) {
         showToast("success", t("netops.pullDone"));
@@ -104,7 +105,7 @@ export function runPull(
       if (err.code === "dirty_worktree") {
         giterr.retry = () => {
           giterr.close();
-          return runPull(id, remote, branch, mode);
+          return runPull(id, remote, branch, mode, allowUnrelatedHistories);
         };
       }
     }

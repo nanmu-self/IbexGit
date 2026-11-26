@@ -511,11 +511,16 @@
 
   let pullOpen = $state(false);
 
-  function doPull(remote: string | null, branch: string | null, mode: string): void {
+  function doPull(
+    remote: string | null,
+    branch: string | null,
+    mode: string,
+    allowUnrelatedHistories: boolean
+  ): void {
     const id = repoId;
     if (id === null) return;
     pullOpen = false;
-    void runPull(id, remote, branch, mode as "merge" | "rebase" | "ff_only")
+    void runPull(id, remote, branch, mode as "merge" | "rebase" | "ff_only", allowUnrelatedHistories)
       .then(() => loadRefsData(id))
       .catch(() => {});
   }
@@ -528,13 +533,14 @@
   async function doMergeRebase(
     mode: "merge" | "rebase",
     target: string,
-    ffOnly: boolean
+    ffOnly: boolean,
+    allowUnrelatedHistories: boolean
   ): Promise<void> {
     if (repoId === null) return;
     mergeBusy = true;
     try {
       if (mode === "merge") {
-        const res = await git.merge(repoId, target, ffOnly);
+        const res = await git.merge(repoId, target, ffOnly, allowUnrelatedHistories);
         if (res.success) {
           showToast("success", t("refs.merge.done", { target }));
         } else if (!(await conflictEntered(repoId))) {
@@ -725,6 +731,7 @@
 />
 <PullDialog
   bind:open={pullOpen}
+  {repoId}
   remotes={refsData.remotes}
   branches={active?.branches ?? []}
   currentBranch={active?.branch ?? ""}

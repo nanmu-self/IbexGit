@@ -3,6 +3,7 @@
 //! backup ref lifecycle, branch compare, remotes, tags, stash and upstream.
 
 use ibexgit_lib::core::engine::{CliEngine, DiffOptions, DiffSource, GitEngine, StashPushMode};
+use ibexgit_lib::core::error::AppError;
 use ibexgit_lib::core::recovery::RecoveryManager;
 use ibexgit_lib::core::runner::GitProcessRunner;
 use std::path::PathBuf;
@@ -546,7 +547,7 @@ async fn merge_ff_only_and_reflog() {
 
     git(&dir, &["checkout", "-q", "main"]);
     // ff-only merge of a fast-forwardable branch succeeds.
-    let res = engine.merge(&path, "feature", true).await.unwrap();
+    let res = engine.merge(&path, "feature", true, false).await.unwrap();
     assert!(res.success, "ff-only merge failed: {}", res.message);
     let head = git(&dir, &["rev-parse", "HEAD"]);
     let feature = git(&dir, &["rev-parse", "feature"]);
@@ -557,7 +558,7 @@ async fn merge_ff_only_and_reflog() {
     std::fs::write(dir.join("d.txt"), "d\n").unwrap();
     engine.stage(&path, &["d.txt".to_string()]).await.unwrap();
     engine.commit(&path, "diverge", false, false).await.unwrap();
-    let res = engine.merge(&path, "main", true).await.unwrap();
+    let res = engine.merge(&path, "main", true, false).await.unwrap();
     assert!(!res.success);
 
     // Reflog of HEAD records the moves (newest first: the diverge commit).
@@ -568,6 +569,87 @@ async fn merge_ff_only_and_reflog() {
         .any(|e| e.message.contains("checkout") || e.message.contains("merge")));
     // Selector parsing keeps the ref part.
     assert_eq!(entries[0].ref_name, "HEAD");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Merge across unrelated histories (远端主分支由网页端初始化的场景：
+/// 两边根提交不同，merge_base 为 null) + 脏工作区拒绝的结构化浮出：
+/// - 不带 flag → MergeResult{success:false}，stderr 原样透传（前端可提示）；
+/// - 带 flag → 合并成功，两边文件都在；
+/// - 暂存了未提交的新文件时（即使与合并不相交）git 拒绝 → Err(DirtyWorktree)，
+///   前端走友好对话框而不是裸 stderr toast。
+#[tokio::test(flavor = "multi_thread")]
+async fn merge_unrelated_histories_and_dirty_refusal() {
+    let dir = temp_repo();
+    git_init(&dir);
+    git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "P6"]);
+    git(&dir, &["config", "core.autocrlf", "false"]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    // Local history (root = bd585c1-equivalent).
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "base", false, false).await.unwrap();
+
+    // Orphan history (远端网页端初始化的 README 提交)，与本地无共同祖先。
+    git(&dir, &["checkout", "-q", "--orphan", "island"]);
+    std::fs::write(dir.join("README.md"), "remote-init\n").unwrap();
+    engine
+        .stage(&path, &["README.md".to_string()])
+        .await
+        .unwrap();
+    engine
+        .commit(&path, "remote init", false, false)
+        .await
+        .unwrap();
+    git(&dir, &["checkout", "-q", "main"]);
+
+    // 1) Without the flag git refuses (exit ≠ 0, success = false).
+    let res = engine.merge(&path, "island", false, false).await.unwrap();
+    assert!(
+        !res.success,
+        "unrelated merge must fail without the flag: {}",
+        res.message
+    );
+    assert!(res
+        .message
+        .contains("refusing to merge unrelated histories"));
+    assert_eq!(
+        engine.merge_base(&path, "main", "island").await.unwrap(),
+        None,
+        "precondition: no common ancestor"
+    );
+
+    // 2) With the flag the merge succeeds and both sides' files land.
+    let res = engine.merge(&path, "island", false, true).await.unwrap();
+    assert!(res.success, "flagged merge failed: {}", res.message);
+    assert!(dir.join("README.md").exists(), "remote-side file landed");
+    assert!(dir.join("a.txt").exists(), "local-side file stays");
+
+    // 3) Dirty worktree refusal is classified into DirtyWorktree (前端
+    //    对话框)，即使暂存的路径与合并完全不相交（实测 git 行为：index
+    //    里存在 HEAD 之外的 A 条目时 merge 直接拒绝）。
+    git(&dir, &["checkout", "-q", "-b", "diverge", "HEAD~1"]);
+    std::fs::write(dir.join("d.txt"), "d\n").unwrap();
+    engine.stage(&path, &["d.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "diverge", false, false).await.unwrap();
+    git(&dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("staged-new.txt"), "staged\n").unwrap();
+    engine
+        .stage(&path, &["staged-new.txt".to_string()])
+        .await
+        .unwrap();
+    let err = engine
+        .merge(&path, "diverge", false, false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::DirtyWorktree { .. }),
+        "expected DirtyWorktree, got: {err:?}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

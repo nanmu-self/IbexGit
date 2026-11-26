@@ -156,14 +156,20 @@ export const commands = {
 	gitSetRemoteUrl: (id: RepoId_Deserialize, name: string, url: string, push: boolean) => __TAURI_INVOKE<null>("git_set_remote_url", { id, name, url, push }),
 	gitPruneRemote: (id: RepoId_Deserialize, name: string) => __TAURI_INVOKE<null>("git_prune_remote", { id, name }),
 	gitFetch: (id: RepoId_Deserialize, remote: string | null) => __TAURI_INVOKE<null>("git_fetch", { id, remote }),
-	/**  Pull with an explicit strategy: merge (default) / rebase / ff_only. */
-	gitPull: (id: RepoId_Deserialize, remote: string | null, branch: string | null, mode: string | null) => __TAURI_INVOKE<PullResult>("git_pull", { id, remote, branch, mode }),
+	/**
+	 *  Pull with an explicit strategy: merge (default) / rebase / ff_only.
+	 *  `allow_unrelated_histories` 由前端在 merge_base 为 null 时置位（对话框
+	 *  预检提示后透传，见 MergeRebaseDialog/PullDialog）。
+	 */
+	gitPull: (id: RepoId_Deserialize, remote: string | null, branch: string | null, mode: string | null, allowUnrelatedHistories: boolean) => __TAURI_INVOKE<PullResult>("git_pull", { id, remote, branch, mode, allowUnrelatedHistories }),
 	gitPush: (id: RepoId_Deserialize, remote: string, branch: string, forceWithLease: boolean, setUpstream: boolean, tags: boolean) => __TAURI_INVOKE<null>("git_push", { id, remote, branch, forceWithLease, setUpstream, tags }),
 	/**
 	 *  Merge `target` into the current branch. Conflicts surface as git errors
-	 *  (toast) — the visual conflict flow is P8.
+	 *  (toast) — the visual conflict flow is P8. `allow_unrelated_histories`
+	 *  用于 merge_base 为 null 的两端（远端由网页端初始化的仓库，见
+	 *  MergeRebaseDialog 的预检提示）。
 	 */
-	gitMerge: (id: RepoId_Deserialize, target: string, ffOnly: boolean) => __TAURI_INVOKE<MergeResult>("git_merge", { id, target, ffOnly }),
+	gitMerge: (id: RepoId_Deserialize, target: string, ffOnly: boolean, allowUnrelatedHistories: boolean) => __TAURI_INVOKE<MergeResult>("git_merge", { id, target, ffOnly, allowUnrelatedHistories }),
 	gitRebase: (id: RepoId_Deserialize, target: string) => __TAURI_INVOKE<RebaseState>("git_rebase", { id, target }),
 	/**
 	 *  Reset the current branch to `target` with full recovery support:

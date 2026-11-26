@@ -321,9 +321,14 @@ export const git = {
   // ---- network / history ops (P6) ----
   fetch: (id: RepoId, remote?: string | null) =>
     wrap(commands.gitFetch(id, remote ?? null)),
-  /** mode: "merge" | "rebase" | "ff_only". */
-  pull: (id: RepoId, remote: string | null, branch: string | null, mode: string | null) =>
-    wrap(commands.gitPull(id, remote, branch, mode)),
+  /** mode: "merge" | "rebase" | "ff_only"; 对话框预检 merge_base 为 null 时传 allowUnrelatedHistories。 */
+  pull: (
+    id: RepoId,
+    remote: string | null,
+    branch: string | null,
+    mode: string | null,
+    allowUnrelatedHistories = false
+  ) => wrap(commands.gitPull(id, remote, branch, mode, allowUnrelatedHistories)),
   push: (
     id: RepoId,
     remote: string,
@@ -332,8 +337,9 @@ export const git = {
     setUpstream = false,
     tags = false
   ) => wrap(commands.gitPush(id, remote, branch, forceWithLease, setUpstream, tags)),
-  merge: (id: RepoId, target: string, ffOnly = false) =>
-    wrap(commands.gitMerge(id, target, ffOnly)),
+  /** ffOnly: 拒绝产生 merge commit；allowUnrelatedHistories: merge_base 为 null 时必须（见 MergeRebaseDialog）。 */
+  merge: (id: RepoId, target: string, ffOnly = false, allowUnrelatedHistories = false) =>
+    wrap(commands.gitMerge(id, target, ffOnly, allowUnrelatedHistories)),
   rebase: (id: RepoId, target: string) => wrap(commands.gitRebase(id, target)),
 
   // ---- reset with recovery + undo (P6) ----

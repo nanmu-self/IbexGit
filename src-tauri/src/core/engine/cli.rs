@@ -1797,6 +1797,7 @@ impl engine::GitEngine for CliEngine {
         remote: Option<&str>,
         branch: Option<&str>,
         mode: Option<&str>,
+        allow_unrelated_histories: bool,
     ) -> Result<engine::PullResult, AppError> {
         let mut args: Vec<String> = vec!["-C".to_string(), repo.to_string(), "pull".to_string()];
         match mode {
@@ -1808,6 +1809,9 @@ impl engine::GitEngine for CliEngine {
             // --no-rebase 锁定语义；同时不受用户全局 pull.rebase 干扰。
             // 该 flag 自 Git 2.27 起可用，远低于最低支持版本 2.40。
             _ => args.push("--no-rebase".to_string()),
+        }
+        if allow_unrelated_histories {
+            args.push("--allow-unrelated-histories".to_string());
         }
         if let Some(r) = remote {
             args.push(r.to_string());
@@ -1879,16 +1883,29 @@ impl engine::GitEngine for CliEngine {
         repo: &str,
         target: &str,
         ff_only: bool,
+        allow_unrelated_histories: bool,
     ) -> Result<engine::MergeResult, AppError> {
         let mut args: Vec<String> = vec!["-C".to_string(), repo.to_string(), "merge".to_string()];
         if ff_only {
             args.push("--ff-only".to_string());
+        }
+        if allow_unrelated_histories {
+            args.push("--allow-unrelated-histories".to_string());
         }
         args.push("--no-edit".to_string());
         args.push(target.to_string());
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let res = self.run(args_refs, StdinMode::Null, None, None).await?;
         let success = res.exit_code == Some(0);
+        if !success {
+            // 脏工作区拒绝以结构化错误浮出（前端友好对话框 + 暂存/贮藏
+            // 决策），与 pull/checkout 同一分类链路；其余失败维持
+            // MergeResult{success:false} —— 冲突由 P8 横幅接管，其它
+            // stderr（如 unrelated histories）由 toast 展示原文。
+            if let Some(err) = classify_failure(&res) {
+                return Err(err);
+            }
+        }
         Ok(engine::MergeResult {
             success,
             message: if res.stderr.is_empty() {
