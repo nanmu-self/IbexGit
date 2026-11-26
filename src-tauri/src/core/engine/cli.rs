@@ -1942,12 +1942,21 @@ impl engine::GitEngine for CliEngine {
         &self,
         repo: &str,
         target: &str,
-        ff_only: bool,
+        mode: engine::MergeMode,
         allow_unrelated_histories: bool,
     ) -> Result<engine::MergeResult, AppError> {
         let mut args: Vec<String> = vec!["-C".to_string(), repo.to_string(), "merge".to_string()];
-        if ff_only {
-            args.push("--ff-only".to_string());
+        let squash = mode == engine::MergeMode::Squash;
+        match mode {
+            // 命令层必须把 Rebase 分派到 rebase_merge()（拓扑序逐一 cherry-pick）。
+            engine::MergeMode::Rebase => {
+                return Err(AppError::internal(
+                    "rebase merge must be dispatched to rebase_merge()",
+                ));
+            }
+            engine::MergeMode::MergeNode => args.push("--no-ff".to_string()),
+            engine::MergeMode::FFOnly => args.push("--ff-only".to_string()),
+            engine::MergeMode::Squash => args.push("--squash".to_string()),
         }
         if allow_unrelated_histories {
             args.push("--allow-unrelated-histories".to_string());
@@ -1965,6 +1974,46 @@ impl engine::GitEngine for CliEngine {
             if let Some(err) = classify_failure(&res) {
                 return Err(err);
             }
+            return Ok(engine::MergeResult {
+                success,
+                message: if res.stderr.is_empty() {
+                    res.stdout
+                } else {
+                    res.stderr
+                },
+            });
+        }
+        if squash {
+            // --squash 只暂存不提交：来源无实际变更时 git 会因“空提交”拒绝，
+            // 此时视作已最新；否则以固定说明落地单一提交。
+            let commit_res = self
+                .run(
+                    [
+                        "-C".to_string(),
+                        repo.to_string(),
+                        "commit".to_string(),
+                        "--cleanup=strip".to_string(),
+                        "-m".to_string(),
+                        format!("Squash merge branch '{target}'"),
+                    ],
+                    StdinMode::Null,
+                    None,
+                    None,
+                )
+                .await?;
+            let nothing =
+                commit_res.exit_code != Some(0) && commit_res.stderr.contains("nothing to commit");
+            if !nothing {
+                self.ensure_success(&commit_res)?;
+            }
+            return Ok(engine::MergeResult {
+                success: true,
+                message: if nothing {
+                    "Already up to date.".to_string()
+                } else {
+                    format!("Squash merged '{target}' into a single commit.")
+                },
+            });
         }
         Ok(engine::MergeResult {
             success,

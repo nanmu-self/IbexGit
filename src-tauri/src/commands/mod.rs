@@ -1290,25 +1290,42 @@ pub async fn git_push(
 }
 
 /// Merge `target` into the current branch. Conflicts surface as git errors
-/// (toast) — the visual conflict flow is P8. `allow_unrelated_histories`
-/// 用于 merge_base 为 null 的两端（远端由网页端初始化的仓库，见
-/// MergeRebaseDialog 的预检提示）。
+/// (toast) — the visual conflict flow is P8. `mode` 见 `MergeMode`；rebase
+/// 合并由 `rebase_merge` 默认实现编排（拓扑序逐一 cherry-pick，来源分支
+/// 不动）。`allow_unrelated_histories` 用于 merge_base 为 null 的两端
+/// （远端由网页端初始化的仓库，见 MergeRebaseDialog 的预检提示）。
 #[tauri::command]
 #[specta::specta]
 pub async fn git_merge(
     id: RepoId,
     target: String,
-    ff_only: bool,
+    mode: crate::core::engine::MergeMode,
     allow_unrelated_histories: bool,
     repos: State<'_, RepoManager>,
+    tasks: State<'_, TaskManager>,
 ) -> Result<crate::core::engine::MergeResult, AppError> {
     let gate = repos.write_gate(id).await?;
     let _guard = gate.lock().await;
     let path = resolve(&repos, id).await?;
-    repos
-        .engine()
-        .merge(&path, &target, ff_only, allow_unrelated_histories)
-        .await
+    let desc = format!(
+        "merge {target} ({mode:?}{})",
+        if allow_unrelated_histories {
+            ", unrelated"
+        } else {
+            ""
+        }
+    );
+    let task = begin_task(&tasks, "merge", Some(id.0.to_string()), desc).await;
+    let result = if mode == crate::core::engine::MergeMode::Rebase {
+        repos.engine().rebase_merge(&path, &target).await
+    } else {
+        repos
+            .engine()
+            .merge(&path, &target, mode, allow_unrelated_histories)
+            .await
+    };
+    tasks.complete(task, result.as_ref().err().cloned()).await;
+    result
 }
 
 #[tauri::command]

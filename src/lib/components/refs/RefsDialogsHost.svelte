@@ -533,14 +533,14 @@
   async function doMergeRebase(
     mode: "merge" | "rebase",
     target: string,
-    ffOnly: boolean,
+    strategy: "merge_node" | "squash" | "rebase" | "ff_only",
     allowUnrelatedHistories: boolean
   ): Promise<void> {
     if (repoId === null) return;
     mergeBusy = true;
     try {
       if (mode === "merge") {
-        const res = await git.merge(repoId, target, ffOnly, allowUnrelatedHistories);
+        const res = await git.merge(repoId, target, strategy, allowUnrelatedHistories);
         if (res.success) {
           showToast("success", t("refs.merge.done", { target }));
         } else if (!(await conflictEntered(repoId))) {

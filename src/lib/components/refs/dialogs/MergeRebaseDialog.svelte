@@ -42,13 +42,14 @@
     onexecute: (
       mode: "merge" | "rebase",
       target: string,
-      ffOnly: boolean,
+      strategy: "merge_node" | "squash" | "rebase" | "ff_only",
       allowUnrelatedHistories: boolean
     ) => Promise<void>;
   } = $props();
 
   let target = $state("");
-  let ffOnly = $state(false);
+  /** 合并方式：默认（总是合并节点）/ Squash / Rebase / FF-only。 */
+  let strategy = $state<"merge_node" | "squash" | "rebase" | "ff_only">("merge_node");
 
   // ===================== merge 模式（MR 风格预览） =====================
   let tab = $state<"commits" | "files">("commits");
@@ -76,7 +77,7 @@
   $effect(() => {
     if (open) {
       target = initialTarget;
-      ffOnly = false;
+      strategy = "merge_node";
       unrelated = false;
       preview = null;
       previewLoading = false;
@@ -275,10 +276,22 @@
     }
   }
 
+  const STRATEGIES = [
+    { id: "merge_node", label: "refs.merge.modeDefault", desc: "refs.merge.modeDefaultDesc" },
+    { id: "squash", label: "refs.merge.modeSquash", desc: "refs.merge.modeSquashDesc" },
+    { id: "rebase", label: "refs.merge.modeRebase", desc: "refs.merge.modeRebaseDesc" },
+    { id: "ff_only", label: "refs.merge.modeFfOnly", desc: "refs.merge.modeFfOnlyDesc" },
+  ] as const;
+  const strategyDesc = $derived(
+    t(STRATEGIES.find((s) => s.id === strategy)?.desc ?? "refs.merge.modeDefaultDesc")
+  );
+  /** rebase 合并需要共同祖先，不相关历史下不可用。 */
+  const rebaseUnavailable = $derived(strategy === "rebase" && unrelated);
+
   async function executeMerge(): Promise<void> {
     try {
       // 宿主负责 git.merge + P8 冲突横幅接管 + toast + 刷新；失败保持打开。
-      await onexecute("merge", target.trim(), ffOnly, unrelated);
+      await onexecute("merge", target.trim(), strategy, unrelated);
       open = false;
     } catch (e) {
       normalizeError(e);
@@ -290,7 +303,7 @@
     e.preventDefault();
     if (mode !== "rebase") return;
     try {
-      await onexecute(mode, target.trim(), ffOnly, false);
+      await onexecute(mode, target.trim(), "merge_node", false);
       open = false;
     } catch (e) {
       normalizeError(e);
@@ -525,10 +538,19 @@
               {t("refs.merge.unrelated")}
             </p>
           {/if}
-          <label class="flex items-center gap-2 text-[13px]">
-            <input type="checkbox" bind:checked={ffOnly} class="size-4" />
-            {t("refs.merge.ffOnly")}
-          </label>
+          <div>
+            <SegmentedControl
+              bind:value={strategy}
+              options={STRATEGIES.map((s) => ({ value: s.id, label: t(s.label) }))}
+            />
+            <p
+              class="mt-1 text-xs {rebaseUnavailable
+                ? 'text-warning dark:text-warning'
+                : 'text-muted-foreground'}"
+            >
+              {rebaseUnavailable ? t("refs.merge.rebaseUnrelated") : strategyDesc}
+            </p>
+          </div>
         </div>
         <Button type="button" variant="ghost" size="sm" onclick={() => (open = false)}>
           {t("common.cancel")}
@@ -536,7 +558,7 @@
         <Button
           type="button"
           size="sm"
-          disabled={busy || !target}
+          disabled={busy || !target || rebaseUnavailable}
           onclick={() => void executeMerge()}
         >
           {#if busy}

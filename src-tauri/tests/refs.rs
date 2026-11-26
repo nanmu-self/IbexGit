@@ -2,7 +2,9 @@
 //! (track A snapshot + track B backup ref + undo), clean preview/delete,
 //! backup ref lifecycle, branch compare, remotes, tags, stash and upstream.
 
-use ibexgit_lib::core::engine::{CliEngine, DiffOptions, DiffSource, GitEngine, StashPushMode};
+use ibexgit_lib::core::engine::{
+    CliEngine, DiffOptions, DiffSource, GitEngine, MergeMode, StashPushMode,
+};
 use ibexgit_lib::core::error::AppError;
 use ibexgit_lib::core::recovery::RecoveryManager;
 use ibexgit_lib::core::runner::GitProcessRunner;
@@ -547,7 +549,10 @@ async fn merge_ff_only_and_reflog() {
 
     git(&dir, &["checkout", "-q", "main"]);
     // ff-only merge of a fast-forwardable branch succeeds.
-    let res = engine.merge(&path, "feature", true, false).await.unwrap();
+    let res = engine
+        .merge(&path, "feature", MergeMode::FFOnly, false)
+        .await
+        .unwrap();
     assert!(res.success, "ff-only merge failed: {}", res.message);
     let head = git(&dir, &["rev-parse", "HEAD"]);
     let feature = git(&dir, &["rev-parse", "feature"]);
@@ -558,7 +563,10 @@ async fn merge_ff_only_and_reflog() {
     std::fs::write(dir.join("d.txt"), "d\n").unwrap();
     engine.stage(&path, &["d.txt".to_string()]).await.unwrap();
     engine.commit(&path, "diverge", false, false).await.unwrap();
-    let res = engine.merge(&path, "main", true, false).await.unwrap();
+    let res = engine
+        .merge(&path, "main", MergeMode::FFOnly, false)
+        .await
+        .unwrap();
     assert!(!res.success);
 
     // Reflog of HEAD records the moves (newest first: the diverge commit).
@@ -607,7 +615,10 @@ async fn merge_unrelated_histories_and_dirty_refusal() {
     git(&dir, &["checkout", "-q", "main"]);
 
     // 1) Without the flag git refuses (exit ≠ 0, success = false).
-    let res = engine.merge(&path, "island", false, false).await.unwrap();
+    let res = engine
+        .merge(&path, "island", MergeMode::MergeNode, false)
+        .await
+        .unwrap();
     assert!(
         !res.success,
         "unrelated merge must fail without the flag: {}",
@@ -623,7 +634,10 @@ async fn merge_unrelated_histories_and_dirty_refusal() {
     );
 
     // 2) With the flag the merge succeeds and both sides' files land.
-    let res = engine.merge(&path, "island", false, true).await.unwrap();
+    let res = engine
+        .merge(&path, "island", MergeMode::MergeNode, true)
+        .await
+        .unwrap();
     assert!(res.success, "flagged merge failed: {}", res.message);
     assert!(dir.join("README.md").exists(), "remote-side file landed");
     assert!(dir.join("a.txt").exists(), "local-side file stays");
@@ -642,7 +656,7 @@ async fn merge_unrelated_histories_and_dirty_refusal() {
         .await
         .unwrap();
     let err = engine
-        .merge(&path, "diverge", false, false)
+        .merge(&path, "diverge", MergeMode::MergeNode, false)
         .await
         .unwrap_err();
     assert!(
@@ -736,6 +750,99 @@ async fn diff_stat_statuses_and_counts() {
         (movd.status.as_str(), movd.additions, movd.deletions),
         ("M", Some(2), Some(1))
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 四种合并方式的引擎层行为：MergeNode 对可快进分支也强制创建合并
+/// 节点；Squash 压缩为单一提交（单父）；FFOnly 快进；rebase_merge 把
+/// 来源提交按拓扑序逐一变基到当前分支且来源分支不动。
+#[tokio::test(flavor = "multi_thread")]
+async fn merge_modes_no_ff_squash_ff_only_rebase() {
+    let dir = temp_repo();
+    git_init(&dir);
+    git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "P6"]);
+    git(&dir, &["config", "core.autocrlf", "false"]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    std::fs::write(dir.join("a.txt"), "base\n").unwrap();
+    engine.stage(&path, &["a.txt".to_string()]).await.unwrap();
+    engine.commit(&path, "base", false, false).await.unwrap();
+    let base_head = git(&dir, &["rev-parse", "HEAD"]);
+
+    // 来源分支：两个提交，可快进。
+    git(&dir, &["checkout", "-q", "-b", "feat"]);
+    std::fs::write(dir.join("f1.txt"), "one\n").unwrap();
+    engine.stage(&path, &["f1.txt".to_string()]).await.unwrap();
+    engine
+        .commit(&path, "feat one", false, false)
+        .await
+        .unwrap();
+    std::fs::write(dir.join("f2.txt"), "two\n").unwrap();
+    engine.stage(&path, &["f2.txt".to_string()]).await.unwrap();
+    engine
+        .commit(&path, "feat two", false, false)
+        .await
+        .unwrap();
+    git(&dir, &["checkout", "-q", "main"]);
+
+    // 1) MergeNode：可快进也强制创建双亲合并节点。
+    let res = engine
+        .merge(&path, "feat", MergeMode::MergeNode, false)
+        .await
+        .unwrap();
+    assert!(res.success, "no-ff merge failed: {}", res.message);
+    let parents = git(&dir, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert_eq!(
+        parents.split_whitespace().count(),
+        3,
+        "self + two parents = merge commit"
+    );
+    assert!(dir.join("f2.txt").exists());
+    git(&dir, &["reset", "-q", "--hard", base_head.trim()]);
+
+    // 2) Squash：压缩为单亲单提交，来源的两个提交不再可见。
+    let res = engine
+        .merge(&path, "feat", MergeMode::Squash, false)
+        .await
+        .unwrap();
+    assert!(res.success, "squash merge failed: {}", res.message);
+    let log = git(&dir, &["log", "--oneline"]);
+    assert_eq!(log.lines().count(), 2, "base + one squash commit: {log}");
+    assert!(log.contains("Squash merge branch 'feat'"));
+    assert!(dir.join("f1.txt").exists() && dir.join("f2.txt").exists());
+    git(&dir, &["reset", "-q", "--hard", base_head.trim()]);
+
+    // 3) FFOnly：可快进 → 直接快进，无合并节点。
+    let feat_head = git(&dir, &["rev-parse", "feat"]);
+    let res = engine
+        .merge(&path, "feat", MergeMode::FFOnly, false)
+        .await
+        .unwrap();
+    assert!(res.success, "ff-only merge failed: {}", res.message);
+    assert_eq!(git(&dir, &["rev-parse", "HEAD"]).trim(), feat_head.trim());
+    git(&dir, &["reset", "-q", "--hard", base_head.trim()]);
+
+    // 4) Rebase 合并：目标先前进，再把来源提交逐一变基过来；来源分支不动。
+    // main 先自己前进（制造分叉）。
+    std::fs::write(dir.join("m.txt"), "main-side\n").unwrap();
+    engine.stage(&path, &["m.txt".to_string()]).await.unwrap();
+    engine
+        .commit(&path, "main ahead", false, false)
+        .await
+        .unwrap();
+    let feat_before = git(&dir, &["rev-parse", "feat"]);
+    let res = engine.rebase_merge(&path, "feat").await.unwrap();
+    assert!(res.success, "rebase merge failed: {}", res.message);
+    let log = git(&dir, &["log", "--oneline"]);
+    assert!(log.contains("feat one") && log.contains("feat two") && log.contains("main ahead"));
+    // 来源分支指针未被改写。
+    assert_eq!(git(&dir, &["rev-parse", "feat"]).trim(), feat_before.trim());
+    // 拓扑线性：HEAD 单亲（无合并节点）。
+    let parents = git(&dir, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert_eq!(parents.split_whitespace().count(), 2, "self + one parent");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -970,7 +970,7 @@ mod tests {
             &self,
             _: &str,
             _: &str,
-            _: bool,
+            _: crate::core::engine::MergeMode,
             _: bool,
         ) -> Result<crate::core::engine::MergeResult, AppError> {
             Err(err("merge"))

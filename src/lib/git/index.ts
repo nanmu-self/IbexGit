@@ -341,9 +341,13 @@ export const git = {
     setUpstream = false,
     tags = false
   ) => wrap(commands.gitPush(id, remote, branch, forceWithLease, setUpstream, tags)),
-  /** ffOnly: 拒绝产生 merge commit；allowUnrelatedHistories: merge_base 为 null 时必须（见 MergeRebaseDialog）。 */
-  merge: (id: RepoId, target: string, ffOnly = false, allowUnrelatedHistories = false) =>
-    wrap(commands.gitMerge(id, target, ffOnly, allowUnrelatedHistories)),
+  /** mode: 合并方式（merge_node/squash/rebase/ff_only）；allowUnrelatedHistories: merge_base 为 null 时必须（见 MergeRebaseDialog）。 */
+  merge: (
+    id: RepoId,
+    target: string,
+    mode: "merge_node" | "squash" | "rebase" | "ff_only" = "merge_node",
+    allowUnrelatedHistories = false
+  ) => wrap(commands.gitMerge(id, target, mode, allowUnrelatedHistories)),
   rebase: (id: RepoId, target: string) => wrap(commands.gitRebase(id, target)),
 
   // ---- reset with recovery + undo (P6) ----

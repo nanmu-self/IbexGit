@@ -199,6 +199,22 @@ pub struct FileStat {
     pub deletions: Option<u32>,
 }
 
+/// 合并方式（合并对话框的策略选择，对标托管平台 MR 的四种类型）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeMode {
+    /// 默认类型：总是创建一个合并节点（`--no-ff`），记录合并信息。
+    MergeNode,
+    /// Squash 合并：将来源分支提交压缩为目标分支上的一个提交。
+    Squash,
+    /// Rebase 合并：将来源分支提交逐一变基到目标分支（命令层分派到
+    /// `rebase_merge` 默认实现；`merge()` 不受理此值）。
+    Rebase,
+    /// Fast-forward-only：只允许快进，不创建合并节点。
+    #[serde(rename = "ff_only")]
+    FFOnly,
+}
+
 /// Options for [`GitEngine::diff`] (P4: context expansion + whitespace modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct DiffOptions {
@@ -813,17 +829,62 @@ pub trait GitEngine: Send + Sync {
         target: &str,
         options: &[&str],
     ) -> Result<RebaseState, AppError>;
-    /// Merge `target` into the current branch; `ff_only` refuses to create
-    /// a merge commit (P6 dry-run 预览由前端 rev-list 提供).
+    /// Merge `target` into the current branch (P6 dry-run 预览由前端
+    /// rev-list 提供)。`mode` 决定合并形态：MergeNode = `--no-ff` 总是
+    /// 创建合并节点；Squash = `--squash` 压缩为一个提交（后接自动
+    /// commit）；FFOnly = `--ff-only` 只允许快进。
     /// `allow_unrelated_histories` 透传 `--allow-unrelated-histories`，场景
     /// 同 `pull`：merge_base 为 null 的两端只有带上它才能合并。
     async fn merge(
         &self,
         repo: &str,
         target: &str,
-        ff_only: bool,
+        mode: MergeMode,
         allow_unrelated_histories: bool,
     ) -> Result<MergeResult, AppError>;
+    /// Rebase 合并：把 `merge_base(HEAD, target)…target` 的提交（跳过
+    /// merge 提交）按拓扑序逐一 cherry-pick 到当前分支，来源分支不动。
+    /// 冲突时仓库进入 cherry-pick 状态（P8 横幅接管），返回
+    /// `MergeResult{success:false}`；无共同祖先时报错。
+    /// 默认实现组合 `merge_base` / `rev_list`（--topo-order，反转即父先
+    /// 子后）/ `cherry_pick`，CliEngine 与集成测试共用同一实现。
+    async fn rebase_merge(&self, repo: &str, target: &str) -> Result<MergeResult, AppError> {
+        let base = self
+            .merge_base(repo, "HEAD", target)
+            .await?
+            .ok_or_else(|| {
+                AppError::parse("rebase merge requires a common ancestor (unrelated histories)")
+            })?;
+        let mut commits = self
+            .rev_list(repo, &format!("{base}..{target}"), 1000, 0)
+            .await?;
+        commits.retain(|c| c.parents.len() <= 1);
+        commits.reverse();
+        if commits.is_empty() {
+            return Ok(MergeResult {
+                success: true,
+                message: "Already up to date.".to_string(),
+            });
+        }
+        let hashes: Vec<String> = commits.iter().map(|c| c.hash.clone()).collect();
+        let n = hashes.len();
+        match self.cherry_pick(repo, &hashes).await {
+            Ok(()) => Ok(MergeResult {
+                success: true,
+                message: format!("Rebase-merged {n} commit(s)."),
+            }),
+            Err(e) => {
+                if self.operation_state(repo).await?.is_some() {
+                    Ok(MergeResult {
+                        success: false,
+                        message: e.to_string(),
+                    })
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
     /// Changed-file stats between two revs（合并预览的“文件改动”清单）：
     /// `git diff --name-status -z` + `--numstat -z`（均 `--find-renames`）
     /// 两条读命令合成，不拉全量 diff 文本。按展示路径排序。

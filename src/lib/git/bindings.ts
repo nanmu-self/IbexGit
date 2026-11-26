@@ -165,11 +165,12 @@ export const commands = {
 	gitPush: (id: RepoId_Deserialize, remote: string, branch: string, forceWithLease: boolean, setUpstream: boolean, tags: boolean) => __TAURI_INVOKE<null>("git_push", { id, remote, branch, forceWithLease, setUpstream, tags }),
 	/**
 	 *  Merge `target` into the current branch. Conflicts surface as git errors
-	 *  (toast) — the visual conflict flow is P8. `allow_unrelated_histories`
-	 *  用于 merge_base 为 null 的两端（远端由网页端初始化的仓库，见
-	 *  MergeRebaseDialog 的预检提示）。
+	 *  (toast) — the visual conflict flow is P8. `mode` 见 `MergeMode`；rebase
+	 *  合并由 `rebase_merge` 默认实现编排（拓扑序逐一 cherry-pick，来源分支
+	 *  不动）。`allow_unrelated_histories` 用于 merge_base 为 null 的两端
+	 *  （远端由网页端初始化的仓库，见 MergeRebaseDialog 的预检提示）。
 	 */
-	gitMerge: (id: RepoId_Deserialize, target: string, ffOnly: boolean, allowUnrelatedHistories: boolean) => __TAURI_INVOKE<MergeResult>("git_merge", { id, target, ffOnly, allowUnrelatedHistories }),
+	gitMerge: (id: RepoId_Deserialize, target: string, mode: MergeMode, allowUnrelatedHistories: boolean) => __TAURI_INVOKE<MergeResult>("git_merge", { id, target, mode, allowUnrelatedHistories }),
 	gitRebase: (id: RepoId_Deserialize, target: string) => __TAURI_INVOKE<RebaseState>("git_rebase", { id, target }),
 	/**
 	 *  Reset the current branch to `target` with full recovery support:
@@ -1161,6 +1162,20 @@ export type LineSelection = {
 	/**  Index into `DiffHunk.lines`. */
 	line: number,
 };
+
+/**  合并方式（合并对话框的策略选择，对标托管平台 MR 的四种类型）。 */
+export type MergeMode = 
+/**  默认类型：总是创建一个合并节点（`--no-ff`），记录合并信息。 */
+"merge_node" | 
+/**  Squash 合并：将来源分支提交压缩为目标分支上的一个提交。 */
+"squash" | 
+/**
+ *  Rebase 合并：将来源分支提交逐一变基到目标分支（命令层分派到
+ *  `rebase_merge` 默认实现；`merge()` 不受理此值）。
+ */
+"rebase" | 
+/**  Fast-forward-only：只允许快进，不创建合并节点。 */
+"ff_only";
 
 export type MergeResult = {
 	success: boolean,
