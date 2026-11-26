@@ -383,6 +383,21 @@ pub async fn git_diff(
     Ok(model)
 }
 
+/// Per-file change stats between two revs（合并预览的“文件改动”清单）：
+/// name-status + numstat 合成，不拉全量 diff 文本，大变更也快。
+#[tauri::command]
+#[specta::specta]
+pub async fn git_diff_stat(
+    id: RepoId,
+    old_rev: String,
+    new_rev: String,
+    repos: State<'_, RepoManager>,
+) -> Result<Vec<crate::core::engine::FileStat>, AppError> {
+    let _permit = repos.read_permit().await?;
+    let root = resolve(&repos, id).await?;
+    repos.engine().diff_stat(&root, &old_rev, &new_rev).await
+}
+
 /// Shared body of the three line-level operations (PLAN P4 行级暂存/丢弃/
 /// 取消暂存): validate the cached model → build the patch → apply.
 async fn apply_line_op(

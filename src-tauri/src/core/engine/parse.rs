@@ -247,6 +247,168 @@ pub fn parse_numstat_paths(raw: &str) -> Vec<String> {
 }
 
 // =====================
+// diff name-status / numstat -z（合并预览的“文件改动”统计）
+// =====================
+
+/// One `git diff --name-status -z` record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameStatus {
+    /// 状态首字母（A/M/D/R/C/T…）。
+    pub status: char,
+    /// R/C 相似度分数（R100 → 100）。
+    pub similarity: Option<u32>,
+    /// R/C 的原路径。
+    pub old_path: Option<String>,
+    /// 展示路径（新路径；删除为旧路径）。
+    pub path: String,
+}
+
+/// Parse `git diff --name-status -z --find-renames` output.
+///
+/// Record layout (verified on git 2.56)：状态与路径是独立的 NUL 字段 ——
+/// - ordinary: `STATUS\0path\0`
+/// - rename/copy: `R100\0origPath\0path\0`
+pub fn parse_name_status_z(raw: &str) -> Vec<NameStatus> {
+    let mut out = Vec::new();
+    let mut it = raw.split('\0').filter(|s| !s.is_empty());
+    while let Some(head) = it.next() {
+        let status = head.chars().next().unwrap_or('?');
+        let similarity: Option<u32> = head[1..].parse().ok();
+        // R/C 后跟 old\0new 两个独立字段；其余状态后跟一个路径字段。
+        let (old_path, path) = if status == 'R' || status == 'C' {
+            let old = it.next().unwrap_or("").to_string();
+            let path = it.next().unwrap_or("").to_string();
+            (Some(old), path)
+        } else {
+            (None, it.next().unwrap_or("").to_string())
+        };
+        if !path.is_empty() {
+            out.push(NameStatus {
+                status,
+                similarity,
+                old_path,
+                path,
+            });
+        }
+    }
+    out
+}
+
+/// One `git diff --numstat -z` record（计数为 None = 二进制 `-`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NumStat {
+    pub additions: Option<u32>,
+    pub deletions: Option<u32>,
+    /// R/C 的原路径。
+    pub old_path: Option<String>,
+    /// 展示路径（新路径；删除为旧路径）。
+    pub path: String,
+}
+
+/// Parse `git diff --numstat -z --find-renames` output.
+///
+/// Record layout (verified on git 2.56):
+/// - ordinary: `<add>\t<del>\t<path>\0`（counts `-` = 二进制）
+/// - rename/copy: `<add>\t<del>\t\0<origPath>\0<path>\0` —— 第三个字段为空，
+///   两个路径以独立 NUL 字段跟随（与 `parse_numstat_paths` 同一布局）。
+pub fn parse_numstat_z(raw: &str) -> Vec<NumStat> {
+    let mut out = Vec::new();
+    let parts: Vec<&str> = raw.split('\0').collect();
+    let mut i = 0;
+    while i < parts.len() {
+        let fields: Vec<&str> = parts[i].split('\t').collect();
+        if fields.len() < 3 {
+            i += 1;
+            continue;
+        }
+        let additions = fields[0].parse().ok();
+        let deletions = fields[1].parse().ok();
+        if !fields[2].is_empty() {
+            out.push(NumStat {
+                additions,
+                deletions,
+                old_path: None,
+                path: fields[2].to_string(),
+            });
+            i += 1;
+        } else if let (Some(old), Some(path)) = (parts.get(i + 1), parts.get(i + 2)) {
+            if !path.is_empty() {
+                out.push(NumStat {
+                    additions,
+                    deletions,
+                    old_path: Some((*old).to_string()),
+                    path: (*path).to_string(),
+                });
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod merge_stat_tests {
+    use super::{parse_name_status_z, parse_numstat_z};
+
+    /// NUL 字面量写进 fixture：Rust 源码里 \0 转义即可（无前导空格陷阱）。
+    const NS: &str =
+        "M\0a.txt\0A\0added.txt\0D\0gone.txt\0R100\0old.txt\0new.txt\0C90\0copy.txt\0dst.txt\0";
+
+    #[test]
+    fn name_status_ordinary_and_rename() {
+        let v = parse_name_status_z(NS);
+        assert_eq!(v.len(), 5);
+        assert_eq!(v[0].status, 'M');
+        assert_eq!(v[0].path, "a.txt");
+        assert_eq!(v[0].similarity, None);
+        assert_eq!(v[3].status, 'R');
+        assert_eq!(v[3].similarity, Some(100));
+        assert_eq!(v[3].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(v[3].path, "new.txt");
+        assert_eq!(v[4].status, 'C');
+        assert_eq!(v[4].similarity, Some(90));
+    }
+
+    #[test]
+    fn name_status_empty_and_garbage_tail() {
+        assert!(parse_name_status_z("").is_empty());
+        assert!(parse_name_status_z("\0\0").is_empty());
+        // 尾部截断的 rename 记录（缺 new）不产出坏条目。
+        assert!(parse_name_status_z("R100\0old.txt\0").is_empty());
+    }
+
+    #[test]
+    fn numstat_ordinary_binary_rename() {
+        // 实测字节流：`1\t1\ta.txt\0` + `-\t-\tbin.dat\0` + `1\t0\t\0old.txt\0new.txt\0`
+        // （不能写成 `bin.dat\01`：\0 后紧跟数字会被当八进制转义，clippy -D 报错）
+        let raw = concat!(
+            "1\t1\ta.txt\0",
+            "-\t-\tbin.dat\0",
+            "1\t0\t\0old.txt\0new.txt\0"
+        );
+        let v = parse_numstat_z(raw);
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[0].additions, Some(1));
+        assert_eq!(v[0].deletions, Some(1));
+        assert_eq!(v[0].path, "a.txt");
+        assert_eq!(v[1].additions, None, "binary counts are `-` → None");
+        assert_eq!(v[1].deletions, None);
+        assert_eq!(v[1].path, "bin.dat");
+        assert_eq!(v[2].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(v[2].path, "new.txt");
+        assert_eq!(v[2].additions, Some(1));
+    }
+
+    #[test]
+    fn numstat_empty_input() {
+        assert!(parse_numstat_z("").is_empty());
+        assert!(parse_numstat_z("\0").is_empty());
+    }
+}
+
+// =====================
 // log --numstat -z (P11 AI 报告采集)
 // =====================
 

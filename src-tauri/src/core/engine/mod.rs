@@ -181,6 +181,24 @@ impl DiffModel {
     }
 }
 
+/// Per-file change stat（合并预览的“文件改动”清单）：name-status 的
+/// 状态字母 + numstat 的 ± 行数合成。二进制文件计数为 None。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct FileStat {
+    /// 展示路径（新路径；删除保留旧路径）。
+    pub path: String,
+    /// R/C（重命名/拷贝）的原路径。
+    pub old_path: Option<String>,
+    /// R/C 的相似度分数（0–100，如 R100 → 100）。
+    pub similarity: Option<u32>,
+    /// 状态字母：A / M / D / R / C / T …（name-status 首字母）。
+    pub status: String,
+    /// 新增行数；二进制为 None（numstat 输出 `-`）。
+    pub additions: Option<u32>,
+    /// 删除行数；二进制为 None。
+    pub deletions: Option<u32>,
+}
+
 /// Options for [`GitEngine::diff`] (P4: context expansion + whitespace modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct DiffOptions {
@@ -806,6 +824,15 @@ pub trait GitEngine: Send + Sync {
         ff_only: bool,
         allow_unrelated_histories: bool,
     ) -> Result<MergeResult, AppError>;
+    /// Changed-file stats between two revs（合并预览的“文件改动”清单）：
+    /// `git diff --name-status -z` + `--numstat -z`（均 `--find-renames`）
+    /// 两条读命令合成，不拉全量 diff 文本。按展示路径排序。
+    async fn diff_stat(
+        &self,
+        repo: &str,
+        old_rev: &str,
+        new_rev: &str,
+    ) -> Result<Vec<FileStat>, AppError>;
 
     // Clone / Init (P7)
     /// Clone a remote repository (P7 克隆对话框)。Runs **without** `-C`

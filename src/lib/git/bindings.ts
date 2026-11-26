@@ -257,6 +257,11 @@ export const commands = {
 	 */
 	gitDiff: (id: RepoId_Deserialize, source: DiffSource, oldRev: string | null, newRev: string | null, paths: string[] | null, contextLines: number | null, ignoreWhitespace: boolean | null) => __TAURI_INVOKE<DiffModel>("git_diff", { id, source, oldRev, newRev, paths, contextLines, ignoreWhitespace }),
 	/**
+	 *  Per-file change stats between two revs（合并预览的“文件改动”清单）：
+	 *  name-status + numstat 合成，不拉全量 diff 文本，大变更也快。
+	 */
+	gitDiffStat: (id: RepoId_Deserialize, oldRev: string, newRev: string) => __TAURI_INVOKE<FileStat[]>("git_diff_stat", { id, oldRev, newRev }),
+	/**
 	 *  Stage the selected lines of one file into the index
 	 *  (`git apply --cached`; P4 行级暂存).
 	 */
@@ -958,6 +963,25 @@ export type FileContent = {
 	 */
 	size: number,
 	data: string | null,
+};
+
+/**
+ *  Per-file change stat（合并预览的“文件改动”清单）：name-status 的
+ *  状态字母 + numstat 的 ± 行数合成。二进制文件计数为 None。
+ */
+export type FileStat = {
+	/**  展示路径（新路径；删除保留旧路径）。 */
+	path: string,
+	/**  R/C（重命名/拷贝）的原路径。 */
+	old_path: string | null,
+	/**  R/C 的相似度分数（0–100，如 R100 → 100）。 */
+	similarity: number | null,
+	/**  状态字母：A / M / D / R / C / T …（name-status 首字母）。 */
+	status: string,
+	/**  新增行数；二进制为 None（numstat 输出 `-`）。 */
+	additions: number | null,
+	/**  删除行数；二进制为 None。 */
+	deletions: number | null,
 };
 
 export type FileStatus = FileStatus_Serialize | FileStatus_Deserialize;

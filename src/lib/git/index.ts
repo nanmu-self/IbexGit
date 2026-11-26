@@ -60,6 +60,7 @@ export type {
   DiffSource,
   FileCommit,
   FileContent,
+  FileStat,
   FileStatus,
   GitignoreFile,
   GraphEdge,
@@ -251,6 +252,9 @@ export const git = {
         ignoreWhitespace ?? null
       )
     ),
+  /** Per-file ± 行数 + 状态字母（合并预览的文件改动清单）。 */
+  diffStat: (id: RepoId, oldRev: string, newRev: string) =>
+    wrap(commands.gitDiffStat(id, oldRev, newRev)),
   /** Line-level stage (`git apply --cached`) against a cached DiffModel. */
   stageLines: (id: RepoId, modelId: number, path: string, selections: LineSelection[]) =>
     wrap(commands.gitStageLines(id, modelId, path, selections)),

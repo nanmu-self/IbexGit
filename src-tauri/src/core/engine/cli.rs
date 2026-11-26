@@ -1661,6 +1661,66 @@ impl engine::GitEngine for CliEngine {
         }
     }
 
+    async fn diff_stat(
+        &self,
+        repo: &str,
+        old_rev: &str,
+        new_rev: &str,
+    ) -> Result<Vec<engine::FileStat>, AppError> {
+        // Reads must never write（同 diff：无 --no-optional-locks 会把刷新的
+        // stat 缓存写回 .git/index，自触发 INDEX 失效，见 AGENTS 红线 2）。
+        // name-status 给状态字母，numstat 给 ± 行数，两条 -z 输出按展示路径
+        // join —— 合成一次调用装不下（--name-status 会吞掉 --numstat 输出）。
+        let ns_args = [
+            "--no-optional-locks",
+            "-C",
+            repo,
+            "diff",
+            "--no-color",
+            "--name-status",
+            "-z",
+            "--find-renames",
+            old_rev,
+            new_rev,
+        ];
+        let ns = self.run(ns_args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&ns)?;
+        let num_args = [
+            "--no-optional-locks",
+            "-C",
+            repo,
+            "diff",
+            "--no-color",
+            "--numstat",
+            "-z",
+            "--find-renames",
+            old_rev,
+            new_rev,
+        ];
+        let num = self.run(num_args, StdinMode::Null, None, None).await?;
+        self.ensure_success(&num)?;
+
+        let numstats = parse::parse_numstat_z(&num.stdout);
+        let counts: std::collections::HashMap<&str, &parse::NumStat> =
+            numstats.iter().map(|s| (s.path.as_str(), s)).collect();
+        let mut out: Vec<engine::FileStat> = parse::parse_name_status_z(&ns.stdout)
+            .into_iter()
+            .map(|ns| {
+                let stat = counts.get(ns.path.as_str()).copied();
+                engine::FileStat {
+                    path: ns.path,
+                    old_path: ns.old_path,
+                    similarity: ns.similarity,
+                    status: ns.status.to_string(),
+                    additions: stat.and_then(|s| s.additions),
+                    deletions: stat.and_then(|s| s.deletions),
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    }
+
     async fn range_count(
         &self,
         repo: &str,

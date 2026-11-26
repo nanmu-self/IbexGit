@@ -975,6 +975,14 @@ mod tests {
         ) -> Result<crate::core::engine::MergeResult, AppError> {
             Err(err("merge"))
         }
+        async fn diff_stat(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<Vec<crate::core::engine::FileStat>, AppError> {
+            Err(err("diff_stat"))
+        }
         async fn file_history(
             &self,
             _: &str,

@@ -653,6 +653,93 @@ async fn merge_unrelated_histories_and_dirty_refusal() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// diff_stat：合并预览的“文件改动”清单 —— name-status × numstat 合成。
+/// 覆盖 A/M/D/R/二进制，验证状态字母、± 行数、重命名配对与排序。
+#[tokio::test(flavor = "multi_thread")]
+async fn diff_stat_statuses_and_counts() {
+    let dir = temp_repo();
+    git_init(&dir);
+    git(&dir, &["config", "user.email", "p6@ibexgit.local"]);
+    git(&dir, &["config", "user.name", "P6"]);
+    git(&dir, &["config", "core.autocrlf", "false"]);
+    let path = dir.display().to_string();
+    let engine = engine();
+
+    std::fs::write(dir.join("mod.txt"), "line1\nline2\n").unwrap();
+    std::fs::write(dir.join("del.txt"), "gone\n").unwrap();
+    std::fs::write(dir.join("ren.txt"), "moved\n").unwrap();
+    engine
+        .stage(
+            &path,
+            &[
+                "mod.txt".to_string(),
+                "del.txt".to_string(),
+                "ren.txt".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+    engine.commit(&path, "base", false, false).await.unwrap();
+
+    // 分支上：修改 mod.txt、删 del.txt、新增 add.txt + 二进制、重命名 ren.txt。
+    git(&dir, &["checkout", "-q", "-b", "feat"]);
+    std::fs::write(dir.join("mod.txt"), "line1\nline2-mod\nline3\n").unwrap();
+    std::fs::remove_file(dir.join("del.txt")).unwrap();
+    std::fs::write(dir.join("add.txt"), "new\n").unwrap();
+    std::fs::write(dir.join("bin.dat"), "\u{0}\u{1}\u{2}").unwrap();
+    // git mv 已把重命名暂存（ren.txt 从索引消失，不能再作为 pathspec）。
+    git(&dir, &["mv", "ren.txt", "renamed.txt"]);
+    engine
+        .stage(
+            &path,
+            &[
+                "mod.txt".to_string(),
+                "del.txt".to_string(),
+                "add.txt".to_string(),
+                "bin.dat".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+    engine.commit(&path, "feat", false, false).await.unwrap();
+
+    let stats = engine.diff_stat(&path, "main", "feat").await.unwrap();
+    let paths: Vec<&str> = stats.iter().map(|s| s.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec!["add.txt", "bin.dat", "del.txt", "mod.txt", "renamed.txt"]
+    );
+
+    let by_path: std::collections::HashMap<&str, &ibexgit_lib::core::engine::FileStat> =
+        stats.iter().map(|s| (s.path.as_str(), s)).collect();
+    let add = by_path["add.txt"];
+    assert_eq!(
+        (add.status.as_str(), add.additions, add.deletions),
+        ("A", Some(1), Some(0))
+    );
+    let bin = by_path["bin.dat"];
+    assert_eq!(
+        (bin.status.as_str(), bin.additions, bin.deletions),
+        ("A", None, None)
+    );
+    let del = by_path["del.txt"];
+    assert_eq!(
+        (del.status.as_str(), del.additions, del.deletions),
+        ("D", Some(0), Some(1))
+    );
+    let mov = by_path["renamed.txt"];
+    assert_eq!(mov.status, "R");
+    assert_eq!(mov.old_path.as_deref(), Some("ren.txt"));
+    assert_eq!(mov.similarity, Some(100));
+    let movd = by_path["mod.txt"];
+    assert_eq!(
+        (movd.status.as_str(), movd.additions, movd.deletions),
+        ("M", Some(2), Some(1))
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Scoped stash pushes (贮藏对话框三种模式) against a tree that mixes a
 /// staged change (b.txt), an unstaged one (a.txt) and an untracked file
 /// (c.txt). Porcelain columns: X = staged, Y = unstaged.
